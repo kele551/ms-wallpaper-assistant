@@ -1,7 +1,7 @@
 ﻿# 微软壁纸助手 - 菜单 (by 海风 & 小腾)
 . (Join-Path $PSScriptRoot 'core.ps1')
 
-$global:BWVersion = '1.5.3'
+$global:BWVersion = '1.5.4'
 
 # 把用户按键归一化: 去首尾空格 + 全角转半角 + 转小写。
 # 中文输入法很容易把 o 打成全角 ｏ, 不归一化就变成"按了键没反应"。
@@ -437,6 +437,15 @@ function Show-BwSettings {
     Write-Host ('  [6] 桌面快捷方式    ' + $deskOn)
     Write-Host ('  [7] 数据目录        ' + $global:BWRoot)
     Write-Host '  [8] 图标缓存        一键刷新 (图标显示成旧的样子时用)'
+    $cap = 0
+    try { $cap = [int]$c.lib_cap } catch { $cap = 0 }
+    $capTxt = '不限'
+    if ($cap -gt 0) { $capTxt = ($cap.ToString() + ' 张') }
+    $libN = @(Get-ChildItem -LiteralPath ([string]$c.spotlight_save_dir) -File -Filter *.jpg -ErrorAction SilentlyContinue).Count
+    Write-Host ('  [9] 图库上限        ' + $capTxt + ' · 现在库里 ' + $libN + ' 张')
+    $afOn = '关'
+    if ([bool]$c.auto_fetch) { $afOn = '开' }
+    Write-Host ('  [0] 自动补新图      ' + $afOn + '  · 关着就只在现有这些图里轮换')
     Write-Host ''
     Write-Host '  [q] 返回'
     Write-Host ''
@@ -566,6 +575,41 @@ function Show-BwSettings {
         } else {
           Write-Host '  这台机器没有 ie4uinit.exe。用程序目录里的「刷新图标缓存.bat」代替 (会重启一次资源管理器)。'
         }
+        Pause-Bw
+      }
+      '9' {
+        Write-Host ''
+        Write-Host '  库里攒到这个数之后, 每换一张就把「已经看过」的最老的一张移进回收站。'
+        Write-Host '  没看过的图不会动 —— 那是排队等着换的。移走的能从回收站还原。'
+        Write-Host '  填 0 = 不限, 库只增不减。'
+        Write-Host ''
+        $v = Read-Host ('  最多留多少张? (现在 ' + $capTxt + ', 回车不改)')
+        $vv = Normalize-BwKey $v
+        if ($v -and ($vv -match '^\d+$')) {
+          $c.lib_cap = [int]$v
+          Save-BwConfig $c
+          if ([int]$v -eq 0) { Write-Host '  好了, 不限张数。' }
+          else { Write-Host ('  好了, 最多留 ' + $v + ' 张, 超了就把看过的最老的移进回收站。') }
+          Log ('设置: 图库上限 -> ' + $v)
+        } elseif ($v) { Write-Host '  要填一个数字 (0 = 不限), 没改。' }
+        Pause-Bw
+      }
+      '0' {
+        Write-Host ''
+        Write-Host '  开着: 库里的图全换过一遍之后, 自动下一批新图补进来。'
+        Write-Host '  关着: 只在现有这些图里轮换, 不下载新的(库不会自己变大)。'
+        Write-Host ''
+        $v = Read-Host ('  要开着吗? [y] 开 / [n] 关   (现在是' + $afOn + ', 回车不改)')
+        $k2 = Normalize-BwKey $v
+        if ($k2 -eq 'y') {
+          $c.auto_fetch = $true; Save-BwConfig $c
+          Write-Host '  好了, 以后换完一轮会自动补新图。'
+          Log '设置: 自动补新图 -> 开'
+        } elseif ($k2 -eq 'n') {
+          $c.auto_fetch = $false; Save-BwConfig $c
+          Write-Host '  好了, 只在现有的图里轮换, 不去下新的。'
+          Log '设置: 自动补新图 -> 关'
+        } elseif ($v) { Write-Host '  没看懂, 没改。' }
         Pause-Bw
       }
       'q' { $back = $true }

@@ -292,6 +292,14 @@ function Get-BwConfig {
   # 只在收藏里轮换。默认关。
   if (-not $c.fav_only) { Add-Member -InputObject $c NoteProperty fav_only $false -Force }
   if (-not $c.PSObject.Properties['desktop_shortcut']) { Add-Member -InputObject $c NoteProperty desktop_shortcut 'on' -Force }
+  # 图库上限: 聚焦库最多留多少张。超了就把**已经看过**的最老的几张移进回收站。
+  # 没看过的一律不动 —— 那是等着换的, 删了就得重新下载。
+  # 0 = 不限(老样子, 只增不减)。默认 200 张(约 400 MB)。
+  if (-not $c.PSObject.Properties['lib_cap']) { Add-Member -InputObject $c NoteProperty lib_cap 200 -Force }
+  # 队列里的图换完之后, 要不要自动下一批新图? 默认**关**:
+  # 库里现有的图轮着用就够了, 不过程序自己跑去下载一堆, 库越攒越大。
+  # 想要不断有新图就到菜单里打开它。
+  if (-not $c.PSObject.Properties['auto_fetch']) { Add-Member -InputObject $c NoteProperty auto_fetch $false -Force }
   return $c
 }
 function Save-BwConfig([psobject]$c) {
@@ -307,6 +315,7 @@ function Get-BwState {
     try { $s = Get-Content $global:BWState -Raw -Encoding UTF8 | ConvertFrom-Json } catch {}
   }
   $ver = 0
+  $needImport = $false
   if ($s) { try { $ver = [int]$s.schema } catch { $ver = 0 } }
   if ($ver -lt 3) {
     # 3 以前的结构不一样, 没法迁, 重置
@@ -321,6 +330,9 @@ function Get-BwState {
   } elseif ($ver -eq 5) {
     # 5 -> 6 多了"看过"名单, 换图进度、队列、收藏一律保留
     Log '节奏进度文件 5 -> 6: 保留原有进度, 新增「看过」名单(用来避免重洗时又排回老图)'
+    # 名单是新东西, 以前换过的图一张都没记过。不回填的话那批图重洗时照样排回来,
+    # 等于换了版本照样重复。日志里每次换图都有记录, 从那儿捞回来。
+    $needImport = $true
   }
   # bing_high_date : 必应补漏的水位线, 只往前不后退 (详见 Get-BwHighDate)
   # favorites      : 收藏的图片文件名, 只记名字 (和 queue 一个口径); 图被删掉也
@@ -340,7 +352,93 @@ function Get-BwState {
   # schema 要**强制**写成当前版本: 上面那个循环只在"字段缺失或为空"时才补,
   # 而 schema 永远是 3 (有值), 于是升完级还是 3, 每次进来都要再"升级"一遍。
   Add-Member -InputObject $s NoteProperty schema 6 -Force
+  # 这时候 history 字段已经补齐了, 回填才安全
+  if ($needImport) {
+    $n = Import-BwHistFromLog $s
+    if ($n -gt 0) { Log ('  从日志回填了 ' + $n + ' 张「看过」的图 (以前换过的现在也认得出来了)') }
+  }
   return $s
+}
+# ---- 图库上限 ----
+# 库只增不减的话, 用几个月就攒到上千张好几个 GB。设个上限, 超了就把
+# **已经看过**的最老的几张清走; 没看过的一律不动(那是等着换的, 删了还得重新下)。
+function Get-BwLibCap {
+  $c = Get-BwConfig
+  $v = 0
+  try { $v = [int]$c.lib_cap } catch { $v = 0 }
+  return $v
+}
+# 移进回收站(能还原)。走不通就退到「已看过」文件夹 —— 绝不直接删文件。
+function Move-BwToRecycle([string]$path) {
+  if (-not (Test-Path -LiteralPath $path)) { return $false }
+  try {
+    Add-Type -AssemblyName Microsoft.VisualBasic -ErrorAction Stop
+    [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($path,
+      [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
+      [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin)
+    return $true
+  } catch {}
+  try {
+    $c = Get-BwConfig
+    $par = Split-Path ([string]$c.spotlight_save_dir) -Parent
+    if ($par) {
+      $d2 = Join-Path $par '已看过'
+      [void](New-BwDir $d2)
+      Move-Item -LiteralPath $path -Destination (Join-Path $d2 (Split-Path $path -Leaf)) -Force -ErrorAction Stop
+      return $true
+    }
+  } catch {}
+  return $false
+}
+# 换完一张之后调一次: 库超上限就淘汰看过的最老的, 直到降到上限以内。
+function Trim-BwLibrary($s) {
+  $cap = Get-BwLibCap
+  if ($cap -le 0) { return 0 }
+  $c = Get-BwConfig
+  $dir = [string]$c.spotlight_save_dir
+  if (-not $dir) { return 0 }
+  if (-not (Test-Path -LiteralPath $dir)) { return 0 }
+  $files = @(Get-ChildItem -LiteralPath $dir -File -Filter *.jpg -ErrorAction SilentlyContinue)
+  $over = $files.Count - $cap
+  if ($over -le 0) { return 0 }
+  $hist = @(Get-BwHist $s)
+  if ($hist.Count -eq 0) { return 0 }
+  # 当前正显示的那张不能动
+  $curKey = ''
+  if ($s.last_wall) { $curKey = Get-BwNameKey (Split-Path ([string]$s.last_wall) -Leaf) }
+  $cand = @()
+  foreach ($h in $hist) {
+    if ($h -eq $curKey) { continue }
+    $f = @($files | Where-Object { (Get-BwNameKey $_.Name) -eq $h } | Select-Object -First 1)
+    if ($f.Count -gt 0) { $cand += $f[0] }
+    if ($cand.Count -ge $over) { break }
+  }
+  $moved = 0
+  foreach ($f in $cand) {
+    if (Move-BwToRecycle $f.FullName) { $moved++ }
+  }
+  if ($moved -gt 0) {
+    Log ('图库上限 ' + $cap + ' 张: 库里 ' + $files.Count + ' 张超了, 已把看过的最老的 ' + $moved + ' 张移进回收站')
+  }
+  return $moved
+}
+
+# 从 wallpaper.log 把"以前换过哪些图"捞回来填进「看过」名单。
+# 名单是 v1.5.4 才有的, 老用户升级上来时名单是空的 —— 不回填的话,
+# 那批以前看过的图重洗队列时照样排回来, 换了个版本照样重复。
+function Import-BwHistFromLog($s) {
+  $n = 0
+  if (-not $s) { return 0 }
+  if (-not (Test-Path -LiteralPath $global:BWLog)) { return 0 }
+  try {
+    foreach ($line in @(Get-Content -LiteralPath $global:BWLog -Encoding UTF8 -ErrorAction SilentlyContinue)) {
+      if ($line -match '->\s*(.+?)\s*\(ok=') {
+        $nm = $matches[1].Trim()
+        if ($nm) { Add-BwHist $s $nm; $n++ }
+      }
+    }
+  } catch {}
+  return $n
 }
 
 # ---- 「看过」名单 ----
@@ -527,10 +625,16 @@ function Get-BwNextWall($s) {
       # 这张被删了, 丢掉接着取下一张
     }
     $s.queue = @()
-    $want = Get-BwSpotlightWant
-    Log ('队列已空 (库中现有 ' + @(Get-BwSpotlightAll).Count + ' 张), 刷新下载 ' + $want + ' 张后重洗')
-    if ($global:BWDry) { Log ('试运行: 本应刷新下载 ' + $want + ' 张聚焦壁纸') }
-    else { Invoke-SpotlightFetch -count $want -Quiet | Out-Null }
+    # 队列空了要不要下一批新图? 默认**不下** —— 库里现有的图轮着用就行,
+    # 想让程序自己补新图的话去菜单 [S] 设置 - [0] 打开。
+    if ([bool]$c.auto_fetch) {
+      $want = Get-BwSpotlightWant
+      Log ('队列已空 (库中现有 ' + @(Get-BwSpotlightAll).Count + ' 张), 刷新下载 ' + $want + ' 张后重洗')
+      if ($global:BWDry) { Log ('试运行: 本应刷新下载 ' + $want + ' 张聚焦壁纸') }
+      else { Invoke-SpotlightFetch -count $want -Quiet | Out-Null }
+    } else {
+      Log ('队列已空: 按设置不下载新图, 直接把库里现有的 ' + @(Get-BwSpotlightAll).Count + ' 张重新洗一遍')
+    }
     $s.refills = [int]$s.refills + 1
     $s.queue = @(Get-BwFreshQueue $s)
     if (@($s.queue).Count -eq 0) { return $null }
@@ -547,6 +651,8 @@ function Invoke-BwSwap($s, [DateTime]$now, [string]$why) {
   $s.last_swap = $now.ToString('yyyy-MM-dd HH:mm:ss')
   Add-BwHist $s $f.Name
   Log ($why + ' -> ' + $f.Name + ' (ok=' + $ok + '; 队列还剩 ' + @($s.queue | Where-Object { $_ }).Count + ' 张)')
+  # 库超上限就顺手淘汰看过的最老的(移进回收站, 能还原)
+  [void](Trim-BwLibrary $s)
   return $true
 }
 function Get-BwMeta([int]$idx) {
