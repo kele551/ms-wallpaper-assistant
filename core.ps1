@@ -318,14 +318,20 @@ function Get-BwState {
   } elseif ($ver -eq 4) {
     # 4 -> 5 多了收藏名单, 换图进度、队列、水位线一律保留
     Log '节奏进度文件 4 -> 5: 保留原有进度, 新增收藏名单'
+  } elseif ($ver -eq 5) {
+    # 5 -> 6 多了"看过"名单, 换图进度、队列、收藏一律保留
+    Log '节奏进度文件 5 -> 6: 保留原有进度, 新增「看过」名单(用来避免重洗时又排回老图)'
   }
   # bing_high_date : 必应补漏的水位线, 只往前不后退 (详见 Get-BwHighDate)
   # favorites      : 收藏的图片文件名, 只记名字 (和 queue 一个口径); 图被删掉也
   #                  留着, 取用时自然剔除, 不必提前清理 —— 万一手滑删了还能加回来。
+  # history        : **看过**的图的唯一标识(不是文件名, 见 Get-BwNameKey)。
+  #                  有了它, 队列洗牌时才能把看过的挑出去 —— 不然每洗一轮,
+  #                  昨天看过的 18 张又排回来, 客户看到的就是"这张我昨天不是刚看过吗"。
   $def = [ordered]@{
-    schema = 5; last_bing_date = ''; last_swap = ''; last_boot = ''
+    schema = 6; last_bing_date = ''; last_swap = ''; last_boot = ''
     queue = @(); refills = 0; shown = 0; last_wall = ''
-    bing_high_date = ''; favorites = @()
+    bing_high_date = ''; favorites = @(); history = @()
   }
   foreach ($k in $def.Keys) {
     $p = $s.PSObject.Properties[$k]
@@ -333,8 +339,41 @@ function Get-BwState {
   }
   # schema 要**强制**写成当前版本: 上面那个循环只在"字段缺失或为空"时才补,
   # 而 schema 永远是 3 (有值), 于是升完级还是 3, 每次进来都要再"升级"一遍。
-  Add-Member -InputObject $s NoteProperty schema 5 -Force
+  Add-Member -InputObject $s NoteProperty schema 6 -Force
   return $s
+}
+
+# ---- 「看过」名单 ----
+# 记**图的唯一标识**, 不是文件名。原因: 聚焦图的文件名带下载日期前缀
+# (2026-09-19_标题_slug.jpg), 同一张图换个日子再下载一次, 文件名就变了 ——
+# 只比文件名会当成两张不同的图, 于是又下载一遍、又排进队列, 客户又看一次。
+# 而文件名末尾那截 slug 是图片本身在微软那边的唯一编号, 换个日期也不变。
+# 必应图没有 slug, 用完整文件名(日期+标题, 本身就唯一)。
+function Get-BwNameKey([string]$name) {
+  if (-not $name) { return '' }
+  $n = [string]$name
+  $b = [System.IO.Path]::GetFileNameWithoutExtension($n)
+  $i = $b.LastIndexOf('_')
+  if ($i -gt 0) {
+    $tail = $b.Substring($i + 1)
+    # 聚焦的 slug 是纯小写英文数字(如 lakemisurinaitaly), 长度至少 6
+    if ($tail -match '^[a-z0-9]{6,}$') { return $tail }
+  }
+  return $b
+}
+function Get-BwHist($s) {
+  if (-not $s) { return @() }
+  return @(@($s.history | Where-Object { $_ }) | ForEach-Object { [string]$_ })
+}
+# 记一张"看过了"。名单有上限(400), 老的自然淘汰, 免得 state.json 越攒越大。
+function Add-BwHist($s, [string]$name) {
+  $k = Get-BwNameKey $name
+  if (-not $k) { return }
+  $h = @(Get-BwHist $s)
+  if ($h -contains $k) { return }
+  $h = @(@($h) + @($k))
+  if ($h.Count -gt 400) { $h = @($h | Select-Object -Last 400) }
+  $s.history = $h
 }
 function Save-BwState($s) {
   $s.queue = @($s.queue | Where-Object { $_ })
@@ -367,7 +406,10 @@ function Get-BwSpotlightWant {
   if ($c.spotlight_per_cycle) { return [int]$c.spotlight_per_cycle }
   return 6
 }
-# 把库里所有图洗一次牌。"不重复"由此天然成立, 不必另存一份"已看过"名单。
+# 把库里的图洗一次牌。
+# 注意: 光"洗牌"只能保证**一轮之内**不重复 —— 队列发完再洗一轮时, 库里所有图
+# (包括上一轮全看过的)都会被重新洗进来, 客户就会又看到昨天那张。
+# 所以洗牌前先把「看过」名单里的挑出去, 只排没看过的。
 # 开了「只看收藏」就只洗收藏里那几张; 收藏里一张都用不了(还没收藏、或全被删了)时
 # 退回洗整个库 —— 不然会卡在"挑不出图"上, 永远不换壁纸。
 function Get-BwFreshQueue($s) {
@@ -383,6 +425,22 @@ function Get-BwFreshQueue($s) {
     foreach ($f in @(Get-BwSpotlightAll)) { $names += [string]$f.Name }
   }
   if ($names.Count -eq 0) { return @() }
+
+  # 挑掉看过的
+  $seen = @{}
+  foreach ($h in @(Get-BwHist $s)) { if ($h) { $seen[[string]$h] = $true } }
+  if ($seen.Count -gt 0) {
+    $fresh = @($names | Where-Object { -not $seen.ContainsKey((Get-BwNameKey $_)) })
+    if ($fresh.Count -gt 0) {
+      Log ('重洗队列: 库里 ' + $names.Count + ' 张, 看过 ' + ($names.Count - $fresh.Count) + ' 张 -> 这一轮只排没看过的 ' + $fresh.Count + ' 张')
+      $names = $fresh
+    } else {
+      # 库里全都看过: 历史清零重来一轮。但留最近 20 条,
+      # 免得刚看完那张翻个身又排到队首。
+      $s.history = @(@(Get-BwHist $s) | Select-Object -Last 20)
+      Log ('重洗队列: 库里 ' + $names.Count + ' 张全都看过 -> 历史清零重来(留最近 20 条防连着重复)')
+    }
+  }
   return @($names | Sort-Object { Get-Random })
 }
 
@@ -487,6 +545,7 @@ function Invoke-BwSwap($s, [DateTime]$now, [string]$why) {
   $s.last_wall = $f.FullName
   $s.shown = [int]$s.shown + 1
   $s.last_swap = $now.ToString('yyyy-MM-dd HH:mm:ss')
+  Add-BwHist $s $f.Name
   Log ($why + ' -> ' + $f.Name + ' (ok=' + $ok + '; 队列还剩 ' + @($s.queue | Where-Object { $_ }).Count + ' 张)')
   return $true
 }
@@ -812,10 +871,26 @@ function Invoke-SpotlightFetch([int]$count, [switch]$SetWall, [switch]$Quiet) {
   $newFiles = @()
   $tries = 0
   $maxTries = [Math]::Max($count * 5, 20)
-  while ((($ok + $skip) -lt $count) -and ($tries -lt $maxTries)) {
+  # 循环只看**真的新增了几张**。以前把"已存在"也算进配额, 于是库一大(几十张),
+  # 连着抽到的全是库里已有的图, 配额被"已存在"耗尽 -> 一张新图都不下,
+  # 客户就一直轮换那批老图, 越用越觉得"怎么老是这几张"。
+  # 另: 「看过」名单也拦一道 —— 客户把库里的图备份到网盘(本地删掉)之后,
+  # 本地查不到, 光靠文件去重会把同一张图再下一遍。
+  $seen = @{}
+  foreach ($h in @(Get-BwHist (Get-BwState))) { if ($h) { $seen[[string]$h] = $true } }
+  # 试了大半还一张新图都没拿到 -> 说明这个接口的图基本收全了, 放开拦截,
+  # 宁可重复下载也不能没图可换。
+  $allowSeen = $false
+  while (($ok -lt $count) -and ($tries -lt $maxTries)) {
     $tries++
+    if (($ok -eq 0) -and ($tries -gt [Math]::Min([Math]::Floor($maxTries / 2), 10))) { $allowSeen = $true }
     $it = Get-SpotlightOne
     if (-not $it) { Start-Sleep -Milliseconds 800; continue }
+    if ((-not $allowSeen) -and $it.slug -and $seen.ContainsKey([string]$it.slug)) {
+      $skip++
+      Start-Sleep -Milliseconds 400
+      continue
+    }
     if (Test-SpotlightDup $dir $it) {
       $skip++
       if (-not $first) { $first = (Get-ChildItem $dir -Filter "*_$($it.slug).jpg" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName }

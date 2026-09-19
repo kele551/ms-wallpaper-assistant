@@ -1,7 +1,7 @@
 ﻿# 微软壁纸助手 - 菜单 (by 海风 & 小腾)
 . (Join-Path $PSScriptRoot 'core.ps1')
 
-$global:BWVersion = '1.5.2'
+$global:BWVersion = '1.5.3'
 
 # 把用户按键归一化: 去首尾空格 + 全角转半角 + 转小写。
 # 中文输入法很容易把 o 打成全角 ｏ, 不归一化就变成"按了键没反应"。
@@ -866,6 +866,27 @@ function Ensure-BwDesktopShortcut {
   return 'gone'
 }
 function Test-BwAutoStart { return (Test-Path -LiteralPath (Get-BwStartupLnk)) }
+# 后台到底有没有在跑? 只看"开机自动换开了没"是不够的 ——
+# 那个开关只是往启动文件夹放了个快捷方式, **本次开机**并不会自己跑起来。
+# 所以客户会看到「开机自动换: 开」+「下次自动换: 15:52」, 以为程序在换,
+# 其实这次开机压根没后台进程, 那个 15:52 永远不会兑现 —— 这就是「时间不会变」的由来。
+# 认进程命令行里带 --daemon 的那个, 那是真正在按节拍换图的那个。
+function Test-BwDaemonRunning {
+  try {
+    $ps = @(Get-CimInstance Win32_Process -Filter "Name='微软壁纸助手.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -and ($_.CommandLine -like '*--daemon*') })
+    return ($ps.Count -gt 0)
+  } catch { return $false }
+}
+# 立刻把后台拉起来(不等下次开机)。开机自启的快捷方式照建, 两件事一起办。
+function Start-BwDaemonNow([string]$exe) {
+  if ((-not $exe) -or (-not (Test-Path -LiteralPath $exe))) { return $false }
+  try {
+    Start-Process -FilePath $exe -ArgumentList '--daemon' -WorkingDirectory (Split-Path $exe -Parent) -WindowStyle Hidden
+    return $true
+  } catch { return $false }
+}
+
 # 开机自动换做成**两个按钮**, 不是一个会翻面的开关。
 # 一个开关两面翻的问题是: 客户只看到「[A] 开机自动换壁纸 开/关」, 按下去到底是开还是关
 # 得先记住现在是什么状态; 记反了就正好按成自己不想要的那一下 —— 而且后台进程会立刻停,
@@ -891,9 +912,14 @@ function Enable-BwAutoStart {
     $sc.Description      = '微软壁纸助手 - 开机自动换壁纸'
     $sc.IconLocation     = (Get-BwIconLocation $exe)
     $sc.Save()
+    # 关键: 光放快捷方式, 本次开机不会自己跑起来。要等下一次开机才换图,
+    # 客户当场看不到效果, 只会以为"按了没用"。所以顺手把后台立刻拉起来。
+    $started = Start-BwDaemonNow $exe
     Write-Host '  已开启。下次登录后会在后台自动换壁纸, 一个窗口都不会闪。'
     Write-Host ('  启动项位置: ' + $lnk)
     Write-Host ('  指向: ' + $exe)
+    if ($started) { Write-Host '  后台已经现在就跑起来了, 不用等下次开机 —— 到点就换。' -ForegroundColor Green }
+    else { Write-Host '  (后台这次没拉起来, 下次开机才会自动跑)' -ForegroundColor DarkYellow }
     if ((Split-Path $exe -Leaf) -ne '微软壁纸助手.exe') {
       Write-Host '  (这份 exe 名字里带版本号, 以后换新版本要重开一次本开关)' -ForegroundColor DarkYellow
     }
@@ -957,7 +983,14 @@ do {
   $auto = '关'
   $moved = $false
   if (Test-BwAutoStart) { $auto = '开'; $moved = Repair-BwAutoStart }
-  Write-Host (' 今日必应: ' + $bingDone + '    下次自动换: ' + $next + '    开机自动换: ' + $auto) -ForegroundColor DarkGray
+  # 「下次自动换」只有后台真跑着的时候才作数。
+  # 后台没跑时还显示一个时间, 等于给个假承诺: 那个点到了也不会有人换图,
+  # 而且数字纹丝不动(它是按"上次换图时刻+间隔"算的, 不会自己往前走)。
+  $running = Test-BwDaemonRunning
+  if ($running) { $swapTxt = '下次自动换: ' + $next }
+  elseif ($auto -eq '开') { $swapTxt = '自动换: 本次开机还没启动' }
+  else { $swapTxt = '自动换: 没开' }
+  Write-Host (' 今日必应: ' + $bingDone + '    ' + $swapTxt + '    开机自动换: ' + $auto) -ForegroundColor DarkGray
   if ($moved) { Write-Host '  (程序位置变过, 开机自动换已重新指向当前这个 exe)' -ForegroundColor Yellow }
   if ($desk -eq 'create') { Write-Host '  已在桌面放了「微软壁纸助手」快捷方式 (不想要: 设置 [6] 里关)' -ForegroundColor DarkYellow }
   elseif ($desk -eq 'update') { Write-Host '  桌面快捷方式已指向当前这份程序, 图标也是新的' -ForegroundColor DarkYellow }
