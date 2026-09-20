@@ -285,13 +285,35 @@ def say(msg):
 
 
 # ---------------------------------------------------------------- 跑 PowerShell
+def clean_env():
+    """剥掉 PyInstaller 单文件模式留给子进程的环境变量。
+
+    为什么: 菜单里按 [A] 拉起后台, 链路是 菜单exe -> powershell -> Start-Process,
+    环境变量一路继承。里面带着 PyInstaller 的 _PYI_* / _MEIPASS2 标记, 后台 exe
+    拿到后会误判自己是"单文件父进程的子进程", 不自建临时目录, 直接复用菜单的
+    Temp\\_MEIxxx。于是关掉菜单窗口时, 菜单要回收这个目录, 后台还占着 ——
+    删不掉就弹「Failed to remove temporary directory」。
+    现象恰好是: 每个新版本第一次使用(第一次按 [A])之后弹一次;
+    以后自动换一直开着, 后台由系统开机独立拉起, 没这些标记, 就不再弹。
+    参考 PyInstaller 官方文档 "spawn subprocesses that outlive the application" 一节。
+    """
+    drop_prefix = ('_PYI_', 'PYINSTALLER_')
+    drop_exact = {'_MEIPASS2'}
+    env = {}
+    for k, v in os.environ.items():
+        if k in drop_exact or k.startswith(drop_prefix):
+            continue
+        env[k] = v
+    return env
+
+
 def ps(script, args=(), no_window=True, wait=True):
     cmd = [PS_EXE, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script]
     cmd.extend(args)
     flags = CREATE_NO_WINDOW if no_window else 0
     if wait:
-        return subprocess.run(cmd, creationflags=flags).returncode
-    return subprocess.Popen(cmd, creationflags=flags)
+        return subprocess.run(cmd, creationflags=flags, env=clean_env()).returncode
+    return subprocess.Popen(cmd, creationflags=flags, env=clean_env())
 
 
 def run_cycle(d):
