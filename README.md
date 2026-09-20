@@ -1,6 +1,6 @@
 # 微软壁纸助手
 
-![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Windows-blue) ![Version](https://img.shields.io/badge/version-v1.6.0-blue)
+![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Windows-blue) ![Version](https://img.shields.io/badge/version-v1.6.1-blue)
 
 **让电脑桌面壁纸自己换，你不用管。**
 
@@ -35,7 +35,7 @@ Windows 桌面壁纸自动轮换工具。图全都来自微软官方，两个图
 
 ## 下载
 
-### 👉 [点这里下载 v1.6.0 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v1.6.0/MSWallpaperAssistant-v1.6.0.zip)
+### 👉 [点这里下载 v1.6.1 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v1.6.1/MSWallpaperAssistant-v1.6.1.zip)
 
 > 7.3 MB 的 zip，实测可解压、可运行。
 
@@ -150,7 +150,7 @@ Windows 桌面壁纸自动轮换工具。图全都来自微软官方，两个图
 
 ## 版本迭代
 
-每次改版都会打一个版本号、发一版下载。**当前最新：v1.6.0**
+每次改版都会打一个版本号、发一版下载。**当前最新：v1.6.1**
 
 小版本的改动都归到同一个大版本下面说，一行一个版本：
 
@@ -166,6 +166,7 @@ Windows 桌面壁纸自动轮换工具。图全都来自微软官方，两个图
 
 v1.6 里面各小版本都改了什么：
 
+- **v1.6.1** 菜单首页新增「累计下载：N 张」——从装上那天算起一共下载过多少张壁纸，**删掉的、被库上限清进回收站的都还在这个数里**，不会因为你整理图库就往回缩。老版本升级上来会自动按「库里现存的 + 看过名单 + 日志里的下载记录」去重补一个基数（更早下载过、痕迹已经找不到的补不回来，所以老用户看到的起点可能偏小）；从这版起每成功下载一张就真记一次
 - **v1.6.0** 设置 `[8] 刷新图标缓存` 失灵时给的备用脚本是真能找到的那个（以前它压根没打进 exe）；主菜单按 `o` 不再退出程序（退出请按 `Q`）；首运行里"改保存位置"的提示由 `[1]` 改正为 `[3]`、"再按 `[A]` 关掉"改正为 `[B]`；使用说明补齐设置 `[8]`，并修正卸载步骤里 `[A]`/`[B]` 写反的问题
 
 v1.5 里面各小版本都改了什么：
