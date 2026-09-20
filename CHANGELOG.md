@@ -1,6 +1,6 @@
 # 更新日志
 
-本项目采用语义化版本：`MAJOR.MINOR.PATCH`。每次改版打一个 git tag 并写一条 GitHub Release。
+本项目采用语义化版本：`MAJOR.MINOR.PATCH`。每次改版打一个 git tag，并在 Gitee 上写一版发行版（含可直接下载的压缩包）。
 
 ## v1.5 — 2026-09-19
 
