@@ -186,6 +186,21 @@ function Get-BwDriveChoices {
                                   @{ Expression = { if ($_.Sys) { 1 } else { 0 } } },
                                   @{ Expression = { $_.Free }; Descending = $true })
 }
+# ---- 盘符: 统一只留一个大写字母 ----
+# 各处比较盘符时, 一会儿拿到 "C:" 一会儿拿到 "C", 于是 "C" -ne "C:" 恒为真 ——
+# 系统盘从来没被排除过。表现是: 明明「图片」文件夹还在系统盘上, 程序却判定
+# "你的图片文件夹本来就在系统盘以外", 老老实实把壁纸往 C 盘里塞 ——
+# 而那正是绝大多数用户的默认情况 (也是壁纸越攒越多撑满系统盘的由来)。
+# 以后比盘符一律走这两个函数, 别再手写 TrimEnd。
+function Get-BwSysDriveLetter {
+  try { return (([string]$env:SystemDrive).TrimEnd('\').TrimEnd(':')).ToUpper() } catch { return '' }
+}
+function Get-BwDriveLetter([string]$p) {
+  if (-not $p) { return '' }
+  if ($p -match '^([A-Za-z]):') { return $Matches[1].ToUpper() }
+  return ''
+}
+
 # ---- 系统「图片」文件夹的真实位置 ----
 # 这个文件夹是可以被改到别处的 (资源管理器里右键「图片」- 属性 - 位置 - 移动),
 # 所以不能写死 C:\Users\xxx\Pictures。三档兜底: .NET -> 注册表 -> 主目录下的 Pictures。
@@ -203,35 +218,108 @@ function Get-BwPicturesDir {
   $global:BWPicturesDir = $p
   return $global:BWPicturesDir
 }
+# ---- 在非系统盘上找「已经存在的图片文件夹」 ----
+# 用户的规矩(2026-09-20): C 盘以外只要已经有放图片的文件夹, 就先定位到那里 ——
+#   不要让用户自己挑, 更不要凭空在盘根再造一个「图片」出来。
+#   以前的做法是挑一个非系统盘然后建 <盘>\图片\壁纸, 于是明明 F 盘上就有
+#   「我的图片」, 盘根还是多出一个空的「图片」—— 用户的话: "它要造反吗?"。
+# 只读扫描: 只看每个非系统盘的**根目录一层**, 只用"里面有没有 jpg"下判断,
+# 全程不建任何目录 (Test-BwWritable 会建目录, 这里一个都不许调)。
+function Test-BwHasJpg([string]$dir) {
+  if (-not $dir) { return $false }
+  if (-not (Test-Path -LiteralPath $dir)) { return $false }
+  # 只看第一张就够: 上万张图的文件夹也能瞬间给结论, 不用把目录数完
+  $one = @(Get-ChildItem -LiteralPath $dir -File -Filter *.jpg -ErrorAction SilentlyContinue | Select-Object -First 1)
+  return ($one.Count -gt 0)
+}
+function Find-BwExistingBase {
+  $sys = Get-BwSysDriveLetter
+  $picNames = @('图片', '我的图片', 'Pictures', '照片', 'Images', '图库')
+  $best = ''; $bestScore = -1; $bestWhy = ''
+  try {
+    foreach ($dr in [System.IO.DriveInfo]::GetDrives()) {
+      try {
+        if (-not $dr.IsReady) { continue }
+        if ($dr.DriveType -ne [System.IO.DriveType]::Fixed) { continue }
+        $root = ([string]$dr.Name).TrimEnd('\')          # 形如 F:
+        $drv  = $root.TrimEnd(':').ToUpper()
+        if (-not $drv -or ($drv -eq $sys)) { continue }   # 系统盘不参与
+        # 1) 盘根就有个「壁纸」并且里面有图 -> 那已经是现成的库, 直接用
+        $wp = Join-Path $root '壁纸'
+        if ((Test-BwHasJpg $wp) -and 110 -gt $bestScore) {
+          $bestScore = 110; $best = $wp
+          $bestWhy = $drv + ': 上已经有放壁纸的文件夹'
+        }
+        # 2) 已有的图片文件夹: 下面带「壁纸」子目录且里面有图 > 里面有图 > 空文件夹
+        foreach ($nm in $picNames) {
+          $p = Join-Path $root $nm
+          if (-not (Test-Path -LiteralPath $p)) { continue }
+          $sub = Join-Path $p '壁纸'
+          $sc = 10
+          $why = $drv + ': 上本来就有「' + $nm + '」文件夹'
+          # 库是两层: <图片>\壁纸\必应 / \聚焦。只数「壁纸」这一层会漏 ——
+          # 那层只有两个子目录, 一张图都没有, 于是真正存着图的库被当成空文件夹。
+          $hasLib = ((Test-BwHasJpg $sub) -or (Test-BwHasJpg (Join-Path $sub '必应')) -or (Test-BwHasJpg (Join-Path $sub '聚焦')))
+          if ($hasLib) { $sc = 100; $why = $why + ', 里面还留着以前下载的壁纸' }
+          elseif (Test-BwHasJpg $p) { $sc = 50 }
+          if ($sc -gt $bestScore) { $bestScore = $sc; $best = (Join-Path $p '壁纸'); $bestWhy = $why }
+        }
+        # 深度 2: 盘根下面一层里再找一遍 —— 很多人把图片收在 <盘>\我的资料\图片 这种位置,
+        # 只扫盘根会漏。只取前 40 个子目录, 免得碰上文件特别多的盘把启动拖慢。
+        # 分数刻意比深度 1 低一点: 盘根那个更可能是"这台机器的图片文件夹"。
+        $subs = @(Get-ChildItem -LiteralPath ($root + '\') -Directory -ErrorAction SilentlyContinue | Select-Object -First 40)
+        foreach ($sd in $subs) {
+          foreach ($nm in $picNames) {
+            $p2 = Join-Path $sd.FullName $nm
+            if (-not (Test-Path -LiteralPath $p2)) { continue }
+            $sub2 = Join-Path $p2 '壁纸'
+            $sc2 = 5
+            $why2 = $drv + ': 上的「' + $sd.Name + '\' + $nm + '」'
+            $hasLib2 = ((Test-BwHasJpg $sub2) -or (Test-BwHasJpg (Join-Path $sub2 '必应')) -or (Test-BwHasJpg (Join-Path $sub2 '聚焦')))
+            if ($hasLib2) { $sc2 = 95; $why2 = $why2 + ', 里面还留着以前下载的壁纸' }
+            elseif (Test-BwHasJpg $p2) { $sc2 = 45 }
+            if ($sc2 -gt $bestScore) { $bestScore = $sc2; $best = (Join-Path $p2 '壁纸'); $bestWhy = $why2 }
+          }
+        }
+      } catch {}
+    }
+  } catch {}
+  if ($bestScore -lt 0) { return $null }
+  return [PSCustomObject]@{ Base = $best; Why = $bestWhy }
+}
 # ---- 壁纸默认放「图片」文件夹里的「壁纸」----
 # 用户的安排: 壁纸就该归在图片库里, 不要再往盘根丢一个 X:\微软壁纸助手。
 # 但有个现实问题: 图片文件夹默认就在系统盘 (C:\Users\xxx\Pictures),
 #   壁纸每天都攒, 几年下来好几个 GB, 会把系统盘撑满。所以:
 #     * 图片文件夹在系统盘以外 -> 直接用 <图片>\壁纸 (尊重用户自己的安排)
-#     * 图片文件夹在系统盘     -> 挑一个非系统盘, 用 <盘>\图片\壁纸
+#     * 图片文件夹在系统盘     -> 先找 C 盘以外**已经存在**的图片文件夹, 用它下面的「壁纸」;
+#                                 一个都找不到, 才挑一个非系统盘用 <盘>\图片\壁纸
 #     * 这台机器只有系统盘     -> 只能用 <图片>\壁纸, 并在向导里说清楚
 # 挑盘的规则沿用 Get-BwPickRoot (非系统盘优先、可写优先、可用空间降序)。
 function Get-BwDefaultBase {
   if ($global:BWDefaultBase) { return $global:BWDefaultBase }
   $pic = Get-BwPicturesDir
-  $sys = ''
-  try { $sys = (([string]$env:SystemDrive).TrimEnd('\')).ToUpper() } catch {}
-  $drv = ''
-  if ($pic -match '^([A-Za-z]):') { $drv = $Matches[1].ToUpper() }
+  $sys = Get-BwSysDriveLetter
+  $drv = Get-BwDriveLetter $pic
   if ($drv -and ($drv -ne $sys)) {
     $global:BWDefaultBase = (Join-Path $pic '壁纸')
     $global:BWBaseReason  = '你的「图片」文件夹本来就在系统盘以外'
   } else {
-    $root = ''
-    try { $root = ([string](Get-BwPickRoot)).TrimEnd('\') } catch {}
-    $rd = ''
-    if ($root -match '^([A-Za-z]):') { $rd = $Matches[1].ToUpper() }
-    if ($rd -and ($rd -ne $sys)) {
-      $global:BWDefaultBase = (Join-Path $root '图片\壁纸')
-      $global:BWBaseReason  = '「图片」文件夹在系统盘上, 已经挪到系统盘以外, 免得壁纸越攒越多把系统盘撑满'
+    $found = Find-BwExistingBase
+    if ($found) {
+      $global:BWDefaultBase = $found.Base
+      $global:BWBaseReason  = '「图片」文件夹在系统盘上, 而' + $found.Why + ' —— 壁纸归到它下面, 不再多造一个文件夹'
     } else {
-      $global:BWDefaultBase = (Join-Path $pic '壁纸')
-      $global:BWBaseReason  = '这台机器只有系统盘能用'
+      $root = ''
+      try { $root = ([string](Get-BwPickRoot)).TrimEnd('\') } catch {}
+      $rd = Get-BwDriveLetter $root
+      if ($rd -and ($rd -ne $sys)) {
+        $global:BWDefaultBase = (Join-Path $root '图片\壁纸')
+        $global:BWBaseReason  = '「图片」文件夹在系统盘上, 而且没找到现成的图片文件夹, 已经放到系统盘以外, 免得壁纸越攒越多把系统盘撑满'
+      } else {
+        $global:BWDefaultBase = (Join-Path $pic '壁纸')
+        $global:BWBaseReason  = '这台机器只有系统盘能用'
+      }
     }
   }
   return $global:BWDefaultBase

@@ -1,7 +1,7 @@
 ﻿# 微软壁纸助手 - 菜单 (by 海风 & 小腾)
 . (Join-Path $PSScriptRoot 'core.ps1')
 
-$global:BWVersion = '1.6.1'
+$global:BWVersion = '1.6.2'
 
 # 把用户按键归一化: 去首尾空格 + 全角转半角 + 转小写。
 # 中文输入法很容易把 o 打成全角 ｏ, 不归一化就变成"按了键没反应"。
@@ -144,6 +144,13 @@ function Select-BwBase([string]$suggest, [string]$suggestReason) {
     }
   }
   $cands += [PSCustomObject]@{ Path = $picPath; Extra = $picExtra }
+  # 第二项: C 盘以外**已经存在**的图片文件夹。有现成的就摆出来, 免得用户以为
+  # 只能新建 —— 以前列表里只有各盘的 <盘>\图片\壁纸, 于是明明盘上就有
+  # 「我的图片」, 用户还是挑了个新建的空壳出来。
+  $ex = Find-BwExistingBase
+  if ($ex -and ($ex.Base -ne $picPath)) {
+    $cands += [PSCustomObject]@{ Path = $ex.Base; Extra = ('已有图片文件夹    ' + $ex.Why) }
+  }
   foreach ($ch in $drives) {
     $tags = @()
     if (-not $ch.Writable) { $tags += '这台机器上还没给写入权限, 选中可一键修' }
@@ -498,7 +505,10 @@ function Show-BwSettings {
         Write-Host '  壁纸会放在这个文件夹下面的「必应」和「聚焦」两个子目录里。'
         Write-Host '  换位置不影响已经存好的图, 只是以后往新地方存。'
         Write-Host ''
-        $sel = Select-BwBase '' ''
+        # 以前这里传的是空建议, 于是列表里没有「<-- 建议」标记, 用户只能自己猜着挑 ——
+        # 挑错了就在盘根多出一个空的「图片」文件夹。现在把当前位置当建议传进去,
+        # 直接回车 = 不变。
+        $sel = Select-BwBase $base '现在就存这儿 —— 直接回车就不变'
         if (-not $sel) { Write-Host '  没改。' }
         else { [void](Set-BwBase $sel) }
         Pause-Bw
@@ -1051,9 +1061,12 @@ do {
   $running = Test-BwDaemonRunning
   # 时间**始终显示** —— 拿掉时间之后客户第一反应是"程序坏了"。
   # 但后台没跑的时候得把话说清楚: 那个点到了也不会有人换图。
-  if ($running) { $swapTxt = '下次自动换: ' + $next }
-  elseif ($auto -eq '开') { $swapTxt = '下次自动换: ' + $next + '  (后台还没启动, 按 [A] 开)' }
-  else { $swapTxt = '下次自动换: ' + $next + '  (自动换没开, 按 [A] 开)' }
+  # 措辞刻意避开「启动」两个字: 菜单开着 ≠ 后台在跑, 但用户看到"后台还没启动"
+  # 第一反应是"我不是已经把程序打开了吗" —— 说的是两件事, 却用了同一个词。
+  # 这里改成描述**状态**: 后台这会儿在跑 / 没在跑, 该按哪个键另说。
+  if ($running) { $swapTxt = '下次自动换: ' + $next + '  (后台正在跑, 到点就换)' }
+  elseif ($auto -eq '开') { $swapTxt = '下次自动换: ' + $next + '  (后台这会儿没在跑, 按 [A] 让它现在就开始)' }
+  else { $swapTxt = '下次自动换: ' + $next + '  (自动换还没开, 按 [A] 开)' }
   Write-Host (' 今日必应: ' + $bingDone + '    ' + $swapTxt + '    开机自动换: ' + $auto) -ForegroundColor DarkGray
   if ($moved) { Write-Host '  (程序位置变过, 开机自动换已重新指向当前这个 exe)' -ForegroundColor Yellow }
   if ($desk -eq 'create') { Write-Host '  已在桌面放了「微软壁纸助手」快捷方式 (不想要: 设置 [6] 里关)' -ForegroundColor DarkYellow }
@@ -1103,7 +1116,17 @@ do {
   Write-Host '  [F] 收藏当前这张 / 取消收藏'
   Write-Host '  [S] 设置'
   # 只摆当前能做那一下: 关着就只给「打开」, 开着就只给「关闭」
-  if (Test-BwAutoStart) { Write-Host '  [B] 关掉开机自动换壁纸   (现在: 开)' }
+  # 三态, 而不是一个翻面的开关:
+  #   关着            -> 只给 [A] 打开
+  #   开着且后台在跑  -> 只给 [B] 关掉
+  #   开着但后台没跑  -> 两个都给: [A] 把后台拉起来, [B] 整个关掉
+  # 以前"开着但后台没跑"时只摆 [B], 首页却又写"按 [A] 开" —— 菜单上没有 [A] 这一行,
+  # 用户照着提示按 A 只能靠猜。
+  if (($auto -eq '开') -and (-not $running)) {
+    Write-Host '  [A] 让后台现在就开始换图   (开机自动换: 开, 但后台这会儿没在跑)' -ForegroundColor Yellow
+    Write-Host '  [B] 关掉开机自动换壁纸     (开机自动换: 开)'
+  }
+  elseif (Test-BwAutoStart) { Write-Host '  [B] 关掉开机自动换壁纸   (现在: 开)' }
   else { Write-Host '  [A] 打开开机自动换壁纸   (现在: 关)' }
   Write-Host '  [L] 查看运行日志'
   Write-Host '  [Q] 退出'
