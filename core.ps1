@@ -192,6 +192,16 @@ function Get-BwDriveChoices {
 # "你的图片文件夹本来就在系统盘以外", 老老实实把壁纸往 C 盘里塞 ——
 # 而那正是绝大多数用户的默认情况 (也是壁纸越攒越多撑满系统盘的由来)。
 # 以后比盘符一律走这两个函数, 别再手写 TrimEnd。
+# 系统「图片」文件夹自己的名字: 你这台叫「我的图片」, 别人那台可能叫「图片」/「Pictures」。
+# 兜底要造文件夹时跟着这台机器的叫法走, 不一刀切写成「图片」——
+# 不然明明你自己的图片文件夹叫「我的图片」, 程序却在盘根另造一个「图片」跟它并列。
+function Get-BwPicturesLeaf {
+  $p = ''
+  try { $p = Split-Path (Get-BwPicturesDir) -Leaf } catch { $p = '' }
+  if (-not $p) { $p = '图片' }
+  return $p
+}
+
 function Get-BwSysDriveLetter {
   try { return (([string]$env:SystemDrive).TrimEnd('\').TrimEnd(':')).ToUpper() } catch { return '' }
 }
@@ -250,7 +260,17 @@ function Find-BwExistingBase {
           $bestScore = 110; $best = $wp
           $bestWhy = $drv + ': 上已经有放壁纸的文件夹'
         }
-        # 2) 已有的图片文件夹: 下面带「壁纸」子目录且里面有图 > 里面有图 > 空文件夹
+        # 2) 这一档: 盘上散着图片文件, 但没专门建图片文件夹 —— 那这个盘就是拿来放图的,
+        #    壁纸归到它的「图片\壁纸」下。用户的意思: 一个现成的图片文件夹都没有时,
+        #    程序自己造一个, 而不是退回系统盘。
+        if (Test-BwHasJpg $root) {
+          if (20 -gt $bestScore) {
+            $bestScore = 20
+            $best = (Join-Path $root ((Get-BwPicturesLeaf) + '\壁纸'))
+            $bestWhy = $drv + ': 上散着图片文件, 但没有专门的图片文件夹'
+          }
+        }
+        # 3) 已有的图片文件夹: 下面带「壁纸」子目录且里面有图 > 里面有图 > 空文件夹
         foreach ($nm in $picNames) {
           $p = Join-Path $root $nm
           if (-not (Test-Path -LiteralPath $p)) { continue }
@@ -310,16 +330,12 @@ function Get-BwDefaultBase {
       $global:BWDefaultBase = $found.Base
       $global:BWBaseReason  = '「图片」文件夹在系统盘上, 而' + $found.Why + ' —— 壁纸归到它下面, 不再多造一个文件夹'
     } else {
-      $root = ''
-      try { $root = ([string](Get-BwPickRoot)).TrimEnd('\') } catch {}
-      $rd = Get-BwDriveLetter $root
-      if ($rd -and ($rd -ne $sys)) {
-        $global:BWDefaultBase = (Join-Path $root '图片\壁纸')
-        $global:BWBaseReason  = '「图片」文件夹在系统盘上, 而且没找到现成的图片文件夹, 已经放到系统盘以外, 免得壁纸越攒越多把系统盘撑满'
-      } else {
-        $global:BWDefaultBase = (Join-Path $pic '壁纸')
-        $global:BWBaseReason  = '这台机器只有系统盘能用'
-      }
+      # 一个现成的图片文件夹都没有: 就放在「图片」文件夹自己的位置下面, 不再另起一条路径。
+      # (以前这里是挑一个非系统盘凭空造 <盘>\图片\壁纸 —— 那正是用户说的"它要造反吗":
+      #  明明盘上就有「我的图片」, 盘根却多出一个空的「图片」跟它并列。)
+      # 目录不存在没关系, 建库的时候会自己创建出来。
+      $global:BWDefaultBase = (Join-Path $pic '壁纸')
+      $global:BWBaseReason  = '这台机器上没找到别的现成图片文件夹, 就放在你的「图片」文件夹里, 不再另外造一个'
     }
   }
   return $global:BWDefaultBase
