@@ -1,7 +1,7 @@
 ﻿# 微软壁纸助手 - 菜单 (by 海风 & 小腾)
 . (Join-Path $PSScriptRoot 'core.ps1')
 
-$global:BWVersion = '1.6.0'
+$global:BWVersion = '1.6.1'
 
 # 把用户按键归一化: 去首尾空格 + 全角转半角 + 转小写。
 # 中文输入法很容易把 o 打成全角 ｏ, 不归一化就变成"按了键没反应"。
@@ -1059,6 +1059,8 @@ do {
   if ($desk -eq 'create') { Write-Host '  已在桌面放了「微软壁纸助手」快捷方式 (不想要: 设置 [6] 里关)' -ForegroundColor DarkYellow }
   elseif ($desk -eq 'update') { Write-Host '  桌面快捷方式已指向当前这份程序, 图标也是新的' -ForegroundColor DarkYellow }
   Write-Host (' 壁纸库: 必应 ' + $bingN + ' 张 · 聚焦 ' + $spotN + ' 张 · 待换队列剩 ' + (Left-Queue $s0) + ' 张') -ForegroundColor DarkGray
+  # 累计下载是笔只增不减的流水账: 删掉的、被库上限清走的都还在这个数里
+  Write-Host (' 累计下载: ' + (Get-BwDlTotal $s0) + ' 张 (从装上那天算起, 删掉和清走的都记着)') -ForegroundColor DarkGray
   # 收藏只在开了「只看收藏」时才占一行 —— 平时不打扰
   if ([bool]$c0.fav_only) {
     Write-Host (' 收藏: ' + @(Get-BwFavFiles $s0).Count + ' 张 · 只在收藏里轮换: 开') -ForegroundColor DarkGray

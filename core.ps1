@@ -316,6 +316,7 @@ function Get-BwState {
   }
   $ver = 0
   $needImport = $false
+  $needDl = $false
   if ($s) { try { $ver = [int]$s.schema } catch { $ver = 0 } }
   if ($ver -lt 3) {
     # 3 以前的结构不一样, 没法迁, 重置
@@ -333,6 +334,10 @@ function Get-BwState {
     # 名单是新东西, 以前换过的图一张都没记过。不回填的话那批图重洗时照样排回来,
     # 等于换了版本照样重复。日志里每次换图都有记录, 从那儿捞回来。
     $needImport = $true
+  } elseif ($ver -eq 6) {
+    # 6 -> 7 多了「累计下载张数」(菜单首页要显示), 进度/队列/收藏/看过名单一律保留
+    Log '节奏进度文件 6 -> 7: 新增累计下载张数 (菜单首页显示, 只增不减)'
+    $needDl = $true
   }
   # bing_high_date : 必应补漏的水位线, 只往前不后退 (详见 Get-BwHighDate)
   # favorites      : 收藏的图片文件名, 只记名字 (和 queue 一个口径); 图被删掉也
@@ -340,10 +345,15 @@ function Get-BwState {
   # history        : **看过**的图的唯一标识(不是文件名, 见 Get-BwNameKey)。
   #                  有了它, 队列洗牌时才能把看过的挑出去 —— 不然每洗一轮,
   #                  昨天看过的 18 张又排回来, 客户看到的就是"这张我昨天不是刚看过吗"。
+  # dl_total       : 从装上那天起**累计下载过多少张**。只增不减 —— 图被删掉、
+  #                  被移走、被库上限清进回收站, 这个数都不往回退(那是"下载过",
+  #                  不是"现在还有")。删掉之后重新下载算新的一张, 如实再加一次。
+  # dl_filled      : 老版本升级上来时做过回填没有(0/1)。回填只做一次。
   $def = [ordered]@{
-    schema = 6; last_bing_date = ''; last_swap = ''; last_boot = ''
+    schema = 7; last_bing_date = ''; last_swap = ''; last_boot = ''
     queue = @(); refills = 0; shown = 0; last_wall = ''
     bing_high_date = ''; favorites = @(); history = @()
+    dl_total = 0; dl_filled = 0
   }
   foreach ($k in $def.Keys) {
     $p = $s.PSObject.Properties[$k]
@@ -351,13 +361,78 @@ function Get-BwState {
   }
   # schema 要**强制**写成当前版本: 上面那个循环只在"字段缺失或为空"时才补,
   # 而 schema 永远是 3 (有值), 于是升完级还是 3, 每次进来都要再"升级"一遍。
-  Add-Member -InputObject $s NoteProperty schema 6 -Force
+  Add-Member -InputObject $s NoteProperty schema 7 -Force
   # 这时候 history 字段已经补齐了, 回填才安全
   if ($needImport) {
     $n = Import-BwHistFromLog $s
     if ($n -gt 0) { Log ('  从日志回填了 ' + $n + ' 张「看过」的图 (以前换过的现在也认得出来了)') }
   }
+  if ($needDl -and ([int]$s.dl_filled -eq 0)) {
+    # 老版本从没记过"下载过几张"。装上新版第一次进来时补一个基数:
+    # 库里还剩下的 + 「看过」名单里记着的(删掉的图名字还留着) + 日志里能翻到的
+    # 下载记录, 三处按图片编号去重后取并集 —— 能追溯到的都算上。
+    $n2 = Fill-BwDlBase $s
+    if ($n2 -gt 0) {
+      $s.dl_filled = 1
+      Log ('  累计下载张数: 按现有痕迹回填了 ' + $n2 + ' 张 (更早就下载过、又已经被清出名单的, 查不到了)')
+      # 当场落盘: 回填只该做一次, 不落盘的话下次进来又要重算一遍。
+      # 走 KeepFav 合并写, 免得把用户正在菜单里改的东西覆盖掉。
+      Save-BwStateKeepFav $s
+    }
+  }
   return $s
+}
+
+# ---- 累计下载张数 ----
+# 用户要的是「从装上那天起一共下载过多少张」, 而且删掉的、被清走的都要算。
+# 所以它是个**流水账**: 每成功下载一张就 +1, 永远不会因为图不见了而往回退。
+function Get-BwDlTotal($s) {
+  if (-not $s) { return 0 }
+  try { return [int]$s.dl_total } catch { return 0 }
+}
+# 老版本从没记过这个数, 升级上来第一次运行时补一个基数。
+# 能找到的痕迹只有三处, 按图片编号(见 Get-BwNameKey)去重后取并集:
+#   1) 库里现在还剩下的图
+#   2) 「看过」名单 —— 删掉的图名字还留在里面, 这张不会被算丢
+#   3) 日志里能翻到的「下载成功」记录(日志超过 256KB 只留最近 200 行, 更早的查不到)
+# 查不到的部分不猜: 数字只会**偏小**, 不会凭空变大。之后每下载一张都真记一次。
+function Fill-BwDlBase($s) {
+  $set = New-Object 'System.Collections.Generic.HashSet[string]'
+  try {
+    $c = Get-BwConfig
+    foreach ($d in @([string]$c.bing_save_dir, [string]$c.spotlight_save_dir)) {
+      if ($d -and (Test-Path -LiteralPath $d)) {
+        foreach ($f in @(Get-ChildItem -LiteralPath $d -File -Filter *.jpg -ErrorAction SilentlyContinue)) {
+          $k = Get-BwNameKey $f.Name
+          if ($k) { [void]$set.Add($k) }
+        }
+      }
+    }
+  } catch {}
+  foreach ($h in @(Get-BwHist $s)) { if ($h) { [void]$set.Add([string]$h) } }
+  try {
+    if (Test-Path -LiteralPath $global:BWLog) {
+      foreach ($line in @(Get-Content -LiteralPath $global:BWLog -Encoding UTF8 -ErrorAction SilentlyContinue)) {
+        if ($line -match '下载成功:\s*(.+\.jpg)') {
+          $k = Get-BwNameKey ([System.IO.Path]::GetFileName($Matches[1].Trim()))
+          if ($k) { [void]$set.Add($k) }
+        }
+      }
+    }
+  } catch {}
+  if ($set.Count -gt (Get-BwDlTotal $s)) { $s.dl_total = $set.Count }
+  return (Get-BwDlTotal $s)
+}
+# 成功下载一张 +1。后台巡检和用户开着的菜单可能同时在下载, 所以写回走 KeepFav
+# 那条合并的路子 —— 直接整份覆盖会把对方刚做的事无声吞掉。
+function Add-BwDlCount([int]$n = 1) {
+  if ($n -le 0) { return }
+  try {
+    $s = Get-BwState
+    if (-not $s) { return }
+    $s.dl_total = (Get-BwDlTotal $s) + $n
+    Save-BwStateKeepFav $s
+  } catch {}
 }
 # ---- 图库上限 ----
 # 库只增不减的话, 用几个月就攒到上千张好几个 GB。设个上限, 超了就把
@@ -500,6 +575,8 @@ function Save-BwStateKeepFav($s) {
   }
   # 累计显示数不许倒退: 两边都可能在对方跑长任务时自增过, 取大的那个
   if ([int]$disk.shown -gt [int]$s.shown) { $s.shown = [int]$disk.shown }
+  # 累计下载数同理(它只增不减, 谁的多听谁的)
+  if ((Get-BwDlTotal $disk) -gt (Get-BwDlTotal $s)) { $s.dl_total = Get-BwDlTotal $disk }
   $dh = @(@($disk.history) | Where-Object { $_ })
   $sh = @(@($s.history) | Where-Object { $_ })
   if ($dh.Count -gt 0) {
@@ -845,6 +922,8 @@ function Save-BwFile([string[]]$urls, [string]$path) {
         Remove-BwFile $path
         Move-Item -LiteralPath $tmp -Destination $path -Force
         Log "下载成功: $(Split-Path $path -Leaf) ($dim)"
+        # 记一笔: 从装上那天起一共下载过多少张(删掉的、清走的都不往回减)
+        Add-BwDlCount 1
         return $true
       }
       Remove-BwFile $tmp
