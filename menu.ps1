@@ -1,7 +1,7 @@
 ﻿# 微软壁纸助手 - 菜单 (by 海风 & 小腾)
 . (Join-Path $PSScriptRoot 'core.ps1')
 
-$global:BWVersion = '1.5.5'
+$global:BWVersion = '1.6.0'
 
 # 把用户按键归一化: 去首尾空格 + 全角转半角 + 转小写。
 # 中文输入法很容易把 o 打成全角 ｏ, 不归一化就变成"按了键没反应"。
@@ -18,6 +18,23 @@ function Normalize-BwKey([string]$s) {
 
 function Pause-Bw { Write-Host ''; Read-Host '  按回车返回菜单' | Out-Null }
 function Today-Str { return (Get-Date -Format 'yyyy-MM-dd') }
+
+# 系统自带的 ie4uinit 没跑成 / 机器上没有时, 给出真正能用的备用办法。
+# 以前这里让用户去"程序目录"里找 刷新图标缓存.bat —— 可那个 bat 压根没打进 exe,
+# 用户照着提示去找只能扑空。现在 bat 跟着 core.ps1 一起躺在数据目录里, 提示给的是真实路径。
+function Show-BwIconFixHint {
+  $bat = Join-Path $global:BWRoot '刷新图标缓存.bat'
+  if (Test-Path -LiteralPath $bat) {
+    Write-Host ''
+    Write-Host '  备用办法: 双击下面这个脚本 (会重启一次资源管理器, 不丢文件)'
+    Write-Host ('  ' + $bat) -ForegroundColor DarkGray
+    Write-Host '  [o] 打开它所在的文件夹    [回车] 就这样'
+    $k = Normalize-BwKey (Read-Host '  ')
+    if ($k -eq 'o') { try { Start-Process -FilePath 'explorer.exe' -ArgumentList $global:BWRoot } catch {} }
+  } else {
+    Write-Host '  备用办法: 注销一次再登录, 或者重启电脑 —— 这是最彻底的。' -ForegroundColor DarkGray
+  }
+}
 # 库的口径: 只数这一层的 .jpg, 不往子目录里钻。
 # 用户会把图挪进子目录、删掉、或者搬到别处 —— 口径必须稳定可预期:
 # "库里有几张" 就等于 "能轮换到几张", 两个数不会对不上。
@@ -565,13 +582,16 @@ function Show-BwSettings {
               Write-Host '  好了。还显示旧图标的话, 把那个文件夹窗口关掉重开一次。'
               Log ('设置: 刷新图标缓存 (ie4uinit -ClearIconCache) 完成')
             } else {
-              Write-Host ('  没成功 (退出码 ' + $p.ExitCode + ')。可以用程序目录里的「刷新图标缓存.bat」。')
+              Write-Host ('  没成功 (退出码 ' + $p.ExitCode + ')。')
+              Show-BwIconFixHint
             }
           } catch {
             Write-Host ('  没跑成: ' + $_.Exception.Message)
+            Show-BwIconFixHint
           }
         } else {
-          Write-Host '  这台机器没有 ie4uinit.exe。用程序目录里的「刷新图标缓存.bat」代替 (会重启一次资源管理器)。'
+          Write-Host '  这台机器没有 ie4uinit.exe。'
+          Show-BwIconFixHint
         }
         Pause-Bw
       }
@@ -660,7 +680,7 @@ function Invoke-BwFirstRun {
   Show-BwFirstRunHead
   Write-Host ('  壁纸保存在: ' + $base) -ForegroundColor Green
   if ($d.reason) { Write-Host ('             ' + $d.reason) -ForegroundColor DarkGray }
-  Write-Host '  想换地方: 菜单里按 [S] 设置 - [1]'
+  Write-Host '  想换地方: 菜单里按 [S] 设置 - [3]'
   Write-Host ''
 
   $bing = Join-Path $base '必应'
@@ -694,7 +714,7 @@ function Invoke-BwFirstRun {
   }
   Write-Host ''
   Write-Host '  想让它在后台自动换, 回到菜单按 [A] 打开「开机自动换壁纸」,'
-  Write-Host '  不需要管理员权限, 也不装计划任务; 再按一次 [A] 就关掉。'
+  Write-Host '  不需要管理员权限, 也不装计划任务; 想关掉就按 [B]。'
   Pause-Bw
 }
 
@@ -1103,10 +1123,14 @@ do {
     'a' { [void](Enable-BwAutoStart); Pause-Bw }
     'b' { [void](Disable-BwAutoStart); Pause-Bw }
     'l' { Get-Content -LiteralPath $global:BWLog -Tail 40 -Encoding UTF8 -ErrorAction SilentlyContinue; Pause-Bw }
-    # 退出: 主标识是 Q; 0 和 o 也认 —— 老菜单里那个 [0] 常被看成字母 O, 习惯不改
+    # 退出: 只认 Q。0 保留 (老菜单 [0] 退出留下来的手感)。
+    # o 不再退出 —— 设置里的 [o] 是「打开文件夹」, 主菜单按 o 却直接关掉程序, 太容易误伤。
     'q' { $quit = $true }
     '0' { $quit = $true }
-    'o' { $quit = $true }
+    'o' {
+      Write-Host '  退出请按 Q —— o 现在只是「打开文件夹」, 不再退出程序了。'
+      Start-Sleep -Milliseconds 900
+    }
     default {
       Write-Host ('  「' + $k + '」不是菜单里的选项, 请输入方括号里的数字或字母')
       Start-Sleep -Milliseconds 900

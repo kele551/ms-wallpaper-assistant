@@ -37,10 +37,10 @@ import time
 import datetime
 import ctypes
 
-VERSION = '1.5.5'
+VERSION = '1.6.0'
 APP_NAME = '微软壁纸助手'
 DATA_DIR_NAME = '微软壁纸助手数据'
-PAYLOAD_FILES = ['core.ps1', 'menu.ps1', '使用说明.txt', '微软壁纸助手.ico']
+PAYLOAD_FILES = ['core.ps1', 'menu.ps1', '使用说明.txt', '微软壁纸助手.ico', '刷新图标缓存.bat']
 MUTEX_NAME = 'Local\\MSWallpaperAssistantDaemon'
 CREATE_NO_WINDOW = 0x08000000
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value

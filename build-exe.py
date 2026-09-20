@@ -37,7 +37,7 @@ import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP_NAME = '微软壁纸助手'
-PAYLOAD_FILES = ['core.ps1', 'menu.ps1', '使用说明.txt', '微软壁纸助手.ico']
+PAYLOAD_FILES = ['core.ps1', 'menu.ps1', '使用说明.txt', '微软壁纸助手.ico', '刷新图标缓存.bat']
 ICON = '微软壁纸助手.ico'
 
 
