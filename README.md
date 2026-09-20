@@ -35,7 +35,7 @@ Windows 桌面壁纸自动轮换工具。图全都来自微软官方，两个图
 
 ## 下载
 
-### 👉 [点这里下载最新版](https://github.com/kele551/ms-wallpaper-assistant/releases/latest)
+### 👉 [点这里下载最新版（v1.5.4 压缩包）](https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/downloads/MSWallpaperAssistant-v1.5.4.zip)
 
 下载下来是一个 zip，解压后里面就两样东西：
 
