@@ -134,7 +134,7 @@ Windows 桌面壁纸自动轮换工具。图全都来自微软官方，两个图
 好不好用、哪儿别扭、还想要什么功能 —— 都欢迎说，一句两句也行：
 
 - **发邮件**：75219857@qq.com
-- **开 Issue**：https://github.com/kele551/ms-wallpaper-assistant/issues
+- **开 Issue**：https://gitee.com/kele551/ms-wallpaper-assistant/issues
 
 顺手带上这几样，能省一轮来回：
 
