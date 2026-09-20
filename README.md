@@ -1,6 +1,6 @@
 # 微软壁纸助手
 
-![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Windows-blue) ![Version](https://img.shields.io/badge/version-v1.5.4-blue)
+![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Windows-blue) ![Version](https://img.shields.io/badge/version-v1.5.5-blue)
 
 **让电脑桌面壁纸自己换，你不用管。**
 
@@ -35,7 +35,9 @@ Windows 桌面壁纸自动轮换工具。图全都来自微软官方，两个图
 
 ## 下载
 
-### 👉 [点这里下载最新版（v1.5.4 压缩包）](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v1.5.4/MSWallpaperAssistant-v1.5.4.zip)
+### 👉 [点这里下载 v1.5.4 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v1.5.4/MSWallpaperAssistant-v1.5.4.zip)
+
+> v1.5.5 的源码改动已进仓库，配套的安装包还没重新打包，所以这里暂时还是 v1.5.4 的。
 
 下载下来是一个 zip，解压后里面就两样东西：
 
@@ -145,7 +147,7 @@ Windows 桌面壁纸自动轮换工具。图全都来自微软官方，两个图
 
 ## 版本迭代
 
-每次改版都会打一个版本号、发一版下载。**当前最新：v1.5.4**
+每次改版都会打一个版本号、发一版下载。**当前最新：v1.5.5**
 
 小版本的改动都归到同一个大版本下面说，一行一个版本：
 
@@ -160,6 +162,7 @@ Windows 桌面壁纸自动轮换工具。图全都来自微软官方，两个图
 
 v1.5 里面各小版本都改了什么：
 
+- **v1.5.5** 修掉几处悄悄出错、界面上却看不出来的问题：下载到的半成品／错误页不再留在图库里（更不会被设成壁纸）；补漏时某天没联网，那天留着下次重试，不再永久判死；当日必应图没拿到就真的 15 分钟后再试，不再假装成功；后台巡检不再无声覆盖你在菜单里的收藏和手动挑的图；手动挑图开始记账，按 `[F]` 收藏到的就是眼前这张
 - **v1.5.4** 图库设上限（默认 100 张），超了把**已经看过**的最老的移进回收站；新增「自动补新图」开关（默认关，只在现有图里轮换）
 - **v1.5.3** 看过的壁纸不再排回来（另记一份「看过」名单，按图片编号比对而不是文件名）；按 `[A]` 开自动换**当场**就生效，不用等下次开机
 - **v1.5.2** 「开机自动换」拆成 `[A]` 打开 / `[B]` 关掉两个键，不会再按反

@@ -1,7 +1,7 @@
 ﻿# 微软壁纸助手 - 菜单 (by 海风 & 小腾)
 . (Join-Path $PSScriptRoot 'core.ps1')
 
-$global:BWVersion = '1.5.4'
+$global:BWVersion = '1.5.5'
 
 # 把用户按键归一化: 去首尾空格 + 全角转半角 + 转小写。
 # 中文输入法很容易把 o 打成全角 ｏ, 不归一化就变成"按了键没反应"。
@@ -262,9 +262,8 @@ function Show-BrowseAll {
   }
   try {
     $p = $files[[int]$sel].file.FullName
-    $ok = Set-BwDesktopWallpaper $p
+    $ok = Set-BwWallManual $s $p '手动浏览设壁纸'
     Write-Host ('  已设为壁纸 (ok=' + $ok + '): ' + (Split-Path $p -Leaf))
-    Log ('手动浏览设壁纸: ' + $p)
   } catch { Write-Host '  序号无效' }
 }
 
@@ -402,9 +401,8 @@ function Show-BwFavorites {
       $idx = [int]$Matches[1]
       if (($idx -ge 0) -and ($idx -lt $files.Count)) {
         $p = $files[$idx].FullName
-        $ok = Set-BwDesktopWallpaper $p
+        $ok = Set-BwWallManual $s $p '收藏夹设壁纸'
         Write-Host ('  已设为壁纸 (ok=' + $ok + '): ' + (Split-Path $p -Leaf))
-        Log ('收藏夹设壁纸: ' + $p)
       } else { Write-Host '  没有这一项' }
       Pause-Bw
     }

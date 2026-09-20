@@ -477,6 +477,37 @@ function Save-BwState($s) {
   $s.queue = @($s.queue | Where-Object { $_ })
   [System.IO.File]::WriteAllText($global:BWState, ($s | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding($false)))
 }
+# 后台巡检 / 补漏写回 state 时必须走这里, 不能直接 Save-BwState 整份覆盖。
+#
+# 为什么: 后台是"开头读一次 state, 跑几分钟(下载、补漏)之后整份写回"。
+# 这期间用户很可能正在菜单里操作 —— 按 [F] 收藏、手动挑一张设为壁纸,
+# 改的是同一份文件。后台手里是几分钟前的旧快照, 一覆盖就把用户刚做的事
+# 无声吞掉: 不报错、不写日志, 用户只会觉得"这软件有毛病", 根本查不出原因。
+#
+# 三条原则(每一条都对应一个上面互通不了的字段):
+#   收藏夹   —— 后台从不主动改它, 写回时一律以磁盘为准(否则刚取消的收藏会被还原)
+#   当前壁纸 —— 谁最后动过听谁的(比 last_swap), 菜单挑的那张不会被旧值顶回去
+#   看过名单 —— 两边都可能往里加(后台换图 + 用户手动挑图), 取并集而不是覆盖
+function Save-BwStateKeepFav($s) {
+  $disk = Get-BwState
+  if (-not $disk) { Save-BwState $s; return }
+  $s.favorites = @(@($disk.favorites) | Where-Object { $_ })
+  $dT = Get-BwTime ([string]$disk.last_swap)
+  $sT = Get-BwTime ([string]$s.last_swap)
+  if ($dT -and $sT -and ($dT -gt $sT)) {
+    if ($disk.last_wall) { $s.last_wall = [string]$disk.last_wall }
+    $s.last_swap = [string]$disk.last_swap
+  }
+  # 累计显示数不许倒退: 两边都可能在对方跑长任务时自增过, 取大的那个
+  if ([int]$disk.shown -gt [int]$s.shown) { $s.shown = [int]$disk.shown }
+  $dh = @(@($disk.history) | Where-Object { $_ })
+  $sh = @(@($s.history) | Where-Object { $_ })
+  if ($dh.Count -gt 0) {
+    $u = @(@($sh) + @($dh | Where-Object { $sh -notcontains $_ })) | Select-Object -Unique
+    $s.history = @($u | Select-Object -Last 400)
+  }
+  Save-BwState $s
+}
 function Get-BwTime([string]$t) {
   try { return [DateTime]::ParseExact($t, 'yyyy-MM-dd HH:mm:ss', [System.Globalization.CultureInfo]::InvariantCulture) } catch { return $null }
 }
@@ -655,6 +686,22 @@ function Invoke-BwSwap($s, [DateTime]$now, [string]$why) {
   [void](Trim-BwLibrary $s)
   return $true
 }
+# 用户在菜单里手动挑一张设为壁纸 —— 也必须走同一套记账。
+# 以前手动选图只调 Set-BwDesktopWallpaper, last_wall / history / shown 全都不写,
+# 后果是三重的: 主菜单显示的"当前壁纸"停在上次自动换的那张; 按 [F] 收藏,
+# 收藏到的是另一张图; 手动选的那张不进"看过"名单, 很快又被洗回来。
+function Set-BwWallManual($s, [string]$path, [string]$why) {
+  if (-not $path) { return $false }
+  if (-not (Test-Path -LiteralPath $path)) { Write-Host '  这张图已经不在库里了'; return $false }
+  $ok = Set-BwWall $path
+  $s.last_wall = $path
+  $s.shown = [int]$s.shown + 1
+  $s.last_swap = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+  Add-BwHist $s (Split-Path $path -Leaf)
+  Log ($why + ' -> ' + (Split-Path $path -Leaf) + ' (ok=' + $ok + ')')
+  Save-BwState $s
+  return $ok
+}
 function Get-BwMeta([int]$idx) {
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
   for ($i = 1; $i -le 3; $i++) {
@@ -771,20 +818,42 @@ function Apply-BwWallStyle {
   Log ('填充方式改为 ' + $w.Label + ', 重设当前壁纸使其立刻生效')
   return [bool](Set-BwDesktopWallpaper $cur)
 }
+function Remove-BwFile([string]$path) {
+  # 走 .NET 删: 本机 Remove-Item 走回收站, 中文路径下会报 trash 失败
+  if ($path -and (Test-Path -LiteralPath $path)) { try { [System.IO.File]::Delete($path) } catch {} }
+}
 function Save-BwFile([string[]]$urls, [string]$path) {
+  # 先落地成 .part, 确认是张能用的图再改名进库。
+  # 以前直接写到目标名: 下载到一半被截断 / 拿到的是 HTML 错误页(同样超过 100KB),
+  # 半成品会留在图库里, 被计入库容, 甚至被挑去设为壁纸 —— 桌面直接黑掉或花掉。
+  $tmp = $path + '.part'
+  Remove-BwFile $tmp
   foreach ($u in $urls) {
     try {
-      Invoke-WebRequest -Uri $u -OutFile $path -TimeoutSec 300 -UseBasicParsing
-      if ((Get-Item $path -ErrorAction SilentlyContinue).Length -gt 100KB) {
+      Invoke-WebRequest -Uri $u -OutFile $tmp -TimeoutSec 300 -UseBasicParsing
+      if ((Get-Item $tmp -ErrorAction SilentlyContinue).Length -gt 100KB) {
         Add-Type -AssemblyName System.Drawing
-        $im = [System.Drawing.Image]::FromFile($path); $dim = "$($im.Width)x$($im.Height)"; $im.Dispose()
+        $im = $null; $dim = ''
+        try { $im = [System.Drawing.Image]::FromFile($tmp); $dim = "$($im.Width)x$($im.Height)" } catch {}
+        finally { if ($im) { $im.Dispose() } }
+        # 大小够了但解码失败 = 坏图。以前这种情况带着文件照样返回 True, 脏图就留下了。
+        if (-not $dim) {
+          Log ('下载的不是能用的图, 已丢弃: ' + (Split-Path $path -Leaf))
+          Remove-BwFile $tmp
+          continue
+        }
+        Remove-BwFile $path
+        Move-Item -LiteralPath $tmp -Destination $path -Force
         Log "下载成功: $(Split-Path $path -Leaf) ($dim)"
         return $true
       }
-      # 走 .NET 删: 本机 Remove-Item 走回收站, 中文路径下会报 trash 失败
-      if (Test-Path -LiteralPath $path) { try { [System.IO.File]::Delete($path) } catch {} }
-    } catch { Log ('下载失败: ' + $_.Exception.Message) }
+      Remove-BwFile $tmp
+    } catch {
+      Log ('下载失败: ' + $_.Exception.Message)
+      Remove-BwFile $tmp
+    }
   }
+  Remove-BwFile $tmp
   return $false
 }# ---- 归档源: niumoo/bing-wallpaper (2021-02 至今, 4K UHD, 用户要求批量下载近几年壁纸) ----
 function Get-BwRawUrls([string]$rawPath) {
@@ -921,16 +990,19 @@ function Invoke-BwBackfill($s) {
       $path = Get-BwTargetPath $it.date (Get-BwMonthName $it)
       $urls = @($it.url)
     }
-    if (Test-Path -LiteralPath $path) { $skip++; continue }
-    if (Save-BwFile $urls $path) { $ok++ } else { $fail++ }
+    if (Test-Path -LiteralPath $path) { $skip++; $gotThrough = $day; continue }
+    if (Save-BwFile $urls $path) { $ok++; $gotThrough = $day } else { $fail++ }
     Start-Sleep -Milliseconds 400
   }
   if (($ok + $skip + $fail) -gt 0) {
     Log ('补漏 ' + $missing[0].ToString('yyyy-MM-dd') + ' ~ ' + $missing[$missing.Count - 1].ToString('yyyy-MM-dd') + ': 新增 ' + $ok + ' 已有 ' + $skip + ' 失败 ' + $fail)
   }
-  # 补到哪天, 水位就记到哪天 —— 之后用户把这几张删了也不会再补一次
-  Set-BwHighDate $s $missing[$missing.Count - 1].ToString('yyyy-MM-dd')
-  Save-BwState $s
+  # 水位只推到"确实拿到过的那天"。以前不看成败一律推到最后一天,
+  # 于是断一次网那几天的图就永久漏了, 而且再也不会补。
+  if ($gotThrough) {
+    Set-BwHighDate $s $gotThrough.ToString('yyyy-MM-dd')
+    Save-BwState $s
+  }
 }
 # ---- Windows 聚焦图源 (微软官方桌面聚焦, 3840x2160, 与 Bing 壁纸同一壁纸团队) ----
 function Get-SpotlightOne {
@@ -1116,17 +1188,23 @@ function Invoke-BwCycle {
           if (-not (Test-Path -LiteralPath $path)) {
             if (-not (Save-BwFile (Get-BwCandidates $meta ($c.resolution_mode)) $path)) { $path = $null }
           }
-          if ($path) {
-            $ok = Set-BwWall $path
-            $s.last_wall = $path
-            Log ('今日首次 -> 必应当日壁纸 ' + $name + ' (ok=' + $ok + ')')
-          } else { Log '必应当日壁纸下载失败, 15 分钟后再试' }
+          if (-not $path) {
+            # 这里必须直接 return 且不记账。以前下载失败也照样把 last_bing_date 写成今天,
+            # 而 15 分钟后要不要重试恰恰是看这个字段 —— 当天就再也不会重试了,
+            # 上面那句"15 分钟后再试"的日志其实是假的。
+            Log '必应当日壁纸下载失败, 15 分钟后再试'
+            Save-BwState $s
+            return
+          }
+          $ok = Set-BwWall $path
+          $s.last_wall = $path
+          Log ('今日首次 -> 必应当日壁纸 ' + $name + ' (ok=' + $ok + ')')
         }
         $s.last_bing_date = $today
         # 用"此刻"而不是进入本轮的时刻: 下载当天必应图可能花几分钟,
         # 时间戳要是记成开始时间, 下一次轮换就会提前触发。
         $s.last_swap = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
-        Save-BwState $s
+        Save-BwStateKeepFav $s
         return
       }
       Log '必应元数据取不到, 15 分钟后再试'
@@ -1148,7 +1226,7 @@ function Invoke-BwCycle {
     }
 
     # 未到点: 静默, 只把开机时间存下来
-    Save-BwState $s
+    Save-BwStateKeepFav $s
   } catch { Log ('轮换异常: ' + $_.Exception.Message) }
 }
 # 注意: -Update 与 -Cycle 走同一套逻辑。
