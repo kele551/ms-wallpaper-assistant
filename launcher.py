@@ -37,7 +37,7 @@ import time
 import datetime
 import ctypes
 
-VERSION = '1.5.4'
+VERSION = '1.5.5'
 APP_NAME = '微软壁纸助手'
 DATA_DIR_NAME = '微软壁纸助手数据'
 PAYLOAD_FILES = ['core.ps1', 'menu.ps1', '使用说明.txt', '微软壁纸助手.ico']
