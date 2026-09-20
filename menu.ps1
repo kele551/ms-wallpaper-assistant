@@ -1031,9 +1031,11 @@ do {
   # 后台没跑时还显示一个时间, 等于给个假承诺: 那个点到了也不会有人换图,
   # 而且数字纹丝不动(它是按"上次换图时刻+间隔"算的, 不会自己往前走)。
   $running = Test-BwDaemonRunning
+  # 时间**始终显示** —— 拿掉时间之后客户第一反应是"程序坏了"。
+  # 但后台没跑的时候得把话说清楚: 那个点到了也不会有人换图。
   if ($running) { $swapTxt = '下次自动换: ' + $next }
-  elseif ($auto -eq '开') { $swapTxt = '自动换: 本次开机还没启动' }
-  else { $swapTxt = '自动换: 没开' }
+  elseif ($auto -eq '开') { $swapTxt = '下次自动换: ' + $next + '  (后台还没启动, 按 [A] 开)' }
+  else { $swapTxt = '下次自动换: ' + $next + '  (自动换没开, 按 [A] 开)' }
   Write-Host (' 今日必应: ' + $bingDone + '    ' + $swapTxt + '    开机自动换: ' + $auto) -ForegroundColor DarkGray
   if ($moved) { Write-Host '  (程序位置变过, 开机自动换已重新指向当前这个 exe)' -ForegroundColor Yellow }
   if ($desk -eq 'create') { Write-Host '  已在桌面放了「微软壁纸助手」快捷方式 (不想要: 设置 [6] 里关)' -ForegroundColor DarkYellow }

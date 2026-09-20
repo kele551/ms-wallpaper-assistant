@@ -294,8 +294,8 @@ function Get-BwConfig {
   if (-not $c.PSObject.Properties['desktop_shortcut']) { Add-Member -InputObject $c NoteProperty desktop_shortcut 'on' -Force }
   # 图库上限: 聚焦库最多留多少张。超了就把**已经看过**的最老的几张移进回收站。
   # 没看过的一律不动 —— 那是等着换的, 删了就得重新下载。
-  # 0 = 不限(老样子, 只增不减)。默认 200 张(约 400 MB)。
-  if (-not $c.PSObject.Properties['lib_cap']) { Add-Member -InputObject $c NoteProperty lib_cap 200 -Force }
+  # 0 = 不限(老样子, 只增不减)。默认 100 张(约 200 MB)。
+  if (-not $c.PSObject.Properties['lib_cap']) { Add-Member -InputObject $c NoteProperty lib_cap 100 -Force }
   # 队列里的图换完之后, 要不要自动下一批新图? 默认**关**:
   # 库里现有的图轮着用就够了, 不过程序自己跑去下载一堆, 库越攒越大。
   # 想要不断有新图就到菜单里打开它。
