@@ -1,7 +1,7 @@
 ﻿# 微软壁纸助手 - 菜单 (by 海风 & 小腾)
 . (Join-Path $PSScriptRoot 'core.ps1')
 
-$global:BWVersion = '1.6.1'
+$global:BWVersion = '1.6.6'
 
 # 把用户按键归一化: 去首尾空格 + 全角转半角 + 转小写。
 # 中文输入法很容易把 o 打成全角 ｏ, 不归一化就变成"按了键没反应"。
@@ -144,6 +144,13 @@ function Select-BwBase([string]$suggest, [string]$suggestReason) {
     }
   }
   $cands += [PSCustomObject]@{ Path = $picPath; Extra = $picExtra }
+  # 第二项: C 盘以外**已经存在**的图片文件夹。有现成的就摆出来, 免得用户以为
+  # 只能新建 —— 以前列表里只有各盘的 <盘>\图片\壁纸, 于是明明盘上就有
+  # 「我的图片」, 用户还是挑了个新建的空壳出来。
+  $ex = Find-BwExistingBase
+  if ($ex -and ($ex.Base -ne $picPath)) {
+    $cands += [PSCustomObject]@{ Path = $ex.Base; Extra = ('已有图片文件夹    ' + $ex.Why) }
+  }
   foreach ($ch in $drives) {
     $tags = @()
     if (-not $ch.Writable) { $tags += '这台机器上还没给写入权限, 选中可一键修' }
@@ -232,7 +239,7 @@ function Show-BrowseAll {
   $s = Get-BwState
   $files = @()
   foreach ($pair in @(@('必应', $c.bing_save_dir), @('聚焦', $c.spotlight_save_dir))) {
-    $files += @(Get-ChildItem -LiteralPath $pair[1] -File -Filter *.jpg -ErrorAction SilentlyContinue |
+    $files += @(Get-BwPicFiles ([string]$pair[1]) |
       ForEach-Object { [PSCustomObject]@{ src = $pair[0]; file = $_ } })
   }
   $files = @($files | Sort-Object { $_.file.LastWriteTime } -Descending | Select-Object -First 40)
@@ -242,13 +249,17 @@ function Show-BrowseAll {
     Write-Host '  菜单 [1] 会顺手抓图, [7] 补必应, 开着自动换也会自己攒起来。'
     return
   }
-  Write-Host ('  —— 壁纸库 (最近 ' + $files.Count + ' 张, [必应]/[聚焦] 标来源, ★ = 已收藏) ——')
+  Write-Host ('  —— 壁纸库 (最近 ' + $files.Count + ' 张, [必应]/[聚焦] 标来源, ★ = 已收藏, 外 = 不是程序下载的) ——')
   Write-Host ('  所在文件夹: ' + $c.bing_save_dir)
+  $outs = @{}
+  foreach ($k in @(@($s.strangers) | Where-Object { $_ })) { $outs[[string]$k] = $true }
   $i = 0
   foreach ($f in $files) {
     $star = '  '
     if (Test-BwFav $s ([string]$f.file.Name)) { $star = '★ ' }
-    Write-Host ("  [$i] $star[$($f.src)] $($f.file.Name)")
+    $mk = ' '
+    if ($outs.ContainsKey((Get-BwNameKey ([string]$f.file.Name)))) { $mk = '外' }
+    Write-Host ("  [$i] $star[$($f.src)]$mk $($f.file.Name)")
     $i++
   }
   Write-Host '  [o] 打开文件夹    [q] 返回'
@@ -302,6 +313,9 @@ function Show-Archive {
   }
 }
 
+# [9] 手动校验图库已移除: 图库校验现在由程序在每次巡检 (core.ps1 Update-BwStrangers)
+# 和进菜单时自动完成, 外来图只打记号 (不参与轮换、列表里标「外」), 一个文件都不动。
+
 # ---------- [1] 立刻换一张 ----------
 function Invoke-BwManualSwap {
   $null = Ensure-BwDirs
@@ -323,8 +337,12 @@ function Invoke-BwRefill {
   $want = [int]$c.spotlight_per_cycle
   $new = @(Invoke-SpotlightFetch -count $want -Quiet)
   if ($new.Count -gt 0) {
-    # 新下的图立刻排进队列, 不用干等一整轮
-    $s.queue = @(@($s.queue | Where-Object { $_ }) + $new)
+    # 新下的图立刻排进队列, 不用干等一整轮。
+    # 队列里存的是**文件名**, 而 Invoke-SpotlightFetch 返回的是完整路径 ——
+    # 直接塞进去的话, 取图时 Join-Path 会拼成 "库\F:\库\xxx.jpg", 张张都找不到,
+    # 于是刚抓的这批图在队列里过一遍就被当成"已删除"剔掉, 白抓。
+    $newNames = @($new | ForEach-Object { Split-Path $_ -Leaf })
+    $s.queue = @(@($s.queue | Where-Object { $_ }) + $newNames)
     Save-BwState $s
   }
   Write-Host ('  聚焦库现在 ' + (Count-Jpg $c.spotlight_save_dir) + ' 张, 待换队列还剩 ' + (Left-Queue $s) + ' 张')
@@ -498,7 +516,10 @@ function Show-BwSettings {
         Write-Host '  壁纸会放在这个文件夹下面的「必应」和「聚焦」两个子目录里。'
         Write-Host '  换位置不影响已经存好的图, 只是以后往新地方存。'
         Write-Host ''
-        $sel = Select-BwBase '' ''
+        # 以前这里传的是空建议, 于是列表里没有「<-- 建议」标记, 用户只能自己猜着挑 ——
+        # 挑错了就在盘根多出一个空的「图片」文件夹。现在把当前位置当建议传进去,
+        # 直接回车 = 不变。
+        $sel = Select-BwBase $base '现在就存这儿 —— 直接回车就不变'
         if (-not $sel) { Write-Host '  没改。' }
         else { [void](Set-BwBase $sel) }
         Pause-Bw
@@ -1027,6 +1048,20 @@ function Toggle-BwFavCurrent {
 
 # ---------- 主菜单 ----------
 if (-not (Test-Path -LiteralPath $global:CfgPath)) { Invoke-BwFirstRun }
+# 进菜单先把两个库目录立起来: 用户手滑删了文件夹很正常, 程序自己建回来,
+# 不用他先去手动新建一个空文件夹。
+$null = Ensure-BwDirs
+# 进菜单时认一遍: 库里哪些图不是本程序下载的。只打记号, 不动文件
+[void](Update-BwStrangers)
+# 聚焦库整个没了 (目录被删后刚重建, 0 张) -> 进菜单就自动补一批, 不等后台巡检。
+# 必应库不这么干: 每日一张、历史是用户自己挑着下的 (菜单 [7] 补漏 / [8] 归档),
+# 程序只把目录建回来, 图让用户自己恢复。
+try {
+  if ((@(Get-BwSpotlightAll).Count -eq 0) -and -not $global:BWDry) {
+    Start-BwBackfill (Get-BwSpotlightWant) -Force
+    Log '菜单发现聚焦库是空的 -> 已自动在后台补一批'
+  }
+} catch {}
 
 do {
   $c0 = Get-BwConfig
@@ -1051,14 +1086,24 @@ do {
   $running = Test-BwDaemonRunning
   # 时间**始终显示** —— 拿掉时间之后客户第一反应是"程序坏了"。
   # 但后台没跑的时候得把话说清楚: 那个点到了也不会有人换图。
-  if ($running) { $swapTxt = '下次自动换: ' + $next }
-  elseif ($auto -eq '开') { $swapTxt = '下次自动换: ' + $next + '  (后台还没启动, 按 [A] 开)' }
-  else { $swapTxt = '下次自动换: ' + $next + '  (自动换没开, 按 [A] 开)' }
+  # 措辞刻意避开「启动」两个字: 菜单开着 ≠ 后台在跑, 但用户看到"后台还没启动"
+  # 第一反应是"我不是已经把程序打开了吗" —— 说的是两件事, 却用了同一个词。
+  # 这里改成描述**状态**: 后台这会儿在跑 / 没在跑, 该按哪个键另说。
+  if ($running) { $swapTxt = '下次自动换: ' + $next + '  (后台正在跑, 到点就换)' }
+  elseif ($auto -eq '开') { $swapTxt = '下次自动换: ' + $next + '  (后台这会儿没在跑, 按 [A] 让它现在就开始)' }
+  else { $swapTxt = '下次自动换: ' + $next + '  (自动换还没开, 按 [A] 开)' }
   Write-Host (' 今日必应: ' + $bingDone + '    ' + $swapTxt + '    开机自动换: ' + $auto) -ForegroundColor DarkGray
   if ($moved) { Write-Host '  (程序位置变过, 开机自动换已重新指向当前这个 exe)' -ForegroundColor Yellow }
   if ($desk -eq 'create') { Write-Host '  已在桌面放了「微软壁纸助手」快捷方式 (不想要: 设置 [6] 里关)' -ForegroundColor DarkYellow }
   elseif ($desk -eq 'update') { Write-Host '  桌面快捷方式已指向当前这份程序, 图标也是新的' -ForegroundColor DarkYellow }
   Write-Host (' 壁纸库: 必应 ' + $bingN + ' 张 · 聚焦 ' + $spotN + ' 张 · 待换队列剩 ' + (Left-Queue $s0) + ' 张') -ForegroundColor DarkGray
+  if ($spotN -eq 0) { Write-Host ' 聚焦库是空的, 程序正在后台自动补图 (几分钟后重开菜单就能看到); 也可以按 [3] 现在就抓一批' -ForegroundColor DarkYellow }
+  # 程序下载的每张图都在下载清单里登了记; 认不出来的就是你自己放进来/改过名的。
+  # 只做记号: 图原地不动, 但自动轮换会跳过它们。
+  $strN = @(@($s0.strangers) | Where-Object { $_ }).Count
+  if ($strN -gt 0) {
+    Write-Host (' 另有 ' + $strN + ' 张不是程序下载的图 (已做记号: 原地不动, 也不自动轮换)') -ForegroundColor DarkYellow
+  }
   # 累计下载是笔只增不减的流水账: 删掉的、被库上限清走的都还在这个数里
   Write-Host (' 累计下载: ' + (Get-BwDlTotal $s0) + ' 张 (从装上那天算起, 删掉和清走的都记着)') -ForegroundColor DarkGray
   # 收藏只在开了「只看收藏」时才占一行 —— 平时不打扰
@@ -1103,7 +1148,17 @@ do {
   Write-Host '  [F] 收藏当前这张 / 取消收藏'
   Write-Host '  [S] 设置'
   # 只摆当前能做那一下: 关着就只给「打开」, 开着就只给「关闭」
-  if (Test-BwAutoStart) { Write-Host '  [B] 关掉开机自动换壁纸   (现在: 开)' }
+  # 三态, 而不是一个翻面的开关:
+  #   关着            -> 只给 [A] 打开
+  #   开着且后台在跑  -> 只给 [B] 关掉
+  #   开着但后台没跑  -> 两个都给: [A] 把后台拉起来, [B] 整个关掉
+  # 以前"开着但后台没跑"时只摆 [B], 首页却又写"按 [A] 开" —— 菜单上没有 [A] 这一行,
+  # 用户照着提示按 A 只能靠猜。
+  if (($auto -eq '开') -and (-not $running)) {
+    Write-Host '  [A] 让后台现在就开始换图   (开机自动换: 开, 但后台这会儿没在跑)' -ForegroundColor Yellow
+    Write-Host '  [B] 关掉开机自动换壁纸     (开机自动换: 开)'
+  }
+  elseif (Test-BwAutoStart) { Write-Host '  [B] 关掉开机自动换壁纸   (现在: 开)' }
   else { Write-Host '  [A] 打开开机自动换壁纸   (现在: 关)' }
   Write-Host '  [L] 查看运行日志'
   Write-Host '  [Q] 退出'

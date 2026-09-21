@@ -4,6 +4,10 @@ $global:BWRoot = $PSScriptRoot
 $global:CfgPath = Join-Path $global:BWRoot 'config.json'
 $global:BWLog = Join-Path $global:BWRoot 'wallpaper.log'
 $global:BWState = Join-Path $global:BWRoot 'state.json'
+# 下载流水账 (v1.6.3): 每成功下载一张就追加一行「图片编号」。
+# 独立于 state.json 的原因见 Read-BwDlLedger 上方的注释 —— state 会被
+# 菜单/后台的整份写回覆盖, 追加写不会。它同时充当「程序下载清单」。
+$global:BWDlLedger = Join-Path $global:BWRoot 'dl_ledger.log'
 $global:BWDry = [bool]$DryRun
 $ProgressPreference = 'SilentlyContinue'
 function Log([string]$m) {
@@ -34,6 +38,27 @@ function New-BwDir([string]$dir) {
   if (-not $dir) { return $false }
   if (Test-Path -LiteralPath $dir) { return $true }
   try { [void][System.IO.Directory]::CreateDirectory($dir); return $true } catch { return $false }
+}
+# ---- 图片格式的统一口径 ----
+# 程序自己下载的只有 .jpg; 但用户往库里丢的照片什么格式都有
+# (手机原图 .jpeg、截图 .png、网页存的 .webp ...)。
+# 认外来图、浏览库列表都按 $BWImgExt 这个集合认 —— 只认 .jpg 的话,
+# 用户丢的 png/webp 会完全隐形: 不标记、不提示、也没人管。
+# 「能设成壁纸」的格式是另一个更小的集合 (Windows 换壁纸接口只认这几种)。
+$script:BWImgExt  = @('.jpg','.jpeg','.png','.webp','.bmp','.gif','.tif','.tiff')
+$script:BWWallExt = @('.jpg','.jpeg','.png','.bmp')
+function Test-BwImgFile([string]$name) {
+  if (-not $name) { return $false }
+  return $script:BWImgExt -contains [System.IO.Path]::GetExtension([string]$name).ToLower()
+}
+function Test-BwWallFile([string]$name) {
+  if (-not $name) { return $false }
+  return $script:BWWallExt -contains [System.IO.Path]::GetExtension([string]$name).ToLower()
+}
+# 列出一个库目录里的图片文件 (不递归, 子目录不算 —— 和 jpg 口径一致)。
+function Get-BwPicFiles([string]$dir) {
+  if (-not ($dir -and (Test-Path -LiteralPath $dir))) { return @() }
+  return @(Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue | Where-Object { Test-BwImgFile $_.Name })
 }
 function Test-BwRootWritable([string]$root) {
   if (-not $root) { return $false }
@@ -186,6 +211,31 @@ function Get-BwDriveChoices {
                                   @{ Expression = { if ($_.Sys) { 1 } else { 0 } } },
                                   @{ Expression = { $_.Free }; Descending = $true })
 }
+# ---- 盘符: 统一只留一个大写字母 ----
+# 各处比较盘符时, 一会儿拿到 "C:" 一会儿拿到 "C", 于是 "C" -ne "C:" 恒为真 ——
+# 系统盘从来没被排除过。表现是: 明明「图片」文件夹还在系统盘上, 程序却判定
+# "你的图片文件夹本来就在系统盘以外", 老老实实把壁纸往 C 盘里塞 ——
+# 而那正是绝大多数用户的默认情况 (也是壁纸越攒越多撑满系统盘的由来)。
+# 以后比盘符一律走这两个函数, 别再手写 TrimEnd。
+# 系统「图片」文件夹自己的名字: 你这台叫「我的图片」, 别人那台可能叫「图片」/「Pictures」。
+# 兜底要造文件夹时跟着这台机器的叫法走, 不一刀切写成「图片」——
+# 不然明明你自己的图片文件夹叫「我的图片」, 程序却在盘根另造一个「图片」跟它并列。
+function Get-BwPicturesLeaf {
+  $p = ''
+  try { $p = Split-Path (Get-BwPicturesDir) -Leaf } catch { $p = '' }
+  if (-not $p) { $p = '图片' }
+  return $p
+}
+
+function Get-BwSysDriveLetter {
+  try { return (([string]$env:SystemDrive).TrimEnd('\').TrimEnd(':')).ToUpper() } catch { return '' }
+}
+function Get-BwDriveLetter([string]$p) {
+  if (-not $p) { return '' }
+  if ($p -match '^([A-Za-z]):') { return $Matches[1].ToUpper() }
+  return ''
+}
+
 # ---- 系统「图片」文件夹的真实位置 ----
 # 这个文件夹是可以被改到别处的 (资源管理器里右键「图片」- 属性 - 位置 - 移动),
 # 所以不能写死 C:\Users\xxx\Pictures。三档兜底: .NET -> 注册表 -> 主目录下的 Pictures。
@@ -203,35 +253,114 @@ function Get-BwPicturesDir {
   $global:BWPicturesDir = $p
   return $global:BWPicturesDir
 }
+# ---- 在非系统盘上找「已经存在的图片文件夹」 ----
+# 用户的规矩(2026-09-20): C 盘以外只要已经有放图片的文件夹, 就先定位到那里 ——
+#   不要让用户自己挑, 更不要凭空在盘根再造一个「图片」出来。
+#   以前的做法是挑一个非系统盘然后建 <盘>\图片\壁纸, 于是明明 F 盘上就有
+#   「我的图片」, 盘根还是多出一个空的「图片」—— 用户的话: "它要造反吗?"。
+# 只读扫描: 只看每个非系统盘的**根目录一层**, 只用"里面有没有 jpg"下判断,
+# 全程不建任何目录 (Test-BwWritable 会建目录, 这里一个都不许调)。
+function Test-BwHasJpg([string]$dir) {
+  if (-not $dir) { return $false }
+  if (-not (Test-Path -LiteralPath $dir)) { return $false }
+  # 只看第一张就够: 上万张图的文件夹也能瞬间给结论, 不用把目录数完
+  $one = @(Get-ChildItem -LiteralPath $dir -File -Filter *.jpg -ErrorAction SilentlyContinue | Select-Object -First 1)
+  return ($one.Count -gt 0)
+}
+function Find-BwExistingBase {
+  $sys = Get-BwSysDriveLetter
+  $picNames = @('图片', '我的图片', 'Pictures', '照片', 'Images', '图库')
+  $best = ''; $bestScore = -1; $bestWhy = ''
+  try {
+    foreach ($dr in [System.IO.DriveInfo]::GetDrives()) {
+      try {
+        if (-not $dr.IsReady) { continue }
+        if ($dr.DriveType -ne [System.IO.DriveType]::Fixed) { continue }
+        $root = ([string]$dr.Name).TrimEnd('\')          # 形如 F:
+        $drv  = $root.TrimEnd(':').ToUpper()
+        if (-not $drv -or ($drv -eq $sys)) { continue }   # 系统盘不参与
+        # 1) 盘根就有个「壁纸」并且里面有图 -> 那已经是现成的库, 直接用
+        $wp = Join-Path $root '壁纸'
+        if ((Test-BwHasJpg $wp) -and 110 -gt $bestScore) {
+          $bestScore = 110; $best = $wp
+          $bestWhy = $drv + ': 上已经有放壁纸的文件夹'
+        }
+        # 2) 这一档: 盘上散着图片文件, 但没专门建图片文件夹 —— 那这个盘就是拿来放图的,
+        #    壁纸归到它的「图片\壁纸」下。用户的意思: 一个现成的图片文件夹都没有时,
+        #    程序自己造一个, 而不是退回系统盘。
+        if (Test-BwHasJpg $root) {
+          if (20 -gt $bestScore) {
+            $bestScore = 20
+            $best = (Join-Path $root ((Get-BwPicturesLeaf) + '\壁纸'))
+            $bestWhy = $drv + ': 上散着图片文件, 但没有专门的图片文件夹'
+          }
+        }
+        # 3) 已有的图片文件夹: 下面带「壁纸」子目录且里面有图 > 里面有图 > 空文件夹
+        foreach ($nm in $picNames) {
+          $p = Join-Path $root $nm
+          if (-not (Test-Path -LiteralPath $p)) { continue }
+          $sub = Join-Path $p '壁纸'
+          $sc = 10
+          $why = $drv + ': 上本来就有「' + $nm + '」文件夹'
+          # 库是两层: <图片>\壁纸\必应 / \聚焦。只数「壁纸」这一层会漏 ——
+          # 那层只有两个子目录, 一张图都没有, 于是真正存着图的库被当成空文件夹。
+          $hasLib = ((Test-BwHasJpg $sub) -or (Test-BwHasJpg (Join-Path $sub '必应')) -or (Test-BwHasJpg (Join-Path $sub '聚焦')))
+          if ($hasLib) { $sc = 100; $why = $why + ', 里面还留着以前下载的壁纸' }
+          elseif (Test-BwHasJpg $p) { $sc = 50 }
+          if ($sc -gt $bestScore) { $bestScore = $sc; $best = (Join-Path $p '壁纸'); $bestWhy = $why }
+        }
+        # 深度 2: 盘根下面一层里再找一遍 —— 很多人把图片收在 <盘>\我的资料\图片 这种位置,
+        # 只扫盘根会漏。只取前 40 个子目录, 免得碰上文件特别多的盘把启动拖慢。
+        # 分数刻意比深度 1 低一点: 盘根那个更可能是"这台机器的图片文件夹"。
+        $subs = @(Get-ChildItem -LiteralPath ($root + '\') -Directory -ErrorAction SilentlyContinue | Select-Object -First 40)
+        foreach ($sd in $subs) {
+          foreach ($nm in $picNames) {
+            $p2 = Join-Path $sd.FullName $nm
+            if (-not (Test-Path -LiteralPath $p2)) { continue }
+            $sub2 = Join-Path $p2 '壁纸'
+            $sc2 = 5
+            $why2 = $drv + ': 上的「' + $sd.Name + '\' + $nm + '」'
+            $hasLib2 = ((Test-BwHasJpg $sub2) -or (Test-BwHasJpg (Join-Path $sub2 '必应')) -or (Test-BwHasJpg (Join-Path $sub2 '聚焦')))
+            if ($hasLib2) { $sc2 = 95; $why2 = $why2 + ', 里面还留着以前下载的壁纸' }
+            elseif (Test-BwHasJpg $p2) { $sc2 = 45 }
+            if ($sc2 -gt $bestScore) { $bestScore = $sc2; $best = (Join-Path $p2 '壁纸'); $bestWhy = $why2 }
+          }
+        }
+      } catch {}
+    }
+  } catch {}
+  if ($bestScore -lt 0) { return $null }
+  return [PSCustomObject]@{ Base = $best; Why = $bestWhy }
+}
 # ---- 壁纸默认放「图片」文件夹里的「壁纸」----
 # 用户的安排: 壁纸就该归在图片库里, 不要再往盘根丢一个 X:\微软壁纸助手。
 # 但有个现实问题: 图片文件夹默认就在系统盘 (C:\Users\xxx\Pictures),
 #   壁纸每天都攒, 几年下来好几个 GB, 会把系统盘撑满。所以:
 #     * 图片文件夹在系统盘以外 -> 直接用 <图片>\壁纸 (尊重用户自己的安排)
-#     * 图片文件夹在系统盘     -> 挑一个非系统盘, 用 <盘>\图片\壁纸
+#     * 图片文件夹在系统盘     -> 先找 C 盘以外**已经存在**的图片文件夹, 用它下面的「壁纸」;
+#                                 一个都找不到, 才挑一个非系统盘用 <盘>\图片\壁纸
 #     * 这台机器只有系统盘     -> 只能用 <图片>\壁纸, 并在向导里说清楚
 # 挑盘的规则沿用 Get-BwPickRoot (非系统盘优先、可写优先、可用空间降序)。
 function Get-BwDefaultBase {
   if ($global:BWDefaultBase) { return $global:BWDefaultBase }
   $pic = Get-BwPicturesDir
-  $sys = ''
-  try { $sys = (([string]$env:SystemDrive).TrimEnd('\')).ToUpper() } catch {}
-  $drv = ''
-  if ($pic -match '^([A-Za-z]):') { $drv = $Matches[1].ToUpper() }
+  $sys = Get-BwSysDriveLetter
+  $drv = Get-BwDriveLetter $pic
   if ($drv -and ($drv -ne $sys)) {
     $global:BWDefaultBase = (Join-Path $pic '壁纸')
     $global:BWBaseReason  = '你的「图片」文件夹本来就在系统盘以外'
   } else {
-    $root = ''
-    try { $root = ([string](Get-BwPickRoot)).TrimEnd('\') } catch {}
-    $rd = ''
-    if ($root -match '^([A-Za-z]):') { $rd = $Matches[1].ToUpper() }
-    if ($rd -and ($rd -ne $sys)) {
-      $global:BWDefaultBase = (Join-Path $root '图片\壁纸')
-      $global:BWBaseReason  = '「图片」文件夹在系统盘上, 已经挪到系统盘以外, 免得壁纸越攒越多把系统盘撑满'
+    $found = Find-BwExistingBase
+    if ($found) {
+      $global:BWDefaultBase = $found.Base
+      $global:BWBaseReason  = '「图片」文件夹在系统盘上, 而' + $found.Why + ' —— 壁纸归到它下面, 不再多造一个文件夹'
     } else {
+      # 一个现成的图片文件夹都没有: 就放在「图片」文件夹自己的位置下面, 不再另起一条路径。
+      # (以前这里是挑一个非系统盘凭空造 <盘>\图片\壁纸 —— 那正是用户说的"它要造反吗":
+      #  明明盘上就有「我的图片」, 盘根却多出一个空的「图片」跟它并列。)
+      # 目录不存在没关系, 建库的时候会自己创建出来。
       $global:BWDefaultBase = (Join-Path $pic '壁纸')
-      $global:BWBaseReason  = '这台机器只有系统盘能用'
+      $global:BWBaseReason  = '这台机器上没找到别的现成图片文件夹, 就放在你的「图片」文件夹里, 不再另外造一个'
     }
   }
   return $global:BWDefaultBase
@@ -349,11 +478,13 @@ function Get-BwState {
   #                  被移走、被库上限清进回收站, 这个数都不往回退(那是"下载过",
   #                  不是"现在还有")。删掉之后重新下载算新的一张, 如实再加一次。
   # dl_filled      : 老版本升级上来时做过回填没有(0/1)。回填只做一次。
+  # strangers      : 库里"不是本程序下载的图"的图片编号 (见 Update-BwStrangers)。
+  #                  只做记号, 图原地不动; 自动轮换时跳过它们。
   $def = [ordered]@{
     schema = 7; last_bing_date = ''; last_swap = ''; last_boot = ''
     queue = @(); refills = 0; shown = 0; last_wall = ''
     bing_high_date = ''; favorites = @(); history = @()
-    dl_total = 0; dl_filled = 0
+    dl_total = 0; dl_filled = 0; strangers = @()
   }
   foreach ($k in $def.Keys) {
     $p = $s.PSObject.Properties[$k]
@@ -385,53 +516,146 @@ function Get-BwState {
 
 # ---- 累计下载张数 ----
 # 用户要的是「从装上那天起一共下载过多少张」, 而且删掉的、被清走的都要算。
-# 所以它是个**流水账**: 每成功下载一张就 +1, 永远不会因为图不见了而往回退。
-function Get-BwDlTotal($s) {
-  if (-not $s) { return 0 }
-  try { return [int]$s.dl_total } catch { return 0 }
+# v1.6.3 之前它只记在 state.json 的 dl_total 字段里 —— 有个致命漏洞:
+# 菜单进程一直握着自己那份旧快照, 之后任何一次 Save-BwState 整份写回,
+# 都会把下载时刚 +1 落盘的数打回旧值 (实测: 一天连下 6 张, 6 次 +1 全被
+# 吞掉, 累计显示 53, 库里却有 59 张 —— 账对不上)。
+# 现在改成**独立流水文件**: 每下载一张追加一行图片编号, 追加写不会被任何
+# 进程覆盖; state.json 里的 dl_total 降级为显示缓存, 谁覆盖都不影响真账。
+# 这份流水同时就是「程序下载清单」: 编号在流水里的 = 程序下载的;
+# 库里出现编号不在流水里的图, 就是后来混进来的; 程序每次巡检会自动把它们移到各自库的「_外来待确认」, 不用用户动手校验。
+# 读流水: 返回 @($总行数, $编号HashSet)。总行数 = 累计下载张数
+# (删掉重下同一张会有两行, 如实算两张 —— "下载过"是次数, 不是品种);
+# 编号集合 = 下载清单 (判断一张图是不是程序下的, 用它)。
+function Read-BwDlLedger {
+  $keys = New-Object 'System.Collections.Generic.HashSet[string]'
+  $lines = 0
+  try {
+    if (Test-Path -LiteralPath $global:BWDlLedger) {
+      foreach ($ln in @(Get-Content -LiteralPath $global:BWDlLedger -Encoding UTF8 -ErrorAction SilentlyContinue)) {
+        $k = ([string]$ln).Trim()
+        if (-not $k) { continue }
+        $lines++
+        [void]$keys.Add($k)
+      }
+    }
+  } catch {}
+  return @($lines, $keys)
 }
-# 老版本从没记过这个数, 升级上来第一次运行时补一个基数。
-# 能找到的痕迹只有三处, 按图片编号(见 Get-BwNameKey)去重后取并集:
-#   1) 库里现在还剩下的图
-#   2) 「看过」名单 —— 删掉的图名字还留在里面, 这张不会被算丢
-#   3) 日志里能翻到的「下载成功」记录(日志超过 256KB 只留最近 200 行, 更早的查不到)
-# 查不到的部分不猜: 数字只会**偏小**, 不会凭空变大。之后每下载一张都真记一次。
-function Fill-BwDlBase($s) {
-  $set = New-Object 'System.Collections.Generic.HashSet[string]'
+# 从现有痕迹建一次流水 (只在流水文件不存在时发生, 幂等):
+#   1) 两个库里现在还剩下的图   2) 「看过」名单 —— 删掉的图编号还留着
+# 查不到的部分不猜: 数字只会**偏小**, 不会凭空变大。之后每下载一张都真记一行。
+function New-BwDlLedgerFromTraces($s) {
+  try {
+    if (Test-Path -LiteralPath $global:BWDlLedger) {
+      $r = Read-BwDlLedger
+      return [int]$r[0]
+    }
+    $set = New-Object 'System.Collections.Generic.HashSet[string]'
+    try {
+      $c = Get-BwConfig
+      foreach ($d in @([string]$c.bing_save_dir, [string]$c.spotlight_save_dir)) {
+        if ($d -and (Test-Path -LiteralPath $d)) {
+          foreach ($f in @(Get-ChildItem -LiteralPath $d -File -Filter *.jpg -ErrorAction SilentlyContinue)) {
+            $k = Get-BwNameKey $f.Name
+            if ($k) { [void]$set.Add($k) }
+          }
+        }
+      }
+    } catch {}
+    foreach ($h in @(Get-BwHist $s)) { if ($h) { [void]$set.Add([string]$h) } }
+    $sb = New-Object System.Text.StringBuilder
+    foreach ($k in $set) { [void]$sb.AppendLine($k) }
+    [System.IO.File]::WriteAllText($global:BWDlLedger, $sb.ToString(), (New-Object System.Text.UTF8Encoding($false)))
+    Log ('下载流水账初始化: 登记了 ' + $set.Count + ' 张 (库里现有 + 看过名单; 更早下载、又被清出痕迹的查不到)')
+    return $set.Count
+  } catch { return 0 }
+}
+function Get-BwDlTotal($s) {
+  # 流水文件在就以它为准 —— 哪怕里面是 0 行。少了这道判断, 库是空的
+  # (新装的机器) 时每次显示"累计下载"都要把两个库重扫一遍。
+  if (Test-Path -LiteralPath $global:BWDlLedger) { $r = Read-BwDlLedger; return [int]$r[0] }
+  # 流水文件缺失: 从痕迹补建一次 (老版本升级 / 用户手动删过数据目录)
+  try { $n = New-BwDlLedgerFromTraces $s; if ($n -gt 0) { return $n } } catch {}
+  if ($s) { try { return [int]$s.dl_total } catch { return 0 } }
+  return 0
+}
+# 下载清单 (编号集合)。自动校验图库 (Repair-BwVerifyLibrary) 用它分辨
+# 「程序下载的」和「混进来的」。
+function Get-BwDlKeys {
+  if (-not (Test-Path -LiteralPath $global:BWDlLedger)) { New-BwDlLedgerFromTraces $null | Out-Null }
+  $r = Read-BwDlLedger
+  return $r[1]
+}
+# 图库里"不是本程序下载的那些图" —— **只做记号, 不动文件**。
+#
+# 依据: 每张程序下载的图都在 dl_ledger.log 登记了编号 (见 Add-BwDlCount)。
+# 库里有、清单里没有的 = 你自己放进去的 / 改过名的 / 更老版本下的(痕迹查不到)。
+#
+# 记号记在 state.json 的 strangers 里 (只存图片编号, 和「看过」名单一个口径)。
+# 打完记号的效果有两个, 都**不碰文件**:
+#   1) 自动轮换时跳过它们 —— 程序只换自己下过的图, 你自己的图不会被换到桌面上;
+#   2) 菜单里能看见: 首页报个数, 库列表里 [4] 那张标一个「外」字。
+# 图本身原地不动、不改名、不删 —— 图库是你的地盘。
+#
+# 全程不用你管: 每次后台巡检自动跑一遍, 进了新的图自己就认出来了。
+# -DryRun 时只算不写 —— 试运行的意思就是"什么都不改"。
+# 返回做了记号的张数。
+function Update-BwStrangers {
   try {
     $c = Get-BwConfig
+    $keys = Get-BwDlKeys
+    $list = @()
     foreach ($d in @([string]$c.bing_save_dir, [string]$c.spotlight_save_dir)) {
-      if ($d -and (Test-Path -LiteralPath $d)) {
-        foreach ($f in @(Get-ChildItem -LiteralPath $d -File -Filter *.jpg -ErrorAction SilentlyContinue)) {
-          $k = Get-BwNameKey $f.Name
-          if ($k) { [void]$set.Add($k) }
-        }
+      if (-not ($d -and (Test-Path -LiteralPath $d))) { continue }
+      foreach ($f in @(Get-BwPicFiles $d)) {
+        $k = Get-BwNameKey $f.Name
+        if ($k -and -not $keys.Contains($k)) { $list += $k }
       }
     }
-  } catch {}
-  foreach ($h in @(Get-BwHist $s)) { if ($h) { [void]$set.Add([string]$h) } }
-  try {
-    if (Test-Path -LiteralPath $global:BWLog) {
-      foreach ($line in @(Get-Content -LiteralPath $global:BWLog -Encoding UTF8 -ErrorAction SilentlyContinue)) {
-        if ($line -match '下载成功:\s*(.+\.jpg)') {
-          $k = Get-BwNameKey ([System.IO.Path]::GetFileName($Matches[1].Trim()))
-          if ($k) { [void]$set.Add($k) }
-        }
-      }
+    $list = @($list | Select-Object -Unique)
+    if ($global:BWDry) {
+      if ($list.Count -gt 0) { Log ('试运行: 认出 ' + $list.Count + ' 张不在下载清单里的图 (本应做记号, 不写盘)') }
+      return $list.Count
     }
-  } catch {}
-  if ($set.Count -gt (Get-BwDlTotal $s)) { $s.dl_total = $set.Count }
+    $s = Get-BwState
+    if (-not $s) { return $list.Count }
+    $before = @(@($s.strangers) | Where-Object { $_ }).Count
+    $s.strangers = $list
+    if ($list.Count -ne $before) {
+      Log ('图库记号: 不在下载清单里的图 ' + $before + ' -> ' + $list.Count + ' 张 (原地不动, 不参与自动轮换)')
+    }
+    Save-BwStateKeepFav $s
+    return $list.Count
+  } catch { return 0 }
+}
+# 老版本升级路径保留原函数名: 算痕迹并集, 回填 state 里的显示缓存。
+function Fill-BwDlBase($s) {
+  $n = New-BwDlLedgerFromTraces $s
+  if ($n -gt (Get-BwDlTotal $s)) { $s.dl_total = $n }
   return (Get-BwDlTotal $s)
 }
-# 成功下载一张 +1。后台巡检和用户开着的菜单可能同时在下载, 所以写回走 KeepFav
-# 那条合并的路子 —— 直接整份覆盖会把对方刚做的事无声吞掉。
-function Add-BwDlCount([int]$n = 1) {
+# 成功下载一张 +1: 往流水追加一行图片编号。追加写不怕并发,
+# 也不会被任何整份写回覆盖 —— 这是它比记在 state.json 里可靠的根本原因。
+function Add-BwDlCount([int]$n = 1, [string]$key) {
   if ($n -le 0) { return }
   try {
+    # 流水还没建过的话先按痕迹建一次 (幂等) —— 别让第一行下载记录顶掉基数。
+    # 判断"建过没有"看文件在不在, 不能看行数: 库是空的时流水本来就是 0 行,
+    # 看行数的话每下载一张都要把两个库重扫一遍。
+    if (-not (Test-Path -LiteralPath $global:BWDlLedger)) { New-BwDlLedgerFromTraces $null | Out-Null }
+    if (-not $key) { $key = 'unknown-' + (Get-Date -Format 'yyyyMMddHHmmss') }
+    $sb = New-Object System.Text.StringBuilder
+    for ($i = 0; $i -lt $n; $i++) { [void]$sb.AppendLine($key) }
+    [System.IO.File]::AppendAllText($global:BWDlLedger, $sb.ToString(), (New-Object System.Text.UTF8Encoding($false)))
+  } catch {}
+  # state 里的 dl_total 只是显示缓存, 尽力同步一下 (失败不影响真账)
+  try {
     $s = Get-BwState
-    if (-not $s) { return }
-    $s.dl_total = (Get-BwDlTotal $s) + $n
-    Save-BwStateKeepFav $s
+    if ($s) {
+      $s.dl_total = Get-BwDlTotal $s
+      Save-BwStateKeepFav $s
+    }
   } catch {}
 }
 # ---- 图库上限 ----
@@ -550,6 +774,10 @@ function Add-BwHist($s, [string]$name) {
 }
 function Save-BwState($s) {
   $s.queue = @($s.queue | Where-Object { $_ })
+  # dl_total 是显示缓存, 真账在流水文件里。写回前按流水同步一次:
+  # 这样菜单进程哪怕握着旧快照整份覆盖, 带出去的也是当前真值,
+  # 不会再把后台刚 +1 的数打回去 (v1.6.2 丢计数就是这个路子)。
+  try { $s.dl_total = Get-BwDlTotal $s } catch {}
   [System.IO.File]::WriteAllText($global:BWState, ($s | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding($false)))
 }
 # 后台巡检 / 补漏写回 state 时必须走这里, 不能直接 Save-BwState 整份覆盖。
@@ -575,8 +803,9 @@ function Save-BwStateKeepFav($s) {
   }
   # 累计显示数不许倒退: 两边都可能在对方跑长任务时自增过, 取大的那个
   if ([int]$disk.shown -gt [int]$s.shown) { $s.shown = [int]$disk.shown }
-  # 累计下载数同理(它只增不减, 谁的多听谁的)
-  if ((Get-BwDlTotal $disk) -gt (Get-BwDlTotal $s)) { $s.dl_total = Get-BwDlTotal $disk }
+  # 累计下载数: 真账在流水文件里, 这里只把显示缓存刷成当前真值
+  # (旧的"取大的那个"是在救 state 字段, 现在真账不怕覆盖, 直接同步)
+  try { $s.dl_total = Get-BwDlTotal $s } catch {}
   $dh = @(@($disk.history) | Where-Object { $_ })
   $sh = @(@($s.history) | Where-Object { $_ })
   if ($dh.Count -gt 0) {
@@ -631,6 +860,7 @@ function Get-BwFreshQueue($s) {
     foreach ($f in @(Get-BwSpotlightAll)) { $names += [string]$f.Name }
   }
   if ($names.Count -eq 0) { return @() }
+  $allNames = @($names)
 
   # 挑掉看过的
   $seen = @{}
@@ -645,6 +875,21 @@ function Get-BwFreshQueue($s) {
       # 免得刚看完那张翻个身又排到队首。
       $s.history = @(@(Get-BwHist $s) | Select-Object -Last 20)
       Log ('重洗队列: 库里 ' + $names.Count + ' 张全都看过 -> 历史清零重来(留最近 20 条防连着重复)')
+    }
+  }
+  # 再挑掉"做了记号的外来图" —— 程序只换自己下过的图。
+  # 兜底: 万一库里**全是**外来图 (用户自己的照片放了一堆进来), 挑完就一张不剩了,
+  # 那还不如照常用 —— 总不能因为认出来了就一张都不给换。
+  $mark = @{}
+  foreach ($k in @(@($s.strangers) | Where-Object { $_ })) { $mark[[string]$k] = $true }
+  if ($mark.Count -gt 0) {
+    $own = @($names | Where-Object { -not $mark.ContainsKey((Get-BwNameKey $_)) })
+    if ($own.Count -gt 0) {
+      $names = $own
+      Log ('重洗队列: 跳过 ' + ($allNames.Count - $own.Count) + ' 张做了记号的外来图')
+    } else {
+      $names = $allNames
+      Log '重洗队列: 库里全是做了记号的外来图, 这一轮照常用它们换 (总得有图可换)'
     }
   }
   return @($names | Sort-Object { Get-Random })
@@ -718,6 +963,52 @@ function Sync-BwQueue($s) {
 # 取队列里下一张。队列空了(或剩下的图被手动删了) -> 下载一批新的重洗。
 # 好处: 洗牌后的队列总有图可取, 所以不需要"抓不到新图就清空历史"那种兜底分支,
 # 也就不会有"挑不出图 -> 永远不换壁纸"的死局。
+# 后台补货 (v1.6.5): 把新图下到库里, 并重洗队列让下一张就能轮到。
+# 在隐藏进程里由 Start-BwBackfill 调用, 前台换图不干等。
+# (名字带 Spot: 1295 行附近那个不带参数的 Invoke-BwBackfill 是必应补漏, 别混)
+function Invoke-BwSpotBackfill([int]$count, [switch]$Force) {
+  try {
+    if ($count -le 0) { return }
+    $c = Get-BwConfig
+    # -Force = 恢复模式: 库被清空过, 前台先下 1 张之后库就不空了,
+    # 光靠"库是空的"这个判断后台就再也不肯下(实测只补回 1 张), 所以显式穿透开关。
+    if ($c.auto_fetch -or $Force -or (@(Get-BwSpotlightAll).Count -eq 0)) {
+      $one = @(Invoke-SpotlightFetch -count $count -Quiet)
+    }
+    # 不管下到几张, 都重洗一次队列, 让新图进轮换
+    $s = Get-BwState
+    if ($s) {
+      $s.queue = @(Get-BwFreshQueue $s)
+      Save-BwState $s
+    }
+    Log ('后台补货结束: 库中现有 ' + @(Get-BwSpotlightAll).Count + ' 张, 队列已重洗')
+  } catch { Log ('后台补货异常: ' + $_.Exception.Message) }
+}
+# 起一个脱离的隐藏 powershell 进程去跑 Invoke-BwSpotBackfill。
+# 锁文件防止菜单和后台 daemon 同时各起一个补货进程; 锁 15 分钟自动过期,
+# 进程崩了也不会把补货永久卡死。
+function Start-BwBackfill([int]$count, [switch]$Force) {
+  if ($count -le 0) { return }
+  if ($global:BWDry) { Log ('试运行: 本应后台补货 ' + $count + ' 张聚焦壁纸'); return }
+  try {
+    $lock = Join-Path $global:BWRoot 'backfill.lock'
+    if (Test-Path -LiteralPath $lock) {
+      $age = 999.0
+      try { $age = ((Get-Date) - (Get-Item -LiteralPath $lock).LastWriteTime).TotalMinutes } catch {}
+      if ($age -lt 15) { Log ('后台补货已在进行, 不重复启动 (锁龄 ' + [int]$age + ' 分钟)'); return }
+    }
+    [System.IO.File]::WriteAllText($lock, (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), (New-Object System.Text.UTF8Encoding($false)))
+    $core = Join-Path $global:BWRoot 'core.ps1'
+    $forceTxt = ''
+    if ($Force) { $forceTxt = ' -Force' }
+    # 用 -EncodedCommand 传命令: Start-Process 拼 -Command 参数时不给带空格的
+    # 值加引号, 长命令会被拆碎 —— 实测子进程"删了锁却什么都没干"。base64 免疫。
+    $cmd = ". '$core'; Invoke-BwSpotBackfill -count $count$forceTxt; Remove-Item -LiteralPath '$lock' -Force -ErrorAction SilentlyContinue"
+    $b64 = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd))
+    Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand', $b64) | Out-Null
+    Log ('换图不再等: 已转后台补货 ' + $count + ' 张')
+  } catch { Log ('后台补货启动失败(不影响本次换图): ' + $_.Exception.Message) }
+}
 function Get-BwNextWall($s) {
   $c = Get-BwConfig
   for ($round = 1; $round -le 2; $round++) {
@@ -735,13 +1026,33 @@ function Get-BwNextWall($s) {
     $s.queue = @()
     # 队列空了要不要下一批新图? 默认**不下** —— 库里现有的图轮着用就行,
     # 想让程序自己补新图的话去菜单 [S] 设置 - [0] 打开。
-    if ([bool]$c.auto_fetch) {
+    # 例外: 库整个被清空(0 张)属于异常状态, 不论开关都自动补救 ——
+    # 总不能让用户手动按 [3] 才有图可换。
+    $libCount = @(Get-BwSpotlightAll).Count
+    $recover = ($libCount -eq 0)
+    if (($c.auto_fetch -or $recover) -and ($round -eq 1)) {
       $want = Get-BwSpotlightWant
-      Log ('队列已空 (库中现有 ' + @(Get-BwSpotlightAll).Count + ' 张), 刷新下载 ' + $want + ' 张后重洗')
-      if ($global:BWDry) { Log ('试运行: 本应刷新下载 ' + $want + ' 张聚焦壁纸') }
-      else { Invoke-SpotlightFetch -count $want -Quiet | Out-Null }
+      if ($recover) { Log ('聚焦库是空的, 自动补救 (不等用户手动), 先下 1 张立刻换, 其余后台补') }
+      else { Log ('队列已空 (库中现有 ' + $libCount + ' 张), 先下 1 张立刻换, 其余后台补') }
+      $one = @()
+      if (-not $global:BWDry) { $one = @(Invoke-SpotlightFetch -count 1 -Quiet) }
+      if ($one.Count -gt 0) {
+        $newName = Split-Path $one[0] -Leaf
+        $newKey = Get-BwNameKey $newName
+        # 新下的这张直接拿去换, 不再排回队列(不然稍后会重复看到它);
+        # 其余的照常洗牌排成新队列
+        $s.queue = @(Get-BwFreshQueue $s | Where-Object { (Get-BwNameKey $_) -ne $newKey })
+        # 恢复模式下前台这一张让库"不空"了, 后台必须穿透 auto_fetch 开关才肯继续补
+        if ($recover) { Start-BwBackfill ($want - 1) -Force }
+        else { Start-BwBackfill ($want - 1) }
+        return (Get-Item -LiteralPath $one[0])
+      }
+      # 1 张都没下到 (网络不通/接口的图收干了) -> 不硬等整批, 直接重洗现有库
+      Log ('先下的 1 张没下到, 不再硬等, 直接重洗现有库')
+    } elseif ($c.auto_fetch -or $recover) {
+      Log ('队列又空了: 这一轮已经补过货, 直接重洗现有库')
     } else {
-      Log ('队列已空: 按设置不下载新图, 直接把库里现有的 ' + @(Get-BwSpotlightAll).Count + ' 张重新洗一遍')
+      Log ('队列已空: 按设置不下载新图, 直接把库里现有的 ' + $libCount + ' 张重新洗一遍')
     }
     $s.refills = [int]$s.refills + 1
     $s.queue = @(Get-BwFreshQueue $s)
@@ -761,6 +1072,18 @@ function Invoke-BwSwap($s, [DateTime]$now, [string]$why) {
   Log ($why + ' -> ' + $f.Name + ' (ok=' + $ok + '; 队列还剩 ' + @($s.queue | Where-Object { $_ }).Count + ' 张)')
   # 库超上限就顺手淘汰看过的最老的(移进回收站, 能还原)
   [void](Trim-BwLibrary $s)
+  # v1.6.5: 队列快空(剩 2 张或更少)就提前后台补一整批 —— 补货在后台跑,
+  # 等下次换图时新图已经躺在库里, 前台零等待。
+  # 库被清空时不论 auto_fetch 开关都补 (恢复模式)。
+  try {
+    $left = @($s.queue | Where-Object { $_ }).Count
+    $cfg = Get-BwConfig
+    $empty = (@(Get-BwSpotlightAll).Count -eq 0)
+    if (($left -le 2) -and ($cfg.auto_fetch -or $empty)) {
+      if ($empty) { Start-BwBackfill (Get-BwSpotlightWant) -Force }
+      else { Start-BwBackfill (Get-BwSpotlightWant) }
+    }
+  } catch {}
   return $true
 }
 # 用户在菜单里手动挑一张设为壁纸 —— 也必须走同一套记账。
@@ -846,7 +1169,9 @@ function Get-BwCandidates($meta, $mode) {
   $suf += '_1920x1080'
   $urls = @($suf | Select-Object -Unique | ForEach-Object { "$ub$_.jpg" })
   $urls += "$ub.jpg"
-  return ,$urls
+  # 不要写 `return ,$urls` —— 那会把整个数组当成一个元素, 调用方一旦写成
+  # @(Get-BwCandidates ...) 就只看到 1 个。(文件里另一处注释专门讲过这个坑。)
+  return $urls
 }
 function Get-BwTargetPath([string]$date, [string]$name) {
   $c = Get-BwConfig
@@ -900,6 +1225,9 @@ function Remove-BwFile([string]$path) {
   if ($path -and (Test-Path -LiteralPath $path)) { try { [System.IO.File]::Delete($path) } catch {} }
 }
 function Save-BwFile([string[]]$urls, [string]$path) {
+  # 试运行: 只说一声, 一张都不下。-DryRun 的意思就是"什么都不改",
+  # 少了这道闸, 后台补漏 (Invoke-BwBackfill) 在试运行时照样会真去下载。
+  if ($global:BWDry) { Log ('试运行: 本应下载 -> ' + (Split-Path $path -Leaf)); return $false }
   # 先落地成 .part, 确认是张能用的图再改名进库。
   # 以前直接写到目标名: 下载到一半被截断 / 拿到的是 HTML 错误页(同样超过 100KB),
   # 半成品会留在图库里, 被计入库容, 甚至被挑去设为壁纸 —— 桌面直接黑掉或花掉。
@@ -922,8 +1250,9 @@ function Save-BwFile([string[]]$urls, [string]$path) {
         Remove-BwFile $path
         Move-Item -LiteralPath $tmp -Destination $path -Force
         Log "下载成功: $(Split-Path $path -Leaf) ($dim)"
-        # 记一笔: 从装上那天起一共下载过多少张(删掉的、清走的都不往回减)
-        Add-BwDlCount 1
+        # 记一笔: 从装上那天起一共下载过多少张(删掉的、清走的都不往回减)。
+        # 带上图片编号 —— 流水文件同时是「程序下载清单」, 菜单 [9] 校验图库靠它。
+        Add-BwDlCount 1 (Get-BwNameKey (Split-Path $path -Leaf))
         return $true
       }
       Remove-BwFile $tmp
@@ -984,9 +1313,12 @@ function Invoke-BwRandom {
          @(Get-ChildItem -LiteralPath $c.spotlight_save_dir -File -Filter *.jpg -ErrorAction SilentlyContinue)
   if ($all.Count -eq 0) { Write-Host '  两个壁纸库都是空的'; return }
   $f = $all | Get-Random -Count 1
-  $ok = Set-BwDesktopWallpaper $f.FullName
-  Write-Host ("  已随机设置: $($f.Name) (ok=$ok)")
-  Log "随机回忆: $($f.FullName)"
+  # 走 Set-BwWallManual 而不是直接设壁纸: 随机这一张也得记账。
+  # 直接设的话 last_wall / history 都不写, 主菜单"当前壁纸"停在上一张,
+  # 按 [F] 收藏会收藏到别的图, 而且这张很快又被洗回来。
+  $s = Get-BwState
+  $ok = Set-BwWallManual $s $f.FullName '随便来一张'
+  Write-Host ('  已随机设置: ' + $f.Name + ' (ok=' + $ok + ')')
 }
 # ---- 补漏: 几天没开机, 错过的必应壁纸一张不少 ----
 # 原理: 必应库文件名都以日期开头。找出库里最新的日期, 它和昨天之间缺的日子全部补下载。
@@ -1045,8 +1377,19 @@ function Invoke-BwBackfill($s) {
   $first = $latest.AddDays(1)
   $yesterday = $today.AddDays(-1)
   $missing = @()
-  for ($d = $first; $d.Date -le $yesterday.Date; $d = $d.AddDays(1)) { $missing += $d.Date }
+  # 一轮最多补 30 天。以前一口气把整段缺口全列出来: 半年没开机就是 180 张 4K 图,
+  # 一次巡检跑十几分钟, 计划任务的时限一到直接被掐断, 水位线还推不动,
+  # 于是"每次都从头开始补" —— 永远补不完还每次都卡。分批补, 每轮都能往前推。
+  $leftBehind = 0
+  for ($d = $first; $d.Date -le $yesterday.Date; $d = $d.AddDays(1)) {
+    if ($missing.Count -ge 30) { $leftBehind++; continue }
+    $missing += $d.Date
+  }
+  if ($leftBehind -gt 0) {
+    Log ('补漏: 缺口超过 30 天, 这一轮先补最近这批 (' + $missing.Count + ' 天), 更早的 ' + $leftBehind + ' 天往后接着补')
+  }
   if ($missing.Count -eq 0) { return }
+  $gotThrough = $null
   $monthCache = @{}
   $ok = 0; $skip = 0; $fail = 0
   foreach ($day in $missing) {
@@ -1111,9 +1454,11 @@ function Get-SpotlightName($it) {
   return ('{0}_{1}_{2}.jpg' -f (Get-Date -Format 'yyyy-MM-dd'), $t, $it.slug)
 }
 function Test-SpotlightDup([string]$dir, $it) {
-  if (-not (Test-Path $dir)) { return $false }
+  if (-not (Test-Path -LiteralPath $dir)) { return $false }
   if ($it.slug) {
-    $hit = Get-ChildItem $dir -Filter "*_$($it.slug).jpg" -ErrorAction SilentlyContinue | Select-Object -First 1
+    # 必须 -LiteralPath: 库路径里带 [ ] 这类字符时, 默认 -Path 会把它当通配符,
+    # 于是"库里明明有这张图"查不出来, 同一张被反复下载。
+    $hit = Get-ChildItem -LiteralPath $dir -Filter "*_$($it.slug).jpg" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($hit) { return $true }
   }
   return $false
@@ -1150,7 +1495,7 @@ function Invoke-SpotlightFetch([int]$count, [switch]$SetWall, [switch]$Quiet) {
     }
     if (Test-SpotlightDup $dir $it) {
       $skip++
-      if (-not $first) { $first = (Get-ChildItem $dir -Filter "*_$($it.slug).jpg" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName }
+      if (-not $first) { $first = (Get-ChildItem -LiteralPath $dir -Filter "*_$($it.slug).jpg" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName }
       Start-Sleep -Milliseconds 400
       continue
     }
@@ -1170,22 +1515,6 @@ function Invoke-SpotlightFetch([int]$count, [switch]$SetWall, [switch]$Quiet) {
     Write-Host ("  已设为壁纸 (ok=$r): " + (Split-Path $first -Leaf))
   }
   return $newFiles
-}
-# 浏览任意一个库, 选一张设为壁纸 (必应库 / 聚焦库共用)
-function Show-Browse([string]$dir, [string]$title) {
-  $files = @(Get-ChildItem -LiteralPath $dir -File -Filter *.jpg -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 40)
-  if ($files.Count -eq 0) { Write-Host ('  ' + $title + '还是空的'); return }
-  Write-Host ('  —— ' + $title + ' (最近 40 张) ——')
-  $i = 0
-  foreach ($f in $files) { Write-Host ("  [$i] $($f.Name)"); $i++ }
-  $sel = Read-Host '  输入序号设为壁纸 (回车返回)'
-  if ($sel -eq '') { return }
-  try {
-    $p = $files[[int]$sel].FullName
-    $ok = Set-BwDesktopWallpaper $p
-    Write-Host ("  已设为壁纸 (ok=$ok): " + (Split-Path $p -Leaf))
-    Log ('手动浏览设壁纸: ' + $p)
-  } catch { Write-Host '  序号无效' }
 }
 # ---- 巡检: 跟随官方更新节奏 (官方出了新图就下载并切换; 没出则秒退, 完全幂等) ----
 function Invoke-BwUpdate {
@@ -1207,9 +1536,23 @@ function Invoke-BwUpdate {
       Log ('巡检: 官方已更新 -> ' + $name)
     }
     $cur = (Get-ItemProperty 'HKCU:\Control Panel\Desktop' -ErrorAction SilentlyContinue).Wallpaper
-    if ($cur -eq $path) { return }
-    $ok = Set-BwDesktopWallpaper $path
-    Log ('巡检: 切换壁纸 ok=' + $ok + ' -> ' + $name)
+    if ($cur -ne $path) {
+      $ok = Set-BwDesktopWallpaper $path
+      Log ('巡检: 切换壁纸 ok=' + $ok + ' -> ' + $name)
+    } else {
+      Log ('巡检: ' + $name + ' 已经是当前壁纸, 不用重设')
+    }
+    # 手动切必应也要记账。以前这一步只换壁纸不写 state, 于是 15 分钟后
+    # 后台巡检看到 last_bing_date 还是昨天, 又插一张必应进来 ——
+    # 用户刚挑的聚焦图被顶掉, 还以为程序没听他的。
+    $s = Get-BwState
+    if ($s) {
+      $s.last_wall = $path
+      $s.last_bing_date = (Get-Date).ToString('yyyy-MM-dd')
+      $s.last_swap = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+      Add-BwHist $s $name
+      Save-BwStateKeepFav $s
+    }
   } catch { Log ('巡检异常: ' + $_.Exception.Message) }
 }
 
@@ -1225,6 +1568,8 @@ function Invoke-BwCycle {
   try {
     $c = Get-BwConfig
     $null = Ensure-BwDirs
+    # 每次巡检顺带认一遍: 库里哪些图不是本程序下载的。只打记号, 不动文件。
+    [void](Update-BwStrangers)
     $s = Get-BwState
     $now = Get-Date
     $today = $now.ToString('yyyy-MM-dd')
@@ -1291,16 +1636,19 @@ function Invoke-BwCycle {
     }
 
     # ---- 规则 2: 重启电脑 -> 立刻换一张聚焦 ----
+    # 写回一律走 KeepFav: 换图要花几分钟(下载/补货), 这期间用户很可能正在菜单里
+    # 收藏、挑图。整份覆盖会把人家刚做的事无声吞掉 —— 规则 1 早就这么写了,
+    # 这两条却还在用 Save-BwState, 属于漏改。
     if ($rebooted) {
       Invoke-BwSwap $s (Get-Date) '重启电脑进入桌面' | Out-Null
-      Save-BwState $s
+      Save-BwStateKeepFav $s
       return
     }
 
     # ---- 规则 3: 半小时到点 -> 换一张聚焦 ----
     if ($due) {
       Invoke-BwSwap $s (Get-Date) '半小时到点' | Out-Null
-      Save-BwState $s
+      Save-BwStateKeepFav $s
       return
     }
 

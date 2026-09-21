@@ -37,7 +37,7 @@ import time
 import datetime
 import ctypes
 
-VERSION = '1.6.1'
+VERSION = '1.6.6'
 APP_NAME = '微软壁纸助手'
 DATA_DIR_NAME = '微软壁纸助手数据'
 PAYLOAD_FILES = ['core.ps1', 'menu.ps1', '使用说明.txt', '微软壁纸助手.ico', '刷新图标缓存.bat']
@@ -273,7 +273,50 @@ def ensure_console():
         sys.stderr = sys.stdout
     except Exception:
         pass
+    # 菜单字体大一号: conhost 默认 16px 高, 中文长标题挤成一团看不清。
+    # 用 SetCurrentConsoleFontEx 把字高提到 20px, 失败就保持默认(无害)。
+    try:
+        _set_console_font_size(20, u'新宋体')
+    except Exception:
+        pass
     return True
+
+
+def _set_console_font_size(height, face):
+    """SetCurrentConsoleFontEx: Win10+ 才有, 失败静默 —— 字体大小是体验项不是功能项。"""
+    import ctypes
+    from ctypes import wintypes
+
+    class COORD(ctypes.Structure):
+        _fields_ = [('X', wintypes.SHORT), ('Y', wintypes.SHORT)]
+
+    class CONSOLE_FONT_INFO_EX(ctypes.Structure):
+        _fields_ = [('cbSize', wintypes.ULONG),
+                    ('nFont', wintypes.ULONG),
+                    ('dwFontSize', COORD),
+                    ('FontFamily', wintypes.UINT),
+                    ('FontWeight', wintypes.UINT),
+                    ('FaceName', wintypes.WCHAR * 32)]
+
+    rw, open_existing = 0xC0000000, 3
+    h_out = K32.CreateFileW('CONOUT$', rw, 3, None, open_existing, 0, None)
+    if h_out in (None, INVALID_HANDLE_VALUE):
+        return False
+    f = CONSOLE_FONT_INFO_EX()
+    f.cbSize = ctypes.sizeof(f)
+    f.dwFontSize = COORD(0, height)      # X=0: 宽度让 conhost 按字体自己算
+    f.FontFamily = 54                    # FIXED_PITCH | FF_MODERN | TMPF_TRUETYPE
+    f.FontWeight = 400
+    f.FaceName = face
+    # SetCurrentConsoleFontEx 没被 ctypes 默认封装, 手动取函数指针; argtypes 必须显式,
+    # 否则 64 位下指针被截断, 直接闪退。
+    k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    fn = k32.SetCurrentConsoleFontEx
+    fn.argtypes = [wintypes.HANDLE, wintypes.BOOL, ctypes.POINTER(CONSOLE_FONT_INFO_EX)]
+    fn.restype = wintypes.BOOL
+    ok = fn(h_out, False, ctypes.byref(f))
+    K32.CloseHandle(h_out)
+    return bool(ok)
 
 
 def say(msg):
@@ -285,13 +328,35 @@ def say(msg):
 
 
 # ---------------------------------------------------------------- 跑 PowerShell
+def clean_env():
+    """剥掉 PyInstaller 单文件模式留给子进程的环境变量。
+
+    为什么: 菜单里按 [A] 拉起后台, 链路是 菜单exe -> powershell -> Start-Process,
+    环境变量一路继承。里面带着 PyInstaller 的 _PYI_* / _MEIPASS2 标记, 后台 exe
+    拿到后会误判自己是"单文件父进程的子进程", 不自建临时目录, 直接复用菜单的
+    Temp\\_MEIxxx。于是关掉菜单窗口时, 菜单要回收这个目录, 后台还占着 ——
+    删不掉就弹「Failed to remove temporary directory」。
+    现象恰好是: 每个新版本第一次使用(第一次按 [A])之后弹一次;
+    以后自动换一直开着, 后台由系统开机独立拉起, 没这些标记, 就不再弹。
+    参考 PyInstaller 官方文档 "spawn subprocesses that outlive the application" 一节。
+    """
+    drop_prefix = ('_PYI_', 'PYINSTALLER_')
+    drop_exact = {'_MEIPASS2'}
+    env = {}
+    for k, v in os.environ.items():
+        if k in drop_exact or k.startswith(drop_prefix):
+            continue
+        env[k] = v
+    return env
+
+
 def ps(script, args=(), no_window=True, wait=True):
     cmd = [PS_EXE, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script]
     cmd.extend(args)
     flags = CREATE_NO_WINDOW if no_window else 0
     if wait:
-        return subprocess.run(cmd, creationflags=flags).returncode
-    return subprocess.Popen(cmd, creationflags=flags)
+        return subprocess.run(cmd, creationflags=flags, env=clean_env()).returncode
+    return subprocess.Popen(cmd, creationflags=flags, env=clean_env())
 
 
 def run_cycle(d):
