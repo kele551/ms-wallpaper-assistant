@@ -1,7 +1,7 @@
 ﻿# 微软壁纸助手 - 菜单 (by 海风 & 小腾)
 . (Join-Path $PSScriptRoot 'core.ps1')
 
-$global:BWVersion = '1.6.2'
+$global:BWVersion = '1.6.6'
 
 # 把用户按键归一化: 去首尾空格 + 全角转半角 + 转小写。
 # 中文输入法很容易把 o 打成全角 ｏ, 不归一化就变成"按了键没反应"。
@@ -239,7 +239,7 @@ function Show-BrowseAll {
   $s = Get-BwState
   $files = @()
   foreach ($pair in @(@('必应', $c.bing_save_dir), @('聚焦', $c.spotlight_save_dir))) {
-    $files += @(Get-ChildItem -LiteralPath $pair[1] -File -Filter *.jpg -ErrorAction SilentlyContinue |
+    $files += @(Get-BwPicFiles ([string]$pair[1]) |
       ForEach-Object { [PSCustomObject]@{ src = $pair[0]; file = $_ } })
   }
   $files = @($files | Sort-Object { $_.file.LastWriteTime } -Descending | Select-Object -First 40)
@@ -249,13 +249,17 @@ function Show-BrowseAll {
     Write-Host '  菜单 [1] 会顺手抓图, [7] 补必应, 开着自动换也会自己攒起来。'
     return
   }
-  Write-Host ('  —— 壁纸库 (最近 ' + $files.Count + ' 张, [必应]/[聚焦] 标来源, ★ = 已收藏) ——')
+  Write-Host ('  —— 壁纸库 (最近 ' + $files.Count + ' 张, [必应]/[聚焦] 标来源, ★ = 已收藏, 外 = 不是程序下载的) ——')
   Write-Host ('  所在文件夹: ' + $c.bing_save_dir)
+  $outs = @{}
+  foreach ($k in @(@($s.strangers) | Where-Object { $_ })) { $outs[[string]$k] = $true }
   $i = 0
   foreach ($f in $files) {
     $star = '  '
     if (Test-BwFav $s ([string]$f.file.Name)) { $star = '★ ' }
-    Write-Host ("  [$i] $star[$($f.src)] $($f.file.Name)")
+    $mk = ' '
+    if ($outs.ContainsKey((Get-BwNameKey ([string]$f.file.Name)))) { $mk = '外' }
+    Write-Host ("  [$i] $star[$($f.src)]$mk $($f.file.Name)")
     $i++
   }
   Write-Host '  [o] 打开文件夹    [q] 返回'
@@ -309,6 +313,9 @@ function Show-Archive {
   }
 }
 
+# [9] 手动校验图库已移除: 图库校验现在由程序在每次巡检 (core.ps1 Update-BwStrangers)
+# 和进菜单时自动完成, 外来图只打记号 (不参与轮换、列表里标「外」), 一个文件都不动。
+
 # ---------- [1] 立刻换一张 ----------
 function Invoke-BwManualSwap {
   $null = Ensure-BwDirs
@@ -330,8 +337,12 @@ function Invoke-BwRefill {
   $want = [int]$c.spotlight_per_cycle
   $new = @(Invoke-SpotlightFetch -count $want -Quiet)
   if ($new.Count -gt 0) {
-    # 新下的图立刻排进队列, 不用干等一整轮
-    $s.queue = @(@($s.queue | Where-Object { $_ }) + $new)
+    # 新下的图立刻排进队列, 不用干等一整轮。
+    # 队列里存的是**文件名**, 而 Invoke-SpotlightFetch 返回的是完整路径 ——
+    # 直接塞进去的话, 取图时 Join-Path 会拼成 "库\F:\库\xxx.jpg", 张张都找不到,
+    # 于是刚抓的这批图在队列里过一遍就被当成"已删除"剔掉, 白抓。
+    $newNames = @($new | ForEach-Object { Split-Path $_ -Leaf })
+    $s.queue = @(@($s.queue | Where-Object { $_ }) + $newNames)
     Save-BwState $s
   }
   Write-Host ('  聚焦库现在 ' + (Count-Jpg $c.spotlight_save_dir) + ' 张, 待换队列还剩 ' + (Left-Queue $s) + ' 张')
@@ -1037,6 +1048,20 @@ function Toggle-BwFavCurrent {
 
 # ---------- 主菜单 ----------
 if (-not (Test-Path -LiteralPath $global:CfgPath)) { Invoke-BwFirstRun }
+# 进菜单先把两个库目录立起来: 用户手滑删了文件夹很正常, 程序自己建回来,
+# 不用他先去手动新建一个空文件夹。
+$null = Ensure-BwDirs
+# 进菜单时认一遍: 库里哪些图不是本程序下载的。只打记号, 不动文件
+[void](Update-BwStrangers)
+# 聚焦库整个没了 (目录被删后刚重建, 0 张) -> 进菜单就自动补一批, 不等后台巡检。
+# 必应库不这么干: 每日一张、历史是用户自己挑着下的 (菜单 [7] 补漏 / [8] 归档),
+# 程序只把目录建回来, 图让用户自己恢复。
+try {
+  if ((@(Get-BwSpotlightAll).Count -eq 0) -and -not $global:BWDry) {
+    Start-BwBackfill (Get-BwSpotlightWant) -Force
+    Log '菜单发现聚焦库是空的 -> 已自动在后台补一批'
+  }
+} catch {}
 
 do {
   $c0 = Get-BwConfig
@@ -1072,6 +1097,13 @@ do {
   if ($desk -eq 'create') { Write-Host '  已在桌面放了「微软壁纸助手」快捷方式 (不想要: 设置 [6] 里关)' -ForegroundColor DarkYellow }
   elseif ($desk -eq 'update') { Write-Host '  桌面快捷方式已指向当前这份程序, 图标也是新的' -ForegroundColor DarkYellow }
   Write-Host (' 壁纸库: 必应 ' + $bingN + ' 张 · 聚焦 ' + $spotN + ' 张 · 待换队列剩 ' + (Left-Queue $s0) + ' 张') -ForegroundColor DarkGray
+  if ($spotN -eq 0) { Write-Host ' 聚焦库是空的, 程序正在后台自动补图 (几分钟后重开菜单就能看到); 也可以按 [3] 现在就抓一批' -ForegroundColor DarkYellow }
+  # 程序下载的每张图都在下载清单里登了记; 认不出来的就是你自己放进来/改过名的。
+  # 只做记号: 图原地不动, 但自动轮换会跳过它们。
+  $strN = @(@($s0.strangers) | Where-Object { $_ }).Count
+  if ($strN -gt 0) {
+    Write-Host (' 另有 ' + $strN + ' 张不是程序下载的图 (已做记号: 原地不动, 也不自动轮换)') -ForegroundColor DarkYellow
+  }
   # 累计下载是笔只增不减的流水账: 删掉的、被库上限清走的都还在这个数里
   Write-Host (' 累计下载: ' + (Get-BwDlTotal $s0) + ' 张 (从装上那天算起, 删掉和清走的都记着)') -ForegroundColor DarkGray
   # 收藏只在开了「只看收藏」时才占一行 —— 平时不打扰
