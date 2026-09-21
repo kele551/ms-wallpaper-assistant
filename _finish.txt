@@ -1,9 +1,0 @@
-﻿python.exe : C:\Users\kele551\.workbuddy\binaries\python\envs\default\Scripts\python.exe: can't open file 'C:\\Users\\k
-ele551\\_finish162.py': [Errno 2] No such file or directory
-所在位置 行:447 字符: 8
-+ $out = & "$venv\Scripts\python.exe" "C:\Users\kele551\_finish162.py"  ...
-+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : NotSpecified: (C:\Users\kele55...le or directory:String) [], RemoteException
-    + FullyQualifiedErrorId : NativeCommandError
- 
-
