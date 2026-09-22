@@ -584,8 +584,18 @@ function Get-BwState {
       $s.dl_filled = 1
       Log ('  累计下载张数: 按现有痕迹回填了 ' + $n2 + ' 张 (更早就下载过、又已经被清出名单的, 查不到了)')
       # 当场落盘: 回填只该做一次, 不落盘的话下次进来又要重算一遍。
-      # 走 KeepFav 合并写, 免得把用户正在菜单里改的东西覆盖掉。
-      Save-BwStateKeepFav $s
+      # !! 这里只能走最底层的整份写, 绝不能调 Save-BwStateKeepFav !!
+      # Save-BwStateKeepFav 的第一件事就是再读一次 state (Get-BwState), 而磁盘
+      # 此刻还是旧 schema -> 又进到这个分支 -> 再调 -> 无限递归, 直撞 PowerShell
+      # 的调用深度上限 ("call depth overflow")。
+      # 实测(2026-09-22, 沙箱复现): 20~35 秒刷约 595 行日志后抛异常, 且磁盘
+      # state.json 始终写不进去 —— 升级结果永远落不了盘, 之后每次巡检都再撞一次,
+      # 被 Invoke-BwCycle 的 catch 吞成一句"轮换异常", 表现就是"壁纸再也不自动换"。
+      # 迁移写盘不需要合并/再读: 这份 $s 就是刚读出来的, 只改了 schema 和 dl_filled。
+      # dl_total 只是显示缓存(真账在流水文件里), 落盘前按流水同步一次 —— 和
+      # Save-BwState 的做法一致, 免得文件里写着 0、界面却显示真实张数。
+      try { $s.dl_total = Get-BwDlTotal $s } catch {}
+      [System.IO.File]::WriteAllText($global:BWState, ($s | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding($false)))
     }
   }
   return $s
@@ -1175,7 +1185,9 @@ function Invoke-BwSwap($s, [DateTime]$now, [string]$why) {
 function Set-BwWallManual($s, [string]$path, [string]$why) {
   if (-not $path) { return $false }
   if (-not (Test-Path -LiteralPath $path)) { Write-Host '  这张图已经不在库里了'; return $false }
-  if (-not (Test-BwImageOk $path)) {
+  # 手动挑的图可能是用户自己的 png / 小尺寸照片, 所以用宽松校验:
+  # 只要求"能打开"。用下载那套严格标准会把好图当成坏图挪走 (2026-09-22 修)。
+  if (-not (Test-BwUsableImage $path)) {
     Write-Host '  这张图打不开 (文件截断或已损坏), 不能设为壁纸 —— 已把它挪出图库' -ForegroundColor Yellow
     [void](Move-BwBadImage $path)
     return $false
@@ -1448,6 +1460,22 @@ function Test-BwImageOk([string]$path) {
   try { $im = [System.Drawing.Image]::FromFile($path); return $true } catch { return $false }
   finally { if ($im) { $im.Dispose() } }
 }
+# 「这张图 Windows 能不能打开」—— 给**用户自己放进图库的图**用的宽松校验。
+#
+# 为什么需要它: Test-BwImageOk 那套标准(>=100KB + 头 FF D8 FF + 尾 FF D9)是给
+# "程序自己下载的 jpg"定的 —— 较真的是下载被掐断。拿它去量用户的图会误伤:
+#   * 用户丢进图库的 png / webp / bmp / gif / tif 头几个字节不是 FF D8 FF,
+#     一律被判"已损坏", 选中设壁纸时还会被挪进「坏图」文件夹;
+#   * 用户自己的小照片(手机压缩图、缩略图)常常不到 100KB, 同样被误判。
+# 这里只回答一个问题: GDI+ 能不能打开它。空文件/截断文件/非图片文件都会抛异常。
+function Test-BwUsableImage([string]$path) {
+  if (-not $path) { return $false }
+  if (-not (Test-Path -LiteralPath $path)) { return $false }
+  Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
+  $im = $null
+  try { $im = [System.Drawing.Image]::FromFile($path); return $true } catch { return $false }
+  finally { if ($im) { $im.Dispose() } }
+}
 function Get-BwImageDim([string]$path) {
   Add-Type -AssemblyName System.Drawing
   $im = $null
@@ -1482,11 +1510,19 @@ function Move-BwBadImage([string]$path) {
 # (这功能已取消, 图库里只该有图 —— 白纸图标的 json 用户只当它是坏文件)。
 function Sweep-BwBadImages {
   $c = Get-BwConfig
+  # 严格标准(>=100KB / JPEG 头尾)只用来量**程序自己下载的**图 —— 截断是下载环节
+  # 引入的, 只有它需要较真。用户自己丢进图库的图(不到 100KB 的小照片等)只要求
+  # "能打开", 否则会被当成坏图挪走 (2026-09-22 修)。
+  # 下载清单在这里取一次: 它是文件读取, 放进循环里按文件读会白白重复几千次。
+  $dlKeys = Get-BwDlKeys
   $n = 0
   foreach ($dir in @($c.spotlight_save_dir, $c.bing_save_dir)) {
     if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { continue }
     foreach ($f in @(Get-ChildItem -LiteralPath $dir -File -Filter *.jpg -ErrorAction SilentlyContinue)) {
-      if (-not (Test-BwImageOk $f.FullName)) { if (Move-BwBadImage $f.FullName) { $n++ } }
+      $bad = $false
+      if ($dlKeys.Contains((Get-BwNameKey $f.Name))) { $bad = (-not (Test-BwImageOk $f.FullName)) }
+      else { $bad = (-not (Test-BwUsableImage $f.FullName)) }
+      if ($bad) { if (Move-BwBadImage $f.FullName) { $n++ } }
     }
     # 老版本把 .meta.json 直接写在图库里, 文件管理器里混着一片白纸图标 —— 清掉
     foreach ($f in @(Get-ChildItem -LiteralPath $dir -File -Filter *.meta.json -ErrorAction SilentlyContinue)) {
@@ -1692,7 +1728,11 @@ function Invoke-BwBackfill($s) {
   # 于是断一次网那几天的图就永久漏了, 而且再也不会补。
   if ($gotThrough) {
     Set-BwHighDate $s $gotThrough.ToString('yyyy-MM-dd')
-    Save-BwState $s
+    # 必须走 KeepFav 合并写: 补漏可能连着下 30 天(好几分钟), 这期间用户很可能
+    # 正在菜单里按 [F] 收藏、手动挑图。整份覆盖会把人家刚写进 state 的
+    # 收藏/队列/看过名单无声抹掉 —— 这正是 Invoke-BwCycle 注释里承认过的那类漏改
+    # (2026-09-22 修)。
+    Save-BwStateKeepFav $s
   }
 }
 # ---- Windows 聚焦图源 (微软官方桌面聚焦, 3840x2160, 与 Bing 壁纸同一壁纸团队) ----
