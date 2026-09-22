@@ -1,6 +1,8 @@
 # 微软壁纸助手
 
-![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Windows-blue) ![Version](https://img.shields.io/badge/version-v2.0.1-blue)
+> 作者：**海风（kele551）** · 仓库：https://gitee.com/kele551/ms-wallpaper-assistant （GitHub 同名镜像）
+
+![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Windows-blue) ![Version](https://img.shields.io/badge/version-v2.0.7-blue)
 
 **让电脑桌面壁纸自己换，你不用管。**
 
@@ -35,7 +37,7 @@ Windows 桌面壁纸自动轮换工具。图全都来自微软官方，两个图
 
 ## 下载
 
-### 👉 [点这里下载 v2.0.2 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.0.2/MSWallpaperAssistant-v2.0.2.zip)
+### 👉 [点这里下载 v2.0.7 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.0.7/MSWallpaperAssistant-v2.0.7.zip)
 
 > 7.3 MB 的 zip，实测可解压、可运行。
 
@@ -145,13 +147,13 @@ Windows 桌面壁纸自动轮换工具。图全都来自微软官方，两个图
 
 ## 版本迭代
 
-每次改版都会打一个版本号、发一版下载。**当前最新：v2.0.1（v2.0.0 开发中，未发布）**
+每次改版都会打一个版本号、发一版下载。**当前最新：v2.0.7**
 
 小版本的改动都归到同一个大版本下面说，一行一个版本：
 
 | 版本 | 日期 | 改了什么 |
 |---|---|---|
-| **v2.0.0** | 09-21 | 图库里只有能用的图：坏图自动隔离进「坏图」文件夹、元数据写进 JPEG 注释段（不再拖 .meta.json 侧车）；`[2]` 下载聚焦图片加了「虚线增长 + 游标流动」计数动效；一并收口 1.6.x 的菜单重排 / 边界校验 / 去重流水账等改动 |
+| **v2.0** | 09-21~09-22 | 图库里只有能用的图（坏图隔离进「坏图」、元数据写进 JPEG 注释段）；**在线升级**（菜单里能看进度 + 后台静默升级）；主菜单压成三行、提醒只在该出现时出现；加作者署名、文件名不带版本号；修掉「把图库安进别人资料目录」「壁纸再也不自动换」等一批缺陷。图标试过两版后定回原样，**试版不占版本号** |
 | **v1.6** | 09-17~09-21 | 程序不再替你做决定：外来图只做记号不动文件、库目录被删自己建回来；提示不再指错路；换图不用干等下载 |
 | **v1.5** | 09-19 | 双击就能用：只出一份 exe、数据搬出程序目录、开机自动换不会再按反、看过的壁纸不再排回来、图库不再越攒越大 |
 | v1.4 | 09-19 | 壁纸填充方式可以自己选；新增收藏夹；自动建桌面图标（只建一次，之后跟着你放的位置走） |

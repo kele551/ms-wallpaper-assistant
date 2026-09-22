@@ -71,14 +71,15 @@ VSVersionInfo(
       StringTable(
         '080404b0',
         [
-          StringStruct('CompanyName', 'kele551'),
+          StringStruct('CompanyName', 'HaiFeng (kele551)'),
           StringStruct('FileDescription', '微软壁纸助手 - 必应每日一图 + Windows 聚焦'),
           StringStruct('FileVersion', '{v}'),
           StringStruct('InternalName', 'MSWallpaperAssistant'),
-          StringStruct('LegalCopyright', 'MIT License'),
+          StringStruct('LegalCopyright', 'Copyright (C) 2026 HaiFeng (kele551)'),
           StringStruct('OriginalFilename', '微软壁纸助手.exe'),
           StringStruct('ProductName', '微软壁纸助手'),
-          StringStruct('ProductVersion', '{v}')
+          StringStruct('ProductVersion', '{v}'),
+        StringStruct('Comments', 'gitee.com/kele551/ms-wallpaper-assistant')
         ]
       )
     ]),
@@ -98,6 +99,22 @@ def main():
 
     version = read_version()
     print('版本号: ' + version)
+
+    # 2026-09-22 踩过的坑: .ps1 少一个 UTF-8 BOM, PowerShell 5.1 就按 ANSI 读,
+    # 中文全乱、直接 ParserError —— 打出来的 exe 双击"一闪就退", 现场很难定位。
+    # 所以在打包前先卡一道, 缺 BOM 直接不给打。
+    bad_bom = []
+    for f in PAYLOAD_FILES:
+        if not f.lower().endswith('.ps1'):
+            continue
+        with open(os.path.join(HERE, f), 'rb') as fp:
+            head = fp.read(3)
+        if head != b'\xef\xbb\xbf':
+            bad_bom.append(f)
+    if bad_bom:
+        print('这几个 .ps1 缺 UTF-8 BOM (PS 5.1 会把中文读成乱码并解析失败): ' + ', '.join(bad_bom))
+        print('补救: 用 UTF8Encoding($true) 重写一遍再打包。')
+        return 1
 
     work = tempfile.mkdtemp(prefix='mwa-build-')
     try:
