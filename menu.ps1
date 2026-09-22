@@ -1,7 +1,7 @@
 ﻿# 微软壁纸助手 - 菜单 (by 海风 & 小腾)
 . (Join-Path $PSScriptRoot 'core.ps1')
 
-$global:BWVersion = '1.6.6'
+$global:BWVersion = '2.0.1'
 
 # 把用户按键归一化: 去首尾空格 + 全角转半角 + 转小写。
 # 中文输入法很容易把 o 打成全角 ｏ, 不归一化就变成"按了键没反应"。
@@ -19,22 +19,6 @@ function Normalize-BwKey([string]$s) {
 function Pause-Bw { Write-Host ''; Read-Host '  按回车返回菜单' | Out-Null }
 function Today-Str { return (Get-Date -Format 'yyyy-MM-dd') }
 
-# 系统自带的 ie4uinit 没跑成 / 机器上没有时, 给出真正能用的备用办法。
-# 以前这里让用户去"程序目录"里找 刷新图标缓存.bat —— 可那个 bat 压根没打进 exe,
-# 用户照着提示去找只能扑空。现在 bat 跟着 core.ps1 一起躺在数据目录里, 提示给的是真实路径。
-function Show-BwIconFixHint {
-  $bat = Join-Path $global:BWRoot '刷新图标缓存.bat'
-  if (Test-Path -LiteralPath $bat) {
-    Write-Host ''
-    Write-Host '  备用办法: 双击下面这个脚本 (会重启一次资源管理器, 不丢文件)'
-    Write-Host ('  ' + $bat) -ForegroundColor DarkGray
-    Write-Host '  [o] 打开它所在的文件夹    [回车] 就这样'
-    $k = Normalize-BwKey (Read-Host '  ')
-    if ($k -eq 'o') { try { Start-Process -FilePath 'explorer.exe' -ArgumentList $global:BWRoot } catch {} }
-  } else {
-    Write-Host '  备用办法: 注销一次再登录, 或者重启电脑 —— 这是最彻底的。' -ForegroundColor DarkGray
-  }
-}
 # 库的口径: 只数这一层的 .jpg, 不往子目录里钻。
 # 用户会把图挪进子目录、删掉、或者搬到别处 —— 口径必须稳定可预期:
 # "库里有几张" 就等于 "能轮换到几张", 两个数不会对不上。
@@ -233,7 +217,7 @@ function Set-BwBase([string]$base) {
   return $true
 }
 
-# ---------- [4] 从库里挑一张 ----------
+# ---------- [3] 打开壁纸库 ----------
 function Show-BrowseAll {
   $c = Get-BwConfig
   $s = Get-BwState
@@ -246,7 +230,7 @@ function Show-BrowseAll {
   if ($files.Count -eq 0) {
     Write-Host '  两个壁纸库现在都是空的。'
     Write-Host ('  位置: ' + $c.bing_save_dir)
-    Write-Host '  菜单 [1] 会顺手抓图, [7] 补必应, 开着自动换也会自己攒起来。'
+    Write-Host '  菜单 [2] 会抓聚焦图, [4] 里能补必应, 开着自动换也会自己攒起来。'
     return
   }
   Write-Host ('  —— 壁纸库 (最近 ' + $files.Count + ' 张, [必应]/[聚焦] 标来源, ★ = 已收藏, 外 = 不是程序下载的) ——')
@@ -295,9 +279,15 @@ function Show-BrowseAll {
   } catch { Write-Host '  序号无效' }
 }
 
-# ---------- [8] 下载往期必应 (niumoo/bing-wallpaper, 2021-02 至今 4K) ----------
+# ---------- [4] 下载必应图片 (补齐 2021 至今 / 补漏; 归档源 niumoo/bing-wallpaper, 2021-02 至今 4K) ----------
 function Show-Archive {
-  Write-Host '  归档范围: 2021-02 至今 (开源仓库 niumoo/bing-wallpaper, 4K)'
+  Write-Host '  —— 下载必应图片 ——'
+  Write-Host '  [1] 补齐必应图片   2021-02 至今, 按年-月整月下 (如 2024-08)'
+  Write-Host '  [2] 补漏必应图片   补下载错过的那些天 (只下载, 不切壁纸)'
+  Write-Host '  [q] 返回'
+  $k = Normalize-BwKey (Read-Host '  选择')
+  if ($k -eq '2') { Invoke-BwBackfillManual; Pause-Bw; return }
+  if ($k -ne '1') { return }
   $ym = Read-Host '  输入年-月 (如 2024-08), 回车返回'
   if (-not $ym) { return }
   if ((Normalize-BwKey $ym) -eq 'q') { return }
@@ -316,7 +306,7 @@ function Show-Archive {
 # [9] 手动校验图库已移除: 图库校验现在由程序在每次巡检 (core.ps1 Update-BwStrangers)
 # 和进菜单时自动完成, 外来图只打记号 (不参与轮换、列表里标「外」), 一个文件都不动。
 
-# ---------- [1] 立刻换一张 ----------
+# ---------- [1] 换图 ----------
 function Invoke-BwManualSwap {
   $null = Ensure-BwDirs
   $s = Get-BwState
@@ -324,18 +314,18 @@ function Invoke-BwManualSwap {
     $s.last_bing_date = (Today-Str)
     Write-Host '  (顺手记下今天必应已切, 免得下次进桌面又插一张必应)'
   }
-  Invoke-BwSwap $s (Get-Date) '手动: 立刻换一张' | Out-Null
+  Invoke-BwSwap $s (Get-Date) '手动: 立刻换成聚焦里的图片' | Out-Null
   Save-BwState $s
   if ($s.last_wall) { Write-Host ('  已更换: ' + (Split-Path $s.last_wall -Leaf)) }
 }
 
-# ---------- [3] 再抓一批新聚焦 ----------
+# ---------- [2] 下载聚焦图片 ----------
 function Invoke-BwRefill {
   $c = Get-BwConfig
   $null = Ensure-BwDirs
   $s = Get-BwState
   $want = [int]$c.spotlight_per_cycle
-  $new = @(Invoke-SpotlightFetch -count $want -Quiet)
+  $new = @(Invoke-SpotlightFetch -count $want -Quiet -Counter)
   if ($new.Count -gt 0) {
     # 新下的图立刻排进队列, 不用干等一整轮。
     # 队列里存的是**文件名**, 而 Invoke-SpotlightFetch 返回的是完整路径 ——
@@ -348,7 +338,7 @@ function Invoke-BwRefill {
   Write-Host ('  聚焦库现在 ' + (Count-Jpg $c.spotlight_save_dir) + ' 张, 待换队列还剩 ' + (Left-Queue $s) + ' 张')
 }
 
-# ---------- [7] 补下最近错过的必应 ----------
+# ---------- 补漏必应图片 (在菜单 [4] 下载必应图片 里, 不再单独占一个号) ----------
 function Invoke-BwBackfillManual {
   $null = Ensure-BwDirs
   $c = Get-BwConfig
@@ -399,7 +389,7 @@ function Show-BwFavorites {
         Write-Host ('  (另有 ' + ($allN - $files.Count) + ' 张收藏的图已经不在库里了)') -ForegroundColor DarkGray
       }
       Write-Host ''
-      Write-Host '  数字 = 设为壁纸    r+数字 = 移出收藏 (如 r3)'
+      Write-Host '  数字 = 设为壁纸    x+数字 = 移出收藏 (如 x3)'
     }
     Write-Host '  [q] 返回'
     Write-Host ''
@@ -424,12 +414,18 @@ function Show-BwFavorites {
       Log ('设置: 只在收藏里轮换 -> ' + [bool]$c.fav_only)
       Pause-Bw
     }
-    elseif ($k -match '^r(\d+)$') {
+    elseif ($k -match '^x(\d+)$') {
+      # 移出收藏用 x 而不是 r: 主菜单的 [R] 已经是「刷新画面」了,
+      # 同一个字母在两级菜单里干两件不同的事, 按下去心里没底。
       $idx = [int]$Matches[1]
       if (($idx -ge 0) -and ($idx -lt $files.Count)) {
         $nm = [string]$files[$idx].Name
         if (Remove-BwFav $s $nm) { Save-BwState $s; Write-Host ('  已移出收藏: ' + $nm) }
       } else { Write-Host '  没有这一项' }
+      Pause-Bw
+    }
+    elseif ($k -match '^r') {
+      Write-Host '  移出收藏现在按 x+序号 (如 x3) —— r 在主菜单里是「刷新」。'
       Pause-Bw
     }
     elseif ($k -match '^(\d+)$') {
@@ -444,15 +440,55 @@ function Show-BwFavorites {
   } while (-not $back)
 }
 
+# ---------- 改换图间隔 (设置 [1]) ----------
+# 它只在设置页里以编号 [1] 露面。以前主菜单上连「换图间隔」四个字都没有,
+# 不知道有这么个"1"可以按, 这功能等于不存在 —— 现在设置里那一行直接写明「按 1 就能改」。
+# 抽成函数是为了只写一份, 免得改了一处漏另一处。
+function Edit-BwCycleMinutes {
+  $c = Get-BwConfig
+  Write-Host ''
+  Write-Host ' ====== 换图间隔 ======' -ForegroundColor Cyan
+  Write-Host ('  现在: 每 ' + $c.cycle_minutes + ' 分钟换一张 (程序默认 30 分钟)')
+  Write-Host ''
+  Write-Host ('  单位是分钟, 可填 ' + $global:BwLimit.cycle_minutes.Min + ' ~ ' + $global:BwLimit.cycle_minutes.Max + '; 出界自动贴到最近边界。')
+  Write-Host ''
+  Write-Host ''
+  $m = Read-Host ('  多少分钟换一次? (现在 ' + $c.cycle_minutes + ', 回车不改)')
+  $mm = Normalize-BwKey $m
+  if (-not $m) {
+    # 直接回车 = 不改
+  } elseif ($mm -match '^\d+$') {
+    $n = Limit-BwNum ([int]$mm) 'cycle_minutes'
+    if ($n -ne [int]$mm) {
+      Write-Host ('  ' + $mm + ' 分钟出界了, 按 ' + $n + ' 分钟算。') -ForegroundColor Yellow
+    }
+    $c.cycle_minutes = $n
+    Save-BwConfig $c
+    Write-Host ('  好了, 每 ' + $n + ' 分钟换一张。改完不用重启, 最多半分钟就按新节奏走。')
+    Log ('设置: 换图间隔 -> ' + $n)
+  } else {
+    Write-Host ('  要填 ' + $global:BwLimit.cycle_minutes.Min + '~' + $global:BwLimit.cycle_minutes.Max + ' 之间的整数(分钟), 没改。') -ForegroundColor Yellow
+  }
+  Pause-Bw
+}
+
 # ---------- 设置 ----------
 function Show-BwSettings {
   $back = $false
   do {
     $c = Get-BwConfig
+    # 允许手改 config.json, 但改出界的数字在这里被夹回去并落盘。
+    # 不做这一步的话, 菜单会显示手改的值、后台却按夹过的另一套跑, 对不上。
+    $fixed = Repair-BwConfig $c
     Clear-Host
     Write-Host '========== 设置 ==========' -ForegroundColor Cyan
+    if ($fixed.Count -gt 0) {
+      Write-Host ''
+      Write-Host ('  提醒: 配置里有数字超出允许范围, 已夹回 -> ' + ($fixed -join '; ')) -ForegroundColor Yellow
+    }
     Write-Host ''
-    Write-Host ('  [1] 换图间隔        每 ' + $c.cycle_minutes + ' 分钟换一张')
+    Write-Host ('  [1] 换图间隔        每 ' + $c.cycle_minutes + ' 分钟换一张') -NoNewline
+    Write-Host '   按 1 就能改' -ForegroundColor Yellow
     Write-Host ('  [2] 每轮抓几张      一次抓 ' + $c.spotlight_per_cycle + ' 张聚焦备用')
     $base = Get-BwBaseOf $c
     if ($base) { Write-Host ('  [3] 壁纸保存位置    ' + $base) }
@@ -469,39 +505,47 @@ function Show-BwSettings {
     if ([string]$c.desktop_shortcut -eq 'off') { $deskOn = '关' }
     Write-Host ('  [6] 桌面快捷方式    ' + $deskOn)
     Write-Host ('  [7] 数据目录        ' + $global:BWRoot)
-    Write-Host '  [8] 图标缓存        一键刷新 (图标显示成旧的样子时用)'
     $cap = 0
     try { $cap = [int]$c.lib_cap } catch { $cap = 0 }
     $capTxt = '不限'
     if ($cap -gt 0) { $capTxt = ($cap.ToString() + ' 张') }
     $libN = @(Get-ChildItem -LiteralPath ([string]$c.spotlight_save_dir) -File -Filter *.jpg -ErrorAction SilentlyContinue).Count
-    Write-Host ('  [9] 图库上限        ' + $capTxt + ' · 现在库里 ' + $libN + ' 张')
+    Write-Host ('  [8] 图库上限        ' + $capTxt + ' · 现在库里 ' + $libN + ' 张')
     $afOn = '关'
     if ([bool]$c.auto_fetch) { $afOn = '开' }
     Write-Host ('  [0] 自动补新图      ' + $afOn + '  · 关着就只在现有这些图里轮换')
     Write-Host ''
     Write-Host '  [q] 返回'
     Write-Host ''
+    # 以前的提示只写「要改哪一项」, 没说怎么输入 —— 编号菜单对没用过的人就是个谜,
+    # 不知道要敲数字、也不知道敲哪个。这里把输入方式直接写在问句里。
+    Write-Host '  想改哪一项, 就输入它前面的数字再回车。' -ForegroundColor DarkGray
     $k = Normalize-BwKey (Read-Host '  要改哪一项')
     switch ($k) {
-      '1' {
-        Write-Host ''
-        $m = Read-Host ('  多少分钟换一次? (现在 ' + $c.cycle_minutes + ', 回车不改)')
-        if ($m -and ((Normalize-BwKey $m) -match '^\d+$') -and ([int]$m -gt 0)) {
-          $c.cycle_minutes = [int]$m
-          Save-BwConfig $c
-          Write-Host ('  好了, 每 ' + $m + ' 分钟换一张。')
-        } elseif ($m) { Write-Host '  要填一个大于 0 的数字, 没改。' }
-        Pause-Bw
-      }
+      '1' { Edit-BwCycleMinutes }
       '2' {
         Write-Host ''
-        $n = Read-Host ('  一次抓几张? (现在 ' + $c.spotlight_per_cycle + ', 回车不改)')
-        if ($n -and ((Normalize-BwKey $n) -match '^\d+$') -and ([int]$n -gt 0)) {
-          $c.spotlight_per_cycle = [int]$n
+        Write-Host '  聚焦库换过一轮之后, 一次补几张新图进来。默认 6 张。'
+        Write-Host ('  能填 ' + $global:BwLimit.spotlight_per_cycle.Min + ' ~ ' + $global:BwLimit.spotlight_per_cycle.Max + ' 张。上限定在这儿是因为:')
+        Write-Host '    一次抓太多, 一轮补图要跑很久, 看着跟卡死一样;'
+        Write-Host '    而且微软就那么多新图, 抓一大把反而容易撞上已经下过的, 白等。'
+        Write-Host ''
+        $n = Read-Host ('  一次抓几张? (现在 ' + $c.spotlight_per_cycle + ', 默认 6, 回车不改)')
+        $nn = Normalize-BwKey $n
+        if (-not $n) {
+          # 直接回车 = 不改
+        } elseif ($nn -match '^\d+$') {
+          $v = Limit-BwNum ([int]$nn) 'spotlight_per_cycle'
+          if ($v -ne [int]$nn) {
+            Write-Host ('  ' + $nn + ' 张出界了, 按 ' + $v + ' 张算。') -ForegroundColor Yellow
+          }
+          $c.spotlight_per_cycle = $v
           Save-BwConfig $c
-          Write-Host ('  好了, 一次抓 ' + $n + ' 张。')
-        } elseif ($n) { Write-Host '  要填一个大于 0 的数字, 没改。' }
+          Write-Host ('  好了, 一次抓 ' + $v + ' 张。')
+          Log ('设置: 每轮抓几张 -> ' + $v)
+        } else {
+          Write-Host ('  要填 ' + $global:BwLimit.spotlight_per_cycle.Min + '~' + $global:BwLimit.spotlight_per_cycle.Max + ' 之间的整数, 没改。') -ForegroundColor Yellow
+        }
         Pause-Bw
       }
       '3' {
@@ -594,43 +638,27 @@ function Show-BwSettings {
       }
       '8' {
         Write-Host ''
-        Write-Host '  正在刷新 Windows 图标缓存 ...' -ForegroundColor DarkGray
-        $ie = Join-Path $env:SystemRoot 'System32\ie4uinit.exe'
-        if (Test-Path -LiteralPath $ie) {
-          try {
-            $p = Start-Process -FilePath $ie -ArgumentList '-ClearIconCache' -Wait -PassThru -WindowStyle Hidden
-            if ($p.ExitCode -eq 0) {
-              Write-Host '  好了。还显示旧图标的话, 把那个文件夹窗口关掉重开一次。'
-              Log ('设置: 刷新图标缓存 (ie4uinit -ClearIconCache) 完成')
-            } else {
-              Write-Host ('  没成功 (退出码 ' + $p.ExitCode + ')。')
-              Show-BwIconFixHint
-            }
-          } catch {
-            Write-Host ('  没跑成: ' + $_.Exception.Message)
-            Show-BwIconFixHint
-          }
-        } else {
-          Write-Host '  这台机器没有 ie4uinit.exe。'
-          Show-BwIconFixHint
-        }
-        Pause-Bw
-      }
-      '9' {
-        Write-Host ''
         Write-Host '  库里攒到这个数之后, 每换一张就把「已经看过」的最老的一张移进回收站。'
         Write-Host '  没看过的图不会动 —— 那是排队等着换的。移走的能从回收站还原。'
         Write-Host '  填 0 = 不限, 库只增不减。'
+        Write-Host ('  不填 0 的话能填 ' + $global:BwLimit.lib_cap.Min + ' ~ ' + $global:BwLimit.lib_cap.Max + ' 张: 少于 ' + $global:BwLimit.lib_cap.Min + ' 张等于刚补进来就删掉,')
+        Write-Host ('  超过 ' + $global:BwLimit.lib_cap.Max + ' 张那是冷备份不是壁纸库了(4K 图一千张就好几个 GB)。')
         Write-Host ''
         $v = Read-Host ('  最多留多少张? (现在 ' + $capTxt + ', 回车不改)')
         $vv = Normalize-BwKey $v
-        if ($v -and ($vv -match '^\d+$')) {
-          $c.lib_cap = [int]$v
+        if (-not $v) {
+          # 直接回车 = 不改
+        } elseif ($vv -match '^\d+$') {
+          $v2 = Limit-BwNum ([int]$vv) 'lib_cap'
+          if (($v2 -ne [int]$vv) -and ([int]$vv -ne 0)) {
+            Write-Host ('  ' + $vv + ' 张出界了, 按 ' + $v2 + ' 张算。') -ForegroundColor Yellow
+          }
+          $c.lib_cap = $v2
           Save-BwConfig $c
-          if ([int]$v -eq 0) { Write-Host '  好了, 不限张数。' }
-          else { Write-Host ('  好了, 最多留 ' + $v + ' 张, 超了就把看过的最老的移进回收站。') }
-          Log ('设置: 图库上限 -> ' + $v)
-        } elseif ($v) { Write-Host '  要填一个数字 (0 = 不限), 没改。' }
+          if ($v2 -eq 0) { Write-Host '  好了, 不限张数。' }
+          else { Write-Host ('  好了, 最多留 ' + $v2 + ' 张, 超了就把看过的最老的移进回收站。') }
+          Log ('设置: 图库上限 -> ' + $v2)
+        } else { Write-Host '  要填一个数字 (0 = 不限), 没改。' -ForegroundColor Yellow }
         Pause-Bw
       }
       '0' {
@@ -1053,8 +1081,23 @@ if (-not (Test-Path -LiteralPath $global:CfgPath)) { Invoke-BwFirstRun }
 $null = Ensure-BwDirs
 # 进菜单时认一遍: 库里哪些图不是本程序下载的。只打记号, 不动文件
 [void](Update-BwStrangers)
+# 进菜单顺手扫一遍库: 截断/损坏的图隔离进「坏图」文件夹, 图库里散落的
+# .meta.json 元数据搬去数据目录 —— 图库里以后只有能用的图 (坏图那次教训)。
+$global:BwBadSwept = 0
+$global:BwSweepJob = $null
+# 坏图扫描(逐张用 GDI+ 解码验证)原本同步跑在菜单显示之前 —— 耗时与图库张数成正比,
+# 库里图一多就累积好几秒, 表现为"菜单打开后好一会儿才出字"。2.0 加这套扫描后才有的问题。
+# 改成后台作业: 菜单先显示, 扫描在后台跑, 扫完再在菜单上提示「已隔离 N 张」。
+try {
+  $corePath = Join-Path $PSScriptRoot 'core.ps1'
+  $global:BwSweepJob = Start-Job -ScriptBlock {
+    param($p)
+    . $p
+    return (Sweep-BwBadImages)
+  } -ArgumentList $corePath
+} catch { $global:BwSweepJob = $null }
 # 聚焦库整个没了 (目录被删后刚重建, 0 张) -> 进菜单就自动补一批, 不等后台巡检。
-# 必应库不这么干: 每日一张、历史是用户自己挑着下的 (菜单 [7] 补漏 / [8] 归档),
+# 必应库不这么干: 每日一张、历史是用户自己挑着下的 (菜单 [4] 里的「补齐」/「补漏」),
 # 程序只把目录建回来, 图让用户自己恢复。
 try {
   if ((@(Get-BwSpotlightAll).Count -eq 0) -and -not $global:BWDry) {
@@ -1071,41 +1114,72 @@ do {
   $bingN = Count-Jpg $c0.bing_save_dir
   $spotN = Count-Jpg $c0.spotlight_save_dir
   Clear-Host
+  # 后台坏图扫描若已完成, 取回结果 (菜单显示不阻塞, 扫完才提示)
+  if ($global:BwSweepJob) {
+    if ($global:BwSweepJob.State -eq 'Completed') {
+      try { $global:BwBadSwept = [int](Receive-Job $global:BwSweepJob) } catch {}
+      Remove-Job $global:BwSweepJob -Force -ErrorAction SilentlyContinue
+      $global:BwSweepJob = $null
+    } elseif ($global:BwSweepJob.State -in ('Failed', 'Stopped')) {
+      Remove-Job $global:BwSweepJob -Force -ErrorAction SilentlyContinue
+      $global:BwSweepJob = $null
+    }
+  }
   Write-Host ('========== 微软壁纸助手 v' + $global:BWVersion + ' ==========') -ForegroundColor Cyan
+  if ($global:BwBadSwept -gt 0) {
+    Write-Host (' 已隔离 ' + $global:BwBadSwept + ' 张坏图 (挪到程序数据目录的「坏图」文件夹, 图库里只留好图)') -ForegroundColor Yellow
+  }
   $bingDone = '待切'
   if ($s0.last_bing_date -eq (Today-Str)) { $bingDone = '已切' }
   $last = Get-BwTime $s0.last_swap
   $next = '还没换过'
-  if ($last) { $next = $last.AddMinutes([int]$c0.cycle_minutes).ToString('HH:mm') }
+  if ($last) { $next = $last.AddMinutes((Get-BwCycleMinutes $c0)).ToString('HH:mm') }
   $auto = '关'
   $moved = $false
   if (Test-BwAutoStart) { $auto = '开'; $moved = Repair-BwAutoStart }
-  # 「下次自动换」只有后台真跑着的时候才作数。
-  # 后台没跑时还显示一个时间, 等于给个假承诺: 那个点到了也不会有人换图,
-  # 而且数字纹丝不动(它是按"上次换图时刻+间隔"算的, 不会自己往前走)。
+  # 后台到底有没有在跑。开关(启动文件夹里那个快捷方式)只管"下次开机起不起",
+  # 管不了"这次开机有没有后台" —— 两件事, 别拿开关当运行状态。
   $running = Test-BwDaemonRunning
-  # 时间**始终显示** —— 拿掉时间之后客户第一反应是"程序坏了"。
-  # 但后台没跑的时候得把话说清楚: 那个点到了也不会有人换图。
-  # 措辞刻意避开「启动」两个字: 菜单开着 ≠ 后台在跑, 但用户看到"后台还没启动"
-  # 第一反应是"我不是已经把程序打开了吗" —— 说的是两件事, 却用了同一个词。
-  # 这里改成描述**状态**: 后台这会儿在跑 / 没在跑, 该按哪个键另说。
-  if ($running) { $swapTxt = '下次自动换: ' + $next + '  (后台正在跑, 到点就换)' }
-  elseif ($auto -eq '开') { $swapTxt = '下次自动换: ' + $next + '  (后台这会儿没在跑, 按 [A] 让它现在就开始)' }
-  else { $swapTxt = '下次自动换: ' + $next + '  (自动换还没开, 按 [A] 开)' }
+  # 关着/后台没跑的时候**不给时间**: 那个点是按"上次换图时刻 + 间隔"算出来的,
+  # 后台没在跑就永远兑现不了, 而且数字纹丝不动 —— 等于给个假承诺, 客户照着等一场空
+  # (海风: "菜单里所有都是关的, 时间要变成零")。所以: 后台真在跑才给真实时刻,
+  # 否则一律显示 `--:--`, 并把"现在是什么状态 + 该按哪个键"写在后面。
+  # 不用 00:00: 那会被读成"半夜十二点换一张", 反而更误导(海风指出)。
+  if ($running) {
+    $swapTxt = '下次自动换: ' + $next + '  (每 ' + (Get-BwCycleMinutes $c0) + ' 分钟, 后台在跑)'
+  }
+  elseif ($auto -eq '开') {
+    $swapTxt = '下次自动换: --:--  (开关开, 后台没跑 —— 按 [A])'
+  }
+  else {
+    $swapTxt = '下次自动换: --:--  (自动换关着 —— 按 [A] 开)'
+  }
   Write-Host (' 今日必应: ' + $bingDone + '    ' + $swapTxt + '    开机自动换: ' + $auto) -ForegroundColor DarkGray
   if ($moved) { Write-Host '  (程序位置变过, 开机自动换已重新指向当前这个 exe)' -ForegroundColor Yellow }
-  if ($desk -eq 'create') { Write-Host '  已在桌面放了「微软壁纸助手」快捷方式 (不想要: 设置 [6] 里关)' -ForegroundColor DarkYellow }
-  elseif ($desk -eq 'update') { Write-Host '  桌面快捷方式已指向当前这份程序, 图标也是新的' -ForegroundColor DarkYellow }
+  if ($desk -eq 'create') { Write-Host '  已放桌面快捷方式 (设置 [6] 可关)' -ForegroundColor DarkYellow }
+  elseif ($desk -eq 'update') { Write-Host '  桌面快捷方式已更新' -ForegroundColor DarkYellow }
   Write-Host (' 壁纸库: 必应 ' + $bingN + ' 张 · 聚焦 ' + $spotN + ' 张 · 待换队列剩 ' + (Left-Queue $s0) + ' 张') -ForegroundColor DarkGray
-  if ($spotN -eq 0) { Write-Host ' 聚焦库是空的, 程序正在后台自动补图 (几分钟后重开菜单就能看到); 也可以按 [3] 现在就抓一批' -ForegroundColor DarkYellow }
+  # 图库上限温馨提醒: 超过上限就提示, 并给出硬盘余量; 不替用户做删除决定。
+  # (已看过的旧图只是自动进回收站, 可还原; 想多留: 设置[S]→[8]调高上限, 或设 0 不限)
+  $capN = 0; try { $capN = [int]$c0.lib_cap } catch {}
+  if (($capN -gt 0) -and ($spotN -gt $capN)) {
+    $dir2 = [string]$c0.spotlight_save_dir
+    $sz = 0; try { $sz = (Get-ChildItem -LiteralPath $dir2 -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum } catch {}
+    $free = 0; try { $free = (New-Object System.IO.DriveInfo ((Split-Path $dir2 -Qualifier))).AvailableFreeSpace } catch {}
+    $szMb = [math]::Round($sz / 1MB)
+    $freeGb = [math]::Round($free / 1GB, 1)
+    Write-Host (' 提醒: 聚焦库 ' + $spotN + ' 张, 超过上限 ' + $capN + ' 张 (约 ' + $szMb + ' MB), 该盘剩 ' + $freeGb + ' GB') -ForegroundColor Yellow
+    Write-Host '       超出的旧图会进回收站; 想多留: 设置[S]→[8] 调高或设 0 不限' -ForegroundColor DarkGray
+  }
+  if ($spotN -eq 0) { Write-Host ' 聚焦库空的, 后台正在补图; 想马上抓按 [2]' -ForegroundColor DarkYellow }
   # 程序下载的每张图都在下载清单里登了记; 认不出来的就是你自己放进来/改过名的。
   # 只做记号: 图原地不动, 但自动轮换会跳过它们。
   $strN = @(@($s0.strangers) | Where-Object { $_ }).Count
   if ($strN -gt 0) {
-    Write-Host (' 另有 ' + $strN + ' 张不是程序下载的图 (已做记号: 原地不动, 也不自动轮换)') -ForegroundColor DarkYellow
+    Write-Host (' 另有 ' + $strN + ' 张外来图 (不参与自动轮换)') -ForegroundColor DarkYellow
   }
   # 累计下载是笔只增不减的流水账: 删掉的、被库上限清走的都还在这个数里
-  Write-Host (' 累计下载: ' + (Get-BwDlTotal $s0) + ' 张 (从装上那天算起, 删掉和清走的都记着)') -ForegroundColor DarkGray
+  Write-Host (' 累计下载: ' + (Get-BwDlTotal $s0) + ' 张') -ForegroundColor DarkGray
   # 收藏只在开了「只看收藏」时才占一行 —— 平时不打扰
   if ([bool]$c0.fav_only) {
     Write-Host (' 收藏: ' + @(Get-BwFavFiles $s0).Count + ' 张 · 只在收藏里轮换: 开') -ForegroundColor DarkGray
@@ -1123,29 +1197,21 @@ do {
     } else {
       # 图被用户删掉或挪走了 —— 这是正常操作, 如实说清楚, 不报错也不假装还在
       Write-Host (' 当前壁纸: ' + $leaf) -ForegroundColor DarkGray
-      Write-Host '           这张已经不在库里了 (桌面还显示着它, 换一张就会更新)' -ForegroundColor DarkYellow
+      Write-Host '        这张已不在库里 (换一张就会更新)' -ForegroundColor DarkYellow
     }
   }
   if ((($bingN + $spotN) -eq 0) -and ([int]$s0.shown -gt 0)) {
     Write-Host ''
-    Write-Host ' 注意: 库里现在一张图都没有, 但程序已经换过壁纸。' -ForegroundColor Yellow
-    Write-Host '       图是不是被删掉或移到别处了? 想接着用那些图, 按 [S] 把保存位置指到新地方;' -ForegroundColor DarkGray
-    Write-Host '       不管的话, 它会自动重新下载新图。' -ForegroundColor DarkGray
+    Write-Host ' 注意: 库里一张图都没有, 但程序换过壁纸 —— 按 [S] 重设保存位置, 否则会自动重下。' -ForegroundColor Yellow
   }
   Write-Host ''
-  Write-Host ' —— 换图 ——'
-  Write-Host '  [1] 立刻换一张 (聚焦)'
-  Write-Host '  [2] 换上今天的必应每日一图'
-  Write-Host '  [3] 再抓一批新聚焦'
-  Write-Host ' —— 壁纸库 ——'
-  Write-Host '  [4] 从库里挑一张'
-  Write-Host '  [5] 随便来一张'
-  Write-Host '  [6] 打开壁纸文件夹'
-  Write-Host ' —— 补图 ——'
-  Write-Host '  [7] 补下最近错过的必应 (几天没开机)'
-  Write-Host '  [8] 下载往期必应 (2021 年至今, 4K)'
+  Write-Host '  [1] 换图'
+  Write-Host ' —— 图库 ——'
+  Write-Host '  [2] 下载聚焦图片'
+  Write-Host '  [3] 打开壁纸库'
+  Write-Host '  [4] 下载必应图片'
   Write-Host ' —— 其他 ——'
-  Write-Host '  [F] 收藏当前这张 / 取消收藏'
+  Write-Host '  [F] 收藏 / 取消收藏当前这张'
   Write-Host '  [S] 设置'
   # 只摆当前能做那一下: 关着就只给「打开」, 开着就只给「关闭」
   # 三态, 而不是一个翻面的开关:
@@ -1155,12 +1221,13 @@ do {
   # 以前"开着但后台没跑"时只摆 [B], 首页却又写"按 [A] 开" —— 菜单上没有 [A] 这一行,
   # 用户照着提示按 A 只能靠猜。
   if (($auto -eq '开') -and (-not $running)) {
-    Write-Host '  [A] 让后台现在就开始换图   (开机自动换: 开, 但后台这会儿没在跑)' -ForegroundColor Yellow
-    Write-Host '  [B] 关掉开机自动换壁纸     (开机自动换: 开)'
+    Write-Host '  [A] 启动后台       (开机自动换: 开, 但后台没在跑)' -ForegroundColor Yellow
+    Write-Host '  [B] 关掉开机自动换 (现在: 开)'
   }
-  elseif (Test-BwAutoStart) { Write-Host '  [B] 关掉开机自动换壁纸   (现在: 开)' }
-  else { Write-Host '  [A] 打开开机自动换壁纸   (现在: 关)' }
+  elseif (Test-BwAutoStart) { Write-Host '  [B] 关掉开机自动换 (现在: 开)' }
+  else { Write-Host '  [A] 打开开机自动换 (现在: 关)' }
   Write-Host '  [L] 查看运行日志'
+  Write-Host '  [R] 刷新'
   Write-Host '  [Q] 退出'
   $k = Normalize-BwKey (Read-Host '请选择')
   $quit = $false
@@ -1168,18 +1235,17 @@ do {
   # 所以这里每个键只写一条小写子句 —— 写 'a' 和 'A' 两条会让开关被切两次 (等于没切)。
   switch ($k) {
     '1' { Invoke-BwManualSwap; Pause-Bw }
-    '2' { Invoke-BwUpdate; Pause-Bw }
-    '3' { Invoke-BwRefill; Pause-Bw }
-    '4' { Show-BrowseAll; Pause-Bw }
-    '5' { Invoke-BwRandom; Pause-Bw }
-    '6' { Open-BwDir $c0.bing_save_dir; Open-BwDir $c0.spotlight_save_dir }
-    '7' { Invoke-BwBackfillManual; Pause-Bw }
-    '8' { Show-Archive }
+    '2' { Invoke-BwRefill; Pause-Bw }
+    '3' { Show-BrowseAll; Pause-Bw }
+    '4' { Show-Archive }
     'f' { Toggle-BwFavCurrent; Pause-Bw }
     's' { Show-BwSettings }
     'a' { [void](Enable-BwAutoStart); Pause-Bw }
     'b' { [void](Disable-BwAutoStart); Pause-Bw }
     'l' { Get-Content -LiteralPath $global:BWLog -Tail 40 -Encoding UTF8 -ErrorAction SilentlyContinue; Pause-Bw }
+    # [R] 什么都不做, 只是让 do-while 重画一遍菜单 —— 上面那些数字(下次自动换的
+    # 时刻、库里几张、队列剩几张)都是进菜单那一刻的快照, 窗口一直开着不会自己更新。
+    'r' { }
     # 退出: 只认 Q。0 保留 (老菜单 [0] 退出留下来的手感)。
     # o 不再退出 —— 设置里的 [o] 是「打开文件夹」, 主菜单按 o 却直接关掉程序, 太容易误伤。
     'q' { $quit = $true }

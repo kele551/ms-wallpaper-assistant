@@ -26,7 +26,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 SRC = r'F:\wp-src'
 EXE = sys.argv[1] if len(sys.argv) > 1 else os.path.join(SRC, '微软壁纸助手.exe')
 DATA_DIR_NAME = '微软壁纸助手数据'
-PAYLOAD = ['core.ps1', 'menu.ps1', '使用说明.txt', '微软壁纸助手.ico', '刷新图标缓存.bat']
+PAYLOAD = ['core.ps1', 'menu.ps1', '使用说明.txt', '微软壁纸助手.ico']
 
 ok_all = True
 
