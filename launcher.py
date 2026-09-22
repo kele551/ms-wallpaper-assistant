@@ -2,6 +2,8 @@
 """
 微软壁纸助手 - 绿色单文件版启动器。
 
+作者: 海风（kele551）   https://gitee.com/kele551/ms-wallpaper-assistant
+
 设计要点
 --------
 * 本 exe 是 **GUI 子系统**（PyInstaller --windowed）。所以:
@@ -37,7 +39,7 @@ import time
 import datetime
 import ctypes
 
-VERSION = '2.0.2'
+VERSION = '2.0.7'
 APP_NAME = '微软壁纸助手'
 DATA_DIR_NAME = '微软壁纸助手数据'
 PAYLOAD_FILES = ['core.ps1', 'menu.ps1', '使用说明.txt', '微软壁纸助手.ico']
@@ -202,6 +204,14 @@ def data_dir():
 
 
 # ---------------------------------------------------------------- 释放内嵌脚本
+def ver_tuple(v):
+    """把 '2.0.5' 变成 (2,0,5)。比不了就当成 0 —— 宁可不升级, 也不能因为版本号怪就乱覆盖。"""
+    try:
+        return tuple(int(x) for x in str(v).strip().split('.'))
+    except Exception:
+        return (0,)
+
+
 def sync_payload(d):
     src = payload_src()
     ver_file = os.path.join(d, '.version')
@@ -211,7 +221,17 @@ def sync_payload(d):
             cur = open(ver_file, encoding='utf-8').read().strip()
         except Exception:
             cur = ''
+    # 2026-09-22 自动升级(core.ps1 Invoke-BwScriptUpdate): `.version` 记的是
+    # **数据目录里脚本的版本**, 脚本可以被程序自己升到比 exe 内嵌版本更新。
+    # 那种情况必须原样保留 —— 否则每次启动都把新脚本盖回旧的, 自动升级等于白做。
+    try:
+        with open(os.path.join(d, '.launcher-version'), 'w', encoding='utf-8') as fp:
+            fp.write(VERSION)
+    except Exception:
+        pass
     missing = [f for f in PAYLOAD_FILES if not os.path.isfile(os.path.join(d, f))]
+    if not missing and ver_tuple(cur) > ver_tuple(VERSION):
+        return d, False
     if cur == VERSION and not missing:
         return d, False
 

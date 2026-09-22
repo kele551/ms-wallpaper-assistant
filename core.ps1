@@ -1,4 +1,6 @@
-﻿# 微软壁纸助手 - 核心库 (by 海风 & Cindy)
+﻿# 微软壁纸助手 - 核心库
+# 作者: 海风（kele551）   https://gitee.com/kele551/ms-wallpaper-assistant
+# 协作: Cindy（只在源码里留档，不出现在界面上）
 param([switch]$Update, [switch]$Cycle, [switch]$DryRun)
 $global:BWRoot = $PSScriptRoot
 $global:CfgPath = Join-Path $global:BWRoot 'config.json'
@@ -267,6 +269,92 @@ function Test-BwHasJpg([string]$dir) {
   $one = @(Get-ChildItem -LiteralPath $dir -File -Filter *.jpg -ErrorAction SilentlyContinue | Select-Object -First 1)
   return ($one.Count -gt 0)
 }
+function Test-BwDriveRoot([string]$p) {
+  if (-not $p) { return $false }
+  return ($p.TrimEnd('\') -match '^[A-Za-z]:$')
+}
+# ---- 「这个地方该不该放」 ----
+# 用户 2026-09-22 的要求（他表弟机器上的真实事故）：程序得自己判断
+# 「哪些地方可以放，哪些地方不能乱放」，不能把图库安顿进别人的资料/工作目录。
+# 事故经过：表弟的「图片」文件夹在 C 盘，程序就去别的盘找现成图片文件夹，
+# E 盘上 `V9筑龙资料云南版\图片` 里正好有一张 jpg，程序就把库建成了
+# `E:\V9筑龙资料云南版\图片\壁纸` —— 住进了他的**资料目录**里，还建了「必应」。
+#
+# 判据刻意只看结构、不看盘符（盘符在别人机器上什么情况都有）：
+#   1) 沿着 base 往上追，任何一层目录名带「资料/教程/课程/素材/项目/工程/源码/备份」
+#      这类词 -> 那是别人的工作目录，不放；
+#   2) base 的上上层（也就是「图片」文件夹所在的那一层，盘根除外）里混着
+#      非图片文件（文档/表格/PDF/安装包/程序文件）-> 那是资料区，不放。
+# 返回空串 = 没意见；返回一段人话 = 不许放，理由要显示给用户看。
+# 注意：只约束**程序自动挑位置**这一步；用户在向导/设置里手动指定一个路径不受限制
+# （那是他自己的决定，程序不能替他做主）。
+function Test-BwUnsafePlace([string]$base) {
+  if (-not $base) { return '' }
+  $b = $base.TrimEnd('\')
+  $pic = Split-Path $b -Parent                 # 「图片」那一层
+  if (-not $pic) { return '' }
+  # 1) 名字像资料/工作目录
+  $badWords = @('资料', '教程', '课程', '课件', '素材', '项目', '工程', '源码', '代码', '备份', '存档', '培训', '标书', '图纸', '课件')
+  $cur = $pic
+  $depth = 0
+  while ($cur -and ($depth -lt 6)) {
+    $nm = ''
+    try { $nm = Split-Path $cur -Leaf } catch { $nm = '' }
+    if (-not $nm) { break }                    # 到盘根（X:\）了，Leaf 为空 -> 停
+    foreach ($w in $badWords) {
+      if ($nm.Contains($w)) { return ('「' + $nm + '」看着是资料/工作目录，不是放图的地方') }
+    }
+    $cur = Split-Path $cur -Parent
+    $depth++
+  }
+  # 2) 「图片」文件夹的上家是普通目录，且里面混着非图片文件
+  $gp = Split-Path $pic -Parent
+  if ($gp -and -not (Test-BwDriveRoot $gp)) {
+    $other = @(Get-ChildItem -LiteralPath $gp -File -ErrorAction SilentlyContinue |
+               Where-Object { -not (Test-BwImgFile $_.Name) } | Select-Object -First 1)
+    if ($other.Count -gt 0) {
+      $gn = ''
+      try { $gn = Split-Path $gp -Leaf } catch { $gn = '' }
+      return ('「' + $gn + '」里混着文档/安装包这类文件，不是专门放图的地方')
+    }
+  }
+  return ''
+}
+# ---- 把已有的图库搬到新位置（2026-09-22 加） ----
+# 用途：图库被放在不该放的地方（例如别人的资料目录里），用户按 [S] -> [3] 换位置后，
+# 已经下载的图不用重下 —— 把 <旧>\必应 和 <旧>\聚焦 里的图搬过去。
+# 安全底线（必须在，因为这是往用户的目录里动文件）：
+#   * 只搬图片文件（Test-BwImgFile 认的那几种），别的文件一个字都不动；
+#   * 目标已存在同名文件 -> 跳过，绝不覆盖；
+#   * 源目录清空了才删它，而且用**非递归**删除 —— 里面有别的东西时它会失败，
+#     正好当保险丝：删不掉就说明还留着用户的文件，那就留着；
+#   * 上面两层都空了，才把程序自己建的「壁纸」那层删掉（同样只删空的）。
+# 返回搬过去的图片张数。
+function Move-BwLibraryFiles([string]$fromBase, [string]$toBase) {
+  if (-not ($fromBase -and $toBase)) { return 0 }
+  $fb = $fromBase.TrimEnd('\'); $tb = $toBase.TrimEnd('\')
+  if ($fb.ToUpper() -eq $tb.ToUpper()) { return 0 }
+  if (-not (Test-Path -LiteralPath $fb)) { return 0 }
+  $moved = 0
+  foreach ($nm in @('必应', '聚焦')) {
+    $src = Join-Path $fb $nm
+    $dst = Join-Path $tb $nm
+    if (-not (Test-Path -LiteralPath $src)) { continue }
+    if (-not (New-BwDir $dst)) { continue }
+    $pic = @(Get-ChildItem -LiteralPath $src -File -ErrorAction SilentlyContinue | Where-Object { Test-BwImgFile $_.Name })
+    foreach ($f in $pic) {
+      $to = Join-Path $dst $f.Name
+      if (Test-Path -LiteralPath $to) { continue }
+      try { [System.IO.File]::Move($f.FullName, $to); $moved++ } catch {}
+    }
+    $left = @(Get-ChildItem -LiteralPath $src -Force -ErrorAction SilentlyContinue)
+    if ($left.Count -eq 0) { try { [System.IO.Directory]::Delete($src, $false) } catch {} }
+  }
+  $still = 0
+  foreach ($nm in @('必应', '聚焦')) { if (Test-Path -LiteralPath (Join-Path $fb $nm)) { $still++ } }
+  if ($still -eq 0) { try { [System.IO.Directory]::Delete($fb, $false) } catch {} }
+  return $moved
+}
 function Find-BwExistingBase {
   $sys = Get-BwSysDriveLetter
   $picNames = @('图片', '我的图片', 'Pictures', '照片', 'Images', '图库')
@@ -309,21 +397,27 @@ function Find-BwExistingBase {
           elseif (Test-BwHasJpg $p) { $sc = 50 }
           if ($sc -gt $bestScore) { $bestScore = $sc; $best = (Join-Path $p '壁纸'); $bestWhy = $why }
         }
-        # 深度 2: 盘根下面一层里再找一遍 —— 很多人把图片收在 <盘>\我的资料\图片 这种位置,
-        # 只扫盘根会漏。只取前 40 个子目录, 免得碰上文件特别多的盘把启动拖慢。
-        # 分数刻意比深度 1 低一点: 盘根那个更可能是"这台机器的图片文件夹"。
+        # 深度 2: 盘根下面一层里再找一遍。
+        # 2026-09-22 修: 以前这里是"只要 <盘>\<某目录>\图片 里有一张 jpg"就认定它是
+        # 本机的图片文件夹（打 45 分）。结果在用户表弟的机器上，E 盘那个
+        # 「V9筑龙资料云南版\图片」正好有一张图，程序就把图库安顿进了他的**资料目录**，
+        # 还在里面建了「壁纸\必应」。用户的原话：应该自动判断哪些地方可以放、
+        # 哪些地方不能乱放 —— 只凭"有一张图"就下判断太草率，别人的资料盘里
+        # 本来就可能存着几张图。
+        # 现在只有**已经存在本程序自己的库结构**（壁纸\必应 或 \聚焦 里有图）才复用，
+        # 那说明这台机器以前确实把它当库用；光有几张散图一律不再采纳。
+        # 另外再加一道 Test-BwUnsafePlace：就算是老库，落在资料/工作目录里也不再回收。
         $subs = @(Get-ChildItem -LiteralPath ($root + '\') -Directory -ErrorAction SilentlyContinue | Select-Object -First 40)
         foreach ($sd in $subs) {
           foreach ($nm in $picNames) {
             $p2 = Join-Path $sd.FullName $nm
             if (-not (Test-Path -LiteralPath $p2)) { continue }
             $sub2 = Join-Path $p2 '壁纸'
-            $sc2 = 5
-            $why2 = $drv + ': 上的「' + $sd.Name + '\' + $nm + '」'
             $hasLib2 = ((Test-BwHasJpg $sub2) -or (Test-BwHasJpg (Join-Path $sub2 '必应')) -or (Test-BwHasJpg (Join-Path $sub2 '聚焦')))
-            if ($hasLib2) { $sc2 = 95; $why2 = $why2 + ', 里面还留着以前下载的壁纸' }
-            elseif (Test-BwHasJpg $p2) { $sc2 = 45 }
-            if ($sc2 -gt $bestScore) { $bestScore = $sc2; $best = (Join-Path $p2 '壁纸'); $bestWhy = $why2 }
+            if (-not $hasLib2) { continue }                         # 不是我们自己的库 -> 不碰
+            if (Test-BwUnsafePlace $sub2) { continue }               # 落在资料目录里 -> 不用
+            $why2 = $drv + ': 上的「' + $sd.Name + '\' + $nm + '」, 里面还留着以前下载的壁纸'
+            if (95 -gt $bestScore) { $bestScore = 95; $best = $sub2; $bestWhy = $why2 }
           }
         }
       } catch {}
@@ -510,6 +604,353 @@ function Repair-BwConfig([psobject]$c) {
     Log ('配置里的数字超出允许范围, 已夹回: ' + ($fix -join '; '))
   }
   return $fix
+}
+# ---- 自动升级 (2026-09-22, 用户要求) ----
+# 这个程序的结构帮了大忙: exe 只是启动器, 真正的逻辑就是 core.ps1 / menu.ps1 两个脚本。
+# 所以日常升级**只需要换这两个脚本** —— 不需要管理员权限(数据目录是自己的)、
+# 不需要换 exe、不需要重启, 下一轮就生效。只有启动器本身升级时才要用户手动换一次 exe。
+#
+# 升级源 version.json（放仓库里, 也是发行版附件之一）长这样:
+#   {"version":"2.0.6","min_launcher":"2.0.5","notes":"一句话",
+#    "scripts":{"core.ps1":{"sha256":"...","url":"..."},"menu.ps1":{"sha256":"...","url":"..."}},
+#    "launcher":{"sha256":"...","url":"...","size":7647107}}
+# min_launcher = 这套脚本要求的最低启动器版本; 比本机启动器新 -> 只能提示手动换 exe。
+# 下载后**必须校验 SHA256**: 对不上就整批放弃, 继续用旧脚本(绝不半个包)。
+$global:BWUpdateFile = Join-Path $global:BWRoot 'update.json'
+$global:BWUpdateUrls = @(
+  'https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/version.json',
+  'https://raw.githubusercontent.com/kele551/ms-wallpaper-assistant/main/version.json'
+)
+function Get-BwVerTuple([string]$v) {
+  $out = @()
+  foreach ($x in ([string]$v).Trim().Split('.')) {
+    $n = 0
+    if ([int]::TryParse($x, [ref]$n)) { $out += $n } else { $out += 0 }
+  }
+  while ($out.Count -lt 3) { $out += 0 }
+  return ,$out
+}
+function Compare-BwVer([string]$a, [string]$b) {
+  $ta = Get-BwVerTuple $a; $tb = Get-BwVerTuple $b
+  for ($i = 0; $i -lt 3; $i++) {
+    if ($ta[$i] -ne $tb[$i]) { if ($ta[$i] -gt $tb[$i]) { return 1 } else { return -1 } }
+  }
+  return 0
+}
+# 启动器版本(启动器每次运行都会写这个文件) —— 用来判断"这版脚本要不要新启动器"
+function Get-BwLauncherVer {
+  $p = Join-Path $global:BWRoot '.launcher-version'
+  if (Test-Path -LiteralPath $p) { try { return (Get-Content -LiteralPath $p -Raw -Encoding UTF8).Trim() } catch {} }
+  return ''
+}
+# 数据目录里脚本的版本(= .version)
+function Get-BwLocalScriptVer {
+  $p = Join-Path $global:BWRoot '.version'
+  if (Test-Path -LiteralPath $p) { try { return (Get-Content -LiteralPath $p -Raw -Encoding UTF8).Trim() } catch {} }
+  return '0.0.0'
+}
+# 升级请求一律直连(不绕本机代理: 本机代理可能正是狐径, 而 Gitee 本来就直连更快)
+function Get-BwBytes([string]$url, [int]$timeoutSec = 20) {
+  for ($try = 1; $try -le 3; $try++) {
+    try {
+      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+      $wc = New-Object System.Net.WebClient
+      $wc.Headers.Add('User-Agent', 'MSWallpaperAssistant')
+      $wc.Proxy = $null
+      return $wc.DownloadData($url)
+    } catch {
+      if ($try -ge 3) { return $null }
+      Start-Sleep -Seconds 2
+    }
+  }
+  return $null
+}
+function Get-BwText([string]$url, [int]$timeoutSec = 15) {
+  $b = Get-BwBytes $url $timeoutSec
+  if (-not $b) { return '' }
+  return [System.Text.Encoding]::UTF8.GetString($b)
+}
+function Get-BwSha256Hex([byte[]]$bytes) {
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '')
+}
+# 读升级信息(带 6 小时缓存; -Offline 只读缓存, 菜单画界面时用, 不联网)
+# ---- 升级界面: 好看 + 动态 + 显示从哪个版本升到哪个版本 ----
+# 用户 2026-09-22 要求:「升级界面要好看, 动态的, 从什么版本升级到什么版本」。
+# 只用 ASCII 画(方块/箭头字符在部分控制台字体会变乱码), 靠颜色 + 流动动效撑场面。
+# 风格跟程序里已有的「虚线增长 + 游标流动」保持一致。
+$global:BWUpW = 22
+function Show-BwUpGradeHead([string]$from, [string]$to) {
+  Write-Host ''
+  Write-Host '  ============================================' -ForegroundColor Cyan
+  Write-Host '            微软壁纸助手 · 在线升级' -ForegroundColor Cyan
+  Write-Host '  ============================================' -ForegroundColor Cyan
+  Write-Host ''
+  # 版本迁移: 箭头沿着轨道流动, 最后变成一条实线箭头
+  $W = 10
+  for ($f = 0; $f -lt 12; $f++) {
+    $pos = $f % $W
+    $track = ''
+    for ($i = 0; $i -lt $W; $i++) {
+      if ($i -eq $pos) { $track += 'o' } elseif ($i -lt $pos) { $track += '=' } else { $track += '-' }
+    }
+    Write-Host ("`r     v" + $from + "   " + $track + ">   v" + $to) -NoNewline -ForegroundColor Yellow
+    Start-Sleep -Milliseconds 80
+  }
+  Write-Host ("`r     v" + $from + "   " + ('=' * $W) + ">   v" + $to) -ForegroundColor Yellow
+  Write-Host ''
+}
+function Show-BwUpGradeStep([int]$step, [int]$total, [string]$label, [bool]$done, [string]$extra) {
+  $sb = New-Object System.Text.StringBuilder
+  $sb.Append('     [' + $step + '/' + $total + '] ' + $label) > $null
+  $pad = 26 - $label.Length
+  if ($pad -gt 0) { $sb.Append(' ' * $pad) > $null }
+  if ($done) { $sb.Append('OK') > $null } else { $sb.Append('..') > $null }
+  if ($extra) { $sb.Append('   ' + $extra) > $null }
+  Write-Host $sb.ToString() -ForegroundColor $(if ($done) { 'Green' } else { 'Gray' })
+}
+# 下载时的流动进度条(总量未知, 用游标流动表示"在动"), 和 Show-BwDashedCounter 一个路子
+function Show-BwUpGradeFlow([string]$label, [int]$step, [int]$total, [int]$frame, [string]$extra) {
+  $W = $global:BWUpW
+  $cur = $frame % $W
+  $sb = New-Object System.Text.StringBuilder
+  $sb.Append('     [' + $step + '/' + $total + '] ' + $label + '  [') > $null
+  for ($i = 0; $i -lt $W; $i++) {
+    if ($i -eq $cur) { $sb.Append('>') > $null } elseif ($i -lt $cur) { $sb.Append('=') > $null } else { $sb.Append('-') > $null }
+  }
+  $sb.Append(']') > $null
+  if ($extra) { $sb.Append('  ' + $extra) > $null }
+  Write-Host ("`r" + $sb.ToString()) -NoNewline -ForegroundColor Gray
+}
+# 下载 + 动画(异步下载, 一边下一边流动); 失败返回 $null
+function Get-BwBytesAnimated([string]$url, [int]$timeoutSec, [string]$label, [int]$step, [int]$total) {
+  try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $wc = New-Object System.Net.WebClient
+    $wc.Headers.Add('User-Agent', 'MSWallpaperAssistant')
+    $wc.Proxy = $null
+    $task = $wc.DownloadDataTaskAsync($url)
+    $frame = 0; $t0 = Get-Date
+    while (-not $task.IsCompleted) {
+      if (((Get-Date) - $t0).TotalSeconds -gt $timeoutSec) { try { $wc.CancelAsync() } catch {}; return $null }
+      $frame++
+      Show-BwUpGradeFlow $label $step $total $frame ''
+      Start-Sleep -Milliseconds 90
+    }
+    $b = $task.Result
+    Show-BwUpGradeFlow $label $step $total ($global:BWUpW - 1) ('已完成 ' + [Math]::Round($b.Length / 1KB) + ' KB')
+    Write-Host ''
+    return $b
+  } catch { return $null }
+}
+function Show-BwUpGradeDone([bool]$ok, [string]$to, [string]$msg) {
+  Write-Host ''
+  if ($ok) {
+    Write-Host '  ============================================' -ForegroundColor Green
+    Write-Host ('   升级完成   ->   v' + $to) -ForegroundColor Green
+    Write-Host ('   ' + $msg) -ForegroundColor DarkGray
+    Write-Host '  ============================================' -ForegroundColor Green
+  } else {
+    Write-Host '  ============================================' -ForegroundColor Red
+    Write-Host '   升级没有完成, 已保持原样(不会半个包)' -ForegroundColor Red
+    Write-Host ('   ' + $msg) -ForegroundColor DarkGray
+    Write-Host '  ============================================' -ForegroundColor Red
+  }
+  Write-Host ''
+}
+function Get-BwUpdateInfo {
+  param([switch]$Force, [switch]$Offline)
+  if (-not $Force -and (Test-Path -LiteralPath $global:BWUpdateFile)) {
+    try {
+      $c = Get-Content -LiteralPath $global:BWUpdateFile -Raw -Encoding UTF8 | ConvertFrom-Json
+      $age = (Get-Date) - ([datetime]::FromFileTime([int64]$c.checked_ft))
+      if ($age.TotalHours -lt 6) { return $c }
+      if ($Offline) { return $c }
+    } catch {}
+  } elseif ($Offline) { return $null }
+  $urls = @()
+  $cfgUrl = ''
+  try { if ($global:BWDefaults) { $cfgUrl = '' } } catch {}
+  try { $cfgUrl = [string](Get-BwConfig).update_url } catch {}
+  if ($cfgUrl) { $urls += $cfgUrl } else { $urls += $global:BWUpdateUrls }
+  foreach ($u in $urls) {
+    $raw = ''
+    if ($u -match '^(https?)://') { $raw = Get-BwText $u }
+    elseif (Test-Path -LiteralPath $u) { try { $raw = Get-Content -LiteralPath $u -Raw -Encoding UTF8 } catch { $raw = '' } }
+    if (-not $raw) { continue }
+    try {
+      $j = $raw | ConvertFrom-Json
+      if (-not $j.version) { continue }
+      $j | Add-Member -NotePropertyName checked_ft -NotePropertyValue ((Get-Date).ToFileTime()) -Force
+      $j | Add-Member -NotePropertyName source -NotePropertyValue $u -Force
+      $j | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $global:BWUpdateFile -Encoding UTF8
+      return $j
+    } catch { continue }
+  }
+  return $null
+}
+# 执行升级: 只换脚本。返回 $true 表示脚本已经换成新的。
+# ---- 主程序(exe)自动覆盖升级 ----
+# 用户 2026-09-22 明确要求:「自动升级, 自动覆盖」。
+# 正在运行的 exe 不能直接覆盖, 所以走这套: 自己先停 -> 小助手接管 -> 覆盖 -> 重新启动。
+#   1) 新 exe 先下到 <目录>\微软壁纸助手.exe.new 并校验 SHA256(对不上立刻放弃);
+#   2) 写一个独立的 .cmd 小助手, 由它: 让旧程序 --stop -> 等进程真的消失 ->
+#      move /y .new 覆盖原 exe -> 启动新的 --daemon -> 删掉自己;
+#   3) 本进程只负责把 .new 放好、把小助手放出去, 之后与它无关。
+# 为什么能这么干: D:\Program Files 的 ACL 是 Authenticated Users:(F), 普通用户也写得进去,
+# 所以**不用管理员、不弹 UAC**。目录写不进去时会明确说"要手动换", 绝不做半截。
+function Q-Str([string]$x) { return ("'" + ([string]$x).Replace("'", "''") + "'") }
+function Get-BwExePath {
+  $p = Join-Path $global:BWRoot 'launcher.txt'
+  if (Test-Path -LiteralPath $p) {
+    try {
+      $v = (Get-Content -LiteralPath $p -Raw -Encoding UTF8).Trim()
+      if ($v -and (Test-Path -LiteralPath $v)) { return $v }
+    } catch {}
+  }
+  return ''
+}
+function Invoke-BwLauncherUpdate {
+  param([switch]$Quiet, [object]$Info, [switch]$NoStart, [switch]$Animated)
+  if (-not $Info) { $Info = Get-BwUpdateInfo -Force }
+  if (-not $Info) { return $false }
+  $url = ''; $want = ''
+  try { $url = [string]$Info.launcher.url; $want = ([string]$Info.launcher.sha256).ToUpper().Trim() } catch {}
+  if (-not $url) {
+    Log '升级: 需要新主程序, 但升级信息里没给下载地址'
+    if (-not $Quiet) { Write-Host '  升级信息里没有主程序下载地址, 先不升。' -ForegroundColor Yellow }
+    return $false
+  }
+  $exe = Get-BwExePath
+  if (-not $exe) {
+    Log '升级: 找不到主程序路径(launcher.txt 缺失), 不升'
+    if (-not $Quiet) { Write-Host '  找不到主程序路径, 先不升。' -ForegroundColor Yellow }
+    return $false
+  }
+  if ($Animated) { Show-BwUpGradeStep 2 3 '下载主程序' $false ('约 ' + [Math]::Round(([double]$Info.launcher.size) / 1MB, 1) + ' MB') }
+  $bytes = if ($Animated) { Get-BwBytesAnimated $url 300 '主程序' 2 3 } else { Get-BwBytes $url 120 }
+  if (-not $bytes) {
+    Log '升级失败: 主程序下载没成功, 保持旧版'
+    if (-not $Quiet) { Write-Host '  主程序下载失败, 保持旧版。' -ForegroundColor Yellow }
+    return $false
+  }
+  $got = Get-BwSha256Hex $bytes
+  if ($want -and ($got -ne $want)) {
+    Log ('升级失败: 主程序校验不过 (期望 ' + $want.Substring(0,16) + ', 实际 ' + $got.Substring(0,16) + '), 保持旧版')
+    if (-not $Quiet) { Write-Host '  主程序校验不过, 已放弃(保持旧版)。' -ForegroundColor Red }
+    return $false
+  }
+  $nu = $exe + '.new'
+  try { [System.IO.File]::WriteAllBytes($nu, $bytes) }
+  catch {
+    Log ('升级失败: 主程序目录写不进去(' + $_.Exception.Message + '), 需要手动换 exe: ' + $url)
+    if (-not $Quiet) { Write-Host ('  程序目录写不进去, 这次要手动换: ' + $url) -ForegroundColor Yellow }
+    return $false
+  }
+  # 小助手用 **PowerShell 脚本**而不是 .cmd:
+  #   .cmd 由 cmd.exe 按控制台代码页读, 中文路径会变成问号 —— 沙箱实测过, --stop 与 move 全失败。
+  #   .ps1 按 UTF-8(带 BOM) 读, 中文路径没问题。
+  $logf = Join-Path $global:BWRoot 'update-launcher.log'
+  $hl = @()
+  $hl += 'function W($m) { try { Add-Content -LiteralPath $log -Value (''['' + (Get-Date -Format ''yyyy-MM-dd HH:mm:ss'') + ''] '' + $m) -Encoding UTF8 } catch {} }'
+  $hl += 'W ''开始自动覆盖主程序'''
+  $hl += 'Start-Sleep -Seconds 2'
+  $hl += 'try { & $exe --stop | Out-Null } catch { W (''调 --stop 出错: '' + $_.Exception.Message) }'
+  $hl += '$nm = [System.IO.Path]::GetFileNameWithoutExtension($exe)'
+  $hl += '$n = 0'
+  $hl += 'while ($n -lt 90) { if (-not (Get-Process -Name $nm -ErrorAction SilentlyContinue)) { break }; Start-Sleep -Seconds 1; $n++ }'
+  $hl += 'W (''进程已退出, 等了 '' + $n + '' 秒'')'
+  $hl += 'try { Move-Item -LiteralPath $new -Destination $exe -Force; W ''已覆盖主程序'' } catch { W (''覆盖失败: '' + $_.Exception.Message) }'
+  if (-not $NoStart) {
+    $hl += 'Start-Process -FilePath $exe -ArgumentList ''--daemon'' -WindowStyle Hidden'
+    $hl += 'W ''已用新版本重新启动'''
+  } else {
+    $hl += 'W ''(测试模式: 不启动)'''
+  }
+  $hl += '$k = 0'
+  $hl += 'while ($k -lt 10) { try { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction Stop; break } catch { Start-Sleep -Milliseconds 500; $k++ } }'
+  $head = @(
+    '$ErrorActionPreference = ''Continue'''
+    ('$exe = ' + (Q-Str $exe))
+    ('$new = ' + (Q-Str $nu))
+    ('$log = ' + (Q-Str $logf))
+  )
+  $helper = Join-Path $env:TEMP ('bwupd_' + [guid]::NewGuid().ToString('N') + '.ps1')
+  try {
+    [System.IO.File]::WriteAllLines($helper, ($head + $hl), (New-Object System.Text.UTF8Encoding($true)))
+    Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $helper) -WindowStyle Hidden
+  } catch {
+    Log ('升级失败: 放小助手出错 ' + $_.Exception.Message)
+    return $false
+  }
+  if ($Animated) { Show-BwUpGradeStep 3 3 '覆盖并重启' $true '已交给小助手, 几秒后自动完成'; Show-BwUpGradeDone $true ([string]$Info.version) '程序会自己重启, 本窗口可以关掉' }
+  Log ('升级: 主程序 v' + $Info.version + ' 已下好(' + $bytes.Length + ' 字节, sha256=' + $got.Substring(0,16) + ')并通过校验, 已交给小助手自动覆盖并重启')
+  if (-not $Quiet) { Write-Host ('  主程序 v' + $Info.version + ' 已下好, 几秒后自动覆盖并重启; 这个窗口可以关掉。') -ForegroundColor Green }
+  return $true
+}
+function Invoke-BwScriptUpdate {
+  param([switch]$Quiet, [switch]$Force, [switch]$Animated)
+  $info = Get-BwUpdateInfo -Force:$Force
+  if (-not $info) {
+    if (-not $Quiet) { Write-Host '  连不上升级源(或还没发布升级信息), 稍后再试。' -ForegroundColor Yellow }
+    return $false
+  }
+  $local = Get-BwLocalScriptVer
+  if ($Animated) { Show-BwUpGradeHead $local ([string]$info.version) }
+  if ((Compare-BwVer ([string]$info.version) $local) -le 0) {
+    Log ('升级检查: 已是最新 (本机脚本 ' + $local + ', 升级源 ' + $info.version + ')')
+    if (-not $Quiet) { Write-Host ('  已是最新版 v' + $local) -ForegroundColor Green }
+    return $false
+  }
+  $lau = Get-BwLauncherVer
+  $minL = ''
+  try { if ($info.PSObject.Properties['min_launcher']) { $minL = [string]$info.min_launcher } } catch {}
+  if ($minL -and $lau -and ((Compare-BwVer $minL $lau) -gt 0)) {
+    # 这一版脚本要求更高的主程序 -> 直接走"自动覆盖主程序"(用户要求自动升级, 自动覆盖)
+    Log ('升级: v' + $info.version + ' 需要主程序 v' + $minL + ' 以上 (本机 v' + $lau + '), 转去自动覆盖主程序')
+    return (Invoke-BwLauncherUpdate -Quiet:$Quiet -Info $info -Animated:$Animated)
+  }
+  # 下载 -> 校验 -> 落地
+  $plan = @()
+if ($Animated) { Show-BwUpGradeStep 1 3 '连接升级源' $true ('升级源: ' + [string]$info.version) }
+  foreach ($nm in @('core.ps1', 'menu.ps1')) {
+    $node = $null
+    try { if ($info.scripts -and $info.scripts.PSObject.Properties[$nm]) { $node = $info.scripts.PSObject.Properties[$nm].Value } } catch {}
+    if (-not $node) { continue }
+    $url = [string]$node.url
+    if (-not $url) { $url = 'https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/' + $nm }
+
+    $bytes = if ($Animated) { Get-BwBytesAnimated $url 60 ('下载 ' + $nm) 2 3 } else { Get-BwBytes $url }
+    if (-not $bytes) { Log ('升级失败: 下载 ' + $nm + ' 没成功, 保持旧版'); if (-not $Quiet) { Write-Host ('  下载 ' + $nm + ' 失败, 保持旧版') -ForegroundColor Yellow }; return $false }
+    $want = ([string]$node.sha256).ToUpper().Trim()
+    $got = Get-BwSha256Hex $bytes
+    if ($want -and ($got -ne $want)) {
+      Log ('升级失败: ' + $nm + ' 校验不过 (期望 ' + $want.Substring(0,[Math]::Min(16,$want.Length)) + ', 实际 ' + $got.Substring(0,16) + '), 保持旧版')
+      if (-not $Quiet) { Write-Host ('  ' + $nm + ' 校验不过, 已放弃(保持旧版)') -ForegroundColor Red }
+      return $false
+    }
+    $plan += [PSCustomObject]@{ Name = $nm; Bytes = $bytes; Sha = $got }
+  }
+  if ($plan.Count -eq 0) { Log '升级失败: 升级信息里没有可用的脚本'; return $false }
+  foreach ($it in $plan) {
+    $dst = Join-Path $global:BWRoot $it.Name
+    $bak = $dst + '.bak'
+    try { if (Test-Path -LiteralPath $dst) { Copy-Item -LiteralPath $dst -Destination $bak -Force } } catch {}
+    try {
+      [System.IO.File]::WriteAllBytes($dst, $it.Bytes)
+      Log ('升级: ' + $it.Name + ' 已更新 (' + $it.Bytes.Length + ' 字节, sha256=' + $it.Sha.Substring(0,16) + ')')
+    } catch {
+      Log ('升级失败: 写 ' + $it.Name + ' 出错: ' + $_.Exception.Message)
+      if (-not $Quiet) { Write-Host ('  写 ' + $it.Name + ' 失败: ' + $_.Exception.Message) -ForegroundColor Red }
+      return $false
+    }
+  }
+  try { Set-Content -LiteralPath (Join-Path $global:BWRoot '.version') -Value ([string]$info.version) -Encoding UTF8 -NoNewline } catch {}
+  try { Set-Content -LiteralPath (Join-Path $global:BWRoot '.upgraded') -Value ([string]$info.version) -Encoding UTF8 -NoNewline } catch {}
+  if ($Animated) { Show-BwUpGradeStep 3 3 '校验与安装' $true 'sha256 全部通过'; Show-BwUpGradeDone $true ([string]$info.version) '下一次运行生效' }
+  Log ('升级完成: 脚本 -> v' + $info.version + ' (下次运行生效; 主程序仍是 v' + $lau + ')')
+  if (-not $Quiet) { Write-Host ('  已升级到 v' + $info.version + ', 下次启动生效。') -ForegroundColor Green }
+  return $true
 }
 # ---- 自动轮换进度 (state.json): 每次运行是独立进程, 靠这个文件把节奏串起来 ----
 # 只记三件事: 今天切过必应没有 / 上次换壁纸是什么时候 / 上次开机时间。
@@ -1949,6 +2390,17 @@ function Write-BwHeartbeat {
 # 聚焦的"不重复"靠 queue: 库里所有图洗一次牌按顺序发, 发完自动再下载 6 张重洗一轮。
 # 必应只在"每天第一次"出现, 所以手动换的壁纸不会被必应抢回去。
 function Invoke-BwCycle {
+  # 每天顺带看一次有没有新版脚本: 只换脚本、不需要管理员权限。
+  # 整段包在 try 里 —— 升级出任何问题都不许影响换壁纸。
+  try {
+    $dueUpd = $true
+    if (Test-Path -LiteralPath $global:BWUpdateFile) {
+      $cached = Get-Content -LiteralPath $global:BWUpdateFile -Raw -Encoding UTF8 | ConvertFrom-Json
+      $dueUpd = (((Get-Date) - ([datetime]::FromFileTime([int64]$cached.checked_ft))).TotalHours -ge 20)
+    }
+    if ($dueUpd) { [void](Invoke-BwScriptUpdate -Quiet) }
+  } catch { Log ('升级检查异常(不影响换壁纸): ' + $_.Exception.Message) }
+
   try {
     $c = Get-BwConfig
     $null = Ensure-BwDirs

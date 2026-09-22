@@ -3,23 +3,26 @@
 微软壁纸助手 —— 一键发布流水线
 
 依赖: 一枚 Gitee 私人令牌(仅勾 projects 权限), 存一次, 之后长期复用。
-GitHub 侧走已登录的 gh CLI / REST 脚本, 不需要额外凭据。
+GitHub 侧走工作区里的 REST 脚本 F:\\Harness\\tools\\github_push.py（用 gh 的令牌），
+不需要 github.com 的 git 端口 —— 那条线路时通时断。
 
 用法:
     python tools/publish.py set-token <令牌>         # 存令牌并验证
     python tools/publish.py whoami                   # 看令牌是否有效
-    python tools/publish.py release 1.6.7            # 全自动发布一版
-    python tools/publish.py release 1.6.7 --skip-build   # 已有 exe, 只做发布
-    python tools/publish.py release 1.6.7 --notes 文件.md # 指定发布说明
+    python tools/publish.py release 2.1.1            # 只发 Gitee
+    python tools/publish.py release 2.1.1 --github   # 双平台(用户要求两个都发)
+    python tools/publish.py release 2.1.1 --skip-build   # 已有 exe, 只做发布
+    python tools/publish.py release 2.1.1 --notes 文件.md # 指定发布说明
 
 release 子命令依次做:
     ① 改三处版本号 (core.ps1 / menu.ps1 / launcher.py)
-    ② 打包 (build-exe.py --release)
-    ③ 提交 + 打 tag + 推 Gitee
-    ④ Gitee 建发行版 + 上传 zip 附件
-    ⑤ README 下载链接指向新版 -> 提交推送
-    ⑥ 同步 GitHub 代码 + 建 Release
-    ⑦ 验真: 下载链接 200 / 大小 / zip 完整性
+    ② 打包 (build-exe.py --release)  ->  exe / 带版本号 exe / ASCII 名 zip
+    ③ 生成升级源 version.json (必须与本次 exe 同一份, 否则老客户端校验不过)
+    ④ 提交 + 打 tag + 推 Gitee
+    ⑤ Gitee 建发行版 + 上传附件(zip / exe / version.json)
+    ⑥ README 下载链接指向新版 -> 提交推送
+    ⑦ 同步 GitHub (代码 + tag + Release + 附件, 走 REST)
+    ⑧ 验真: 每个附件从两个平台下载回来比对 SHA256
 """
 import os
 import re
@@ -29,7 +32,9 @@ import time
 import shutil
 import zipfile
 import io
+import hashlib
 import subprocess
+from urllib.parse import quote
 from pathlib import Path
 
 import requests
@@ -39,14 +44,18 @@ OWNER, REPO = 'kele551', 'ms-wallpaper-assistant'
 BRANCH = 'main'
 GITEE_API = 'https://gitee.com/api/v5'
 GITEE_WEB = 'https://gitee.com'
-TOKEN_FILE = Path(os.environ.get('GITEE_TOKEN_FILE')
-                  or r'C:\Users\kele551\.workbuddy\secrets\gitee_token')
-PY = r'C:\Users\kele551\.workbuddy\binaries\python\envs\default\Scripts\python.exe'
-GH = r'C:\Users\kele551\AppData\Local\Programs\gh\bin\gh.exe'
-GIT_EXEC_PATH = r'C:/Users/kele551/.workbuddy/binaries/PortableGit/versions/1.2.0/mingw64/bin'
-GH_PUSH = (r'C:\Users\kele551\.workbuddy\skills\publish-github-to-gitee'
-           r'\scripts\github_rest_push.py')
+TOKEN_CANDIDATES = [
+    r'F:\Harness\secrets\raw\workbuddy-secrets\gitee_token',   # 工作区备份(首选)
+    r'C:\Users\kele551\.workbuddy\secrets\gitee_token',        # 旧位置(退回)
+]
+TOKEN_FILE = Path(TOKEN_CANDIDATES[0])
+PY = r'F:\Harness\toolchain\python\envs\default\Scripts\python.exe'
+GIT_EXEC_PATH = r'F:/Harness/toolchain/PortableGit/versions/1.2.0/mingw64/bin'
+GIT_EXE = GIT_EXEC_PATH + '/git.exe'              # 绝对路径: 有的执行环境按名字找不到 git(WinError 2)
+GH_PUSH = r'F:\Harness\tools\github_push.py'      # 纯 API 推 GitHub(含附件), 2026-09-22 重写
 ZIP_TPL = 'MSWallpaperAssistant-v%s.zip'
+APP_NAME = '微软壁纸助手'
+EXE_NAME = '微软壁纸助手.exe'                      # version.json 里写的就是这个名字, 必须传上去
 
 # 版本常量所在的三个文件
 VER_FILES = [
@@ -55,6 +64,8 @@ VER_FILES = [
     ('menu.ps1', re.compile(r"(\$global:BWVersion\s*=\s*')[0-9.]+(')"),
      lambda v: r"\g<1>%s\g<2>" % v),
     ('launcher.py', re.compile(r"(VERSION\s*=\s*')[0-9.]+(')"),
+     lambda v: r"\g<1>%s\g<2>" % v),
+    ('README.md', re.compile(r'(version-v)[0-9.]+(-blue)'),
      lambda v: r"\g<1>%s\g<2>" % v),
 ]
 
@@ -70,8 +81,10 @@ def load_token():
     t = os.environ.get('GITEE_TOKEN')
     if t:
         return t.strip()
-    if TOKEN_FILE.exists():
-        return TOKEN_FILE.read_text(encoding='utf-8').strip()
+    for c in TOKEN_CANDIDATES:
+        p = Path(c)
+        if p.exists():
+            return p.read_text(encoding='utf-8').strip()
     return None
 
 
@@ -116,8 +129,13 @@ def extract_notes(ver):
 def run(cmd, cwd=REPO_DIR, env=None, check=True):
     e = os.environ.copy()
     e['GIT_EXEC_PATH'] = GIT_EXEC_PATH
+    # git.exe 不在系统 PATH 里, 得自己塞进去, 否则 subprocess 找不到 'git'
+    e['PATH'] = GIT_EXEC_PATH.replace('/', os.sep) + os.pathsep + e.get('PATH', '')
     if env:
         e.update(env)
+    cmd = list(cmd)
+    if cmd and cmd[0] == 'git':                   # 不靠 PATH 找, 直接用绝对路径
+        cmd[0] = GIT_EXE.replace('/', os.sep)
     print('   $', ' '.join(cmd))
     r = subprocess.run(cmd, cwd=str(cwd), env=e,
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -131,11 +149,18 @@ def run(cmd, cwd=REPO_DIR, env=None, check=True):
 def git_commit_push(ver, files):
     run(['git', 'add'] + files)
     msg = 'release: v%s' % ver
-    run(['git', '-c', 'user.name=kele551', '-c', 'user.email=75219857@qq.com',
-         'commit', '-m', msg])
-    run(['git', 'tag', '-a', 'v%s' % ver, '-m', 'v%s' % ver])
+    if run(['git', 'diff', '--cached', '--name-only']).strip():
+        run(['git', '-c', 'user.name=kele551', '-c', 'user.email=75219857@qq.com',
+             'commit', '-m', msg])
+    else:
+        print('   工作区没有新改动, 跳过本次提交(只补发版)')
+    if not run(['git', 'tag', '-l', 'v%s' % ver]).strip():
+        run(['git', '-c', 'user.name=kele551', '-c', 'user.email=75219857@qq.com',
+             'tag', '-a', 'v%s' % ver, '-m', 'v%s' % ver])   # 打 tag 同样要显式带身份
+        run(['git', 'push', 'origin', 'v%s' % ver])
+    else:
+        print('   tag v%s 已存在, 不重复创建' % ver)
     run(['git', 'push', 'origin', BRANCH])
-    run(['git', 'push', 'origin', 'v%s' % ver])
     print('③ 代码与 tag 已推 Gitee')
 
 
@@ -158,7 +183,7 @@ def update_readme(ver):
 
 
 # ---------- 发行版 ----------
-def gitee_release(ver, token, zip_path, notes):
+def gitee_release(ver, token, assets, notes):
     tag = 'v%s' % ver
     # 已存在则复用
     rel = None
@@ -179,52 +204,82 @@ def gitee_release(ver, token, zip_path, notes):
         print('④ 发行版已创建, id =', rel.get('id'))
     rid = rel['id']
 
-    # 同名附件先删, 避免重复
+    # 同名附件先删, 避免重复；然后逐个上传
     exist = api('GET', '/repos/%s/%s/releases/%s/attach_files' % (OWNER, REPO, rid),
                 token)
-    name = os.path.basename(zip_path)
-    for a in exist if isinstance(exist, list) else []:
-        if a.get('name') == name:
+    have = {a.get('name'): a['id'] for a in (exist if isinstance(exist, list) else [])}
+    for path in assets:
+        name = os.path.basename(str(path))
+        if name in have:
             api('DELETE', '/repos/%s/%s/releases/%s/attach_files/%s'
-                % (OWNER, REPO, rid, a['id']), token)
+                % (OWNER, REPO, rid, have[name]), token)
             print('   旧附件已删:', name)
-
-    with open(zip_path, 'rb') as f:
-        r = requests.post(
-            '%s/repos/%s/%s/releases/%s/attach_files' % (GITEE_API, OWNER, REPO, rid),
-            params={'access_token': token},
-            files={'file': (name, f, 'application/zip')},
-            timeout=300)
-    if r.status_code >= 400:
-        raise RuntimeError('附件上传失败 %s %s' % (r.status_code, r.text[:300]))
-    print('   附件已上传:', name)
-
-
-def sync_github(ver, zip_path, notes_file):
-    run([PY, GH_PUSH, '--dir', str(REPO_DIR), '--repo', '%s/%s' % (OWNER, REPO),
-         '--branch', BRANCH, '--tag', 'v%s' % ver,
-         '--message', 'release: v%s' % ver])
-    print('⑥ GitHub 代码已同步')
-    if os.path.exists(GH):
-        run([GH, 'release', 'create', 'v%s' % ver, '-R', '%s/%s' % (OWNER, REPO),
-             str(zip_path), '--title', 'v%s' % ver,
-             '--notes-file', str(notes_file)], check=False)
-        print('⑥ GitHub Release 已建')
+        with open(str(path), 'rb') as f:
+            r = requests.post(
+                '%s/repos/%s/%s/releases/%s/attach_files' % (GITEE_API, OWNER, REPO, rid),
+                params={'access_token': token},
+                files={'file': (name, f, 'application/octet-stream')},
+                timeout=1800)
+        if r.status_code >= 400:
+            raise RuntimeError('附件上传失败 %s %s %s' % (name, r.status_code, r.text[:200]))
+        print('   附件已上传:', name, os.path.getsize(str(path)), 'B')
 
 
-def verify(ver):
-    url = '%s/%s/%s/releases/download/v%s/%s' % (
-        GITEE_WEB, OWNER, REPO, ver, ZIP_TPL % ver)
-    r = requests.get(url, timeout=180)
-    ok = r.status_code == 200
-    info = {'status': r.status_code, 'bytes': len(r.content)}
-    if ok:
-        z = zipfile.ZipFile(io.BytesIO(r.content))
-        info['zip_ok'] = z.testzip() is None
-        info['entries'] = z.namelist()
-    print('⑦ 验真:', json.dumps(info, ensure_ascii=False))
+def make_version_json():
+    """生成升级源 version.json（要提交到 main，并作为发行版附件上传）。"""
+    out = run([PY, os.path.join('tools', 'make_version_json.py')])
+    print('   升级源 version.json 已生成:', out.strip().splitlines()[-1] if out.strip() else '')
+    return REPO_DIR / 'version.json'
+
+
+def sync_github(ver, assets, notes_file):
+    """代码 + tag + Release + 附件，全部走 api.github.com / uploads.github.com。"""
+    cmd = [PY, GH_PUSH, '--dir', str(REPO_DIR), '--repo', '%s/%s' % (OWNER, REPO),
+           '--branch', BRANCH, '--tag', 'v%s' % ver,
+           '--message', 'release: v%s' % ver]
+    for a in assets:
+        cmd += ['--asset', str(a)]
+    if notes_file and os.path.exists(notes_file):
+        cmd += ['--notes-file', str(notes_file)]
+    run(cmd)
+    print('⑥ GitHub 代码 / tag / Release / 附件 已同步')
+
+
+def _download(url):
+    for _ in range(3):
+        try:
+            r = requests.get(url, timeout=900)
+            if r.status_code == 200:
+                return r.content
+        except Exception:
+            pass
+        time.sleep(4)
+    return None
+
+
+def verify(ver, assets):
+    """逐个附件从 Gitee / GitHub 下载回来比对 SHA256（中文名要 percent-encode）。"""
+    ok = True
+    for p in assets:
+        p = str(p)
+        name = os.path.basename(p)
+        want = hashlib.sha256(open(p, 'rb').read()).hexdigest()
+        for label, url in (
+                ('Gitee ', '%s/%s/%s/releases/download/v%s/%s'
+                 % (GITEE_WEB, OWNER, REPO, ver, quote(name))),
+                ('GitHub', 'https://github.com/%s/%s/releases/download/v%s/%s'
+                 % (OWNER, REPO, ver, quote(name)))):
+            data = _download(url)
+            if data is None:
+                print('  [FAIL] %s %-32s 下载失败' % (label, name))
+                ok = False
+                continue
+            same = hashlib.sha256(data).hexdigest() == want
+            ok = ok and same
+            print('  [%s] %s %-32s %9d B  一致=%s'
+                  % ('PASS' if same else 'FAIL', label, name, len(data), same))
     print('   下载页:', '%s/%s/%s/releases/tag/v%s' % (GITEE_WEB, OWNER, REPO, ver))
-    return ok and info.get('zip_ok', False)
+    return ok
 
 
 # ---------- 入口 ----------
@@ -258,20 +313,28 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
         sys.exit('找不到 %s, 打包可能失败了' % zip_path)
     print('   zip =', zip_path, zip_path.stat().st_size, 'B')
 
+    # ③ 升级源：必须和本次 exe 同一份，否则自动升级会校验不过
+    plain_exe = REPO_DIR / EXE_NAME
+    tagged_exe = REPO_DIR / ('%s-v%s.exe' % (APP_NAME, ver))
+    if not skip_build and not plain_exe.exists():
+        sys.exit('找不到 %s' % plain_exe)
+    vj = make_version_json()
+    assets = [zip_path, vj] + [p for p in (plain_exe, tagged_exe) if p.exists()]
+
     git_commit_push(ver, ['CHANGELOG.md', 'README.md', 'core.ps1', 'menu.ps1',
-                          'launcher.py', '使用说明.txt'])
-    gitee_release(ver, token, str(zip_path), notes)
+                          'launcher.py', '使用说明.txt', 'version.json'])
+    gitee_release(ver, token, assets, notes)
     update_readme(ver)
     if with_github:
         nf = notes_file or (REPO_DIR / '_notes.md')
         if not notes_file:
             nf.write_text(notes or 'v%s' % ver, encoding='utf-8')
-        sync_github(ver, zip_path, nf)
+        sync_github(ver, assets, nf)
         if not notes_file and nf.exists():
             nf.unlink()
     else:
         print('⑥ 跳过 GitHub (默认只发 Gitee; 加 --github 才同步)')
-    ok = verify(ver)          # 原来这一步没被执行, 且下一行引用了未定义的 ok 会抛 NameError
+    ok = verify(ver, assets)   # 原来这一步没被执行, 且下一行引用了未定义的 ok 会抛 NameError
     print('全部完成, 用时 %.0f 秒, 验真=%s' % (time.time() - t0, ok))
 
 

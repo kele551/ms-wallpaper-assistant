@@ -1,7 +1,8 @@
-﻿# 微软壁纸助手 - 菜单 (by 海风 & 小腾)
+﻿# 微软壁纸助手 - 菜单
+# 作者: 海风（kele551）   https://gitee.com/kele551/ms-wallpaper-assistant
 . (Join-Path $PSScriptRoot 'core.ps1')
 
-$global:BWVersion = '2.0.2'
+$global:BWVersion = '2.0.7'
 
 # 把用户按键归一化: 去首尾空格 + 全角转半角 + 转小写。
 # 中文输入法很容易把 o 打成全角 ｏ, 不归一化就变成"按了键没反应"。
@@ -589,8 +590,37 @@ function Show-BwSettings {
         # 挑错了就在盘根多出一个空的「图片」文件夹。现在把当前位置当建议传进去,
         # 直接回车 = 不变。
         $sel = Select-BwBase $base '现在就存这儿 —— 直接回车就不变'
-        if (-not $sel) { Write-Host '  没改。' }
-        else { [void](Set-BwBase $sel) }
+        if (-not $sel) {
+          Write-Host '  没改。'
+        } elseif ($base -and ($sel.TrimEnd('\') -ne $base.TrimEnd('\'))) {
+          # 换了位置：顺便问一句要不要把已经下载的图也搬过去。
+          # 2026-09-22 加：那次事故里图库被建在别人的资料目录里，光改配置的话图还留在原地，
+          # 用户得自己去翻文件。搬的时候只动程序自己下的图，别的文件一个字都不碰。
+          $n0 = 0
+          foreach ($nm in @('必应', '聚焦')) {
+            $d0 = Join-Path $base $nm
+            if (Test-Path -LiteralPath $d0) {
+              $n0 += @(Get-ChildItem -LiteralPath $d0 -File -ErrorAction SilentlyContinue | Where-Object { Test-BwImgFile $_.Name }).Count
+            }
+          }
+          $doMove = $false
+          if ($n0 -gt 0) {
+            Write-Host ''
+            Write-Host ('  旧位置里还有 ' + $n0 + ' 张图: ' + $base) -ForegroundColor DarkGray
+            Write-Host '  把它们一起搬到新位置吗? 只搬程序下载的图, 其它文件一个字都不动。'
+            $mv = Normalize-BwKey (Read-Host '  搬过去吗 (y = 搬, 回车 = 不搬)')
+            if ($mv -eq 'y') { $doMove = $true }
+          }
+          if (Set-BwBase $sel) {
+            if ($doMove) {
+              $got = Move-BwLibraryFiles $base $sel
+              Write-Host ('  已把 ' + $got + ' 张图搬到 ' + $sel) -ForegroundColor Green
+              Log ('设置: 图库位置 ' + $base + ' -> ' + $sel + ', 随迁 ' + $got + ' 张')
+            }
+          }
+        } else {
+          [void](Set-BwBase $sel)
+        }
         Pause-Bw
       }
       '4' {
@@ -714,6 +744,7 @@ function Show-BwSettings {
 function Show-BwFirstRunHead {
   Clear-Host
   Write-Host ('========== 微软壁纸助手 v' + $global:BWVersion + ' · 首次运行 ==========') -ForegroundColor Cyan
+Write-Host ('            作者: 海风（kele551）') -ForegroundColor DarkGray
   Write-Host ''
   Write-Host '  它做三件事:'
   Write-Host '    1. 每天把「必应每日一图」存下来, 并设成桌面壁纸'
@@ -1151,10 +1182,16 @@ do {
       $global:BwSweepJob = $null
     }
   }
-  Write-Host ('========== 微软壁纸助手 v' + $global:BWVersion + ' ==========') -ForegroundColor Cyan
-  if ($global:BwBadSwept -gt 0) {
-    Write-Host (' 已隔离 ' + $global:BwBadSwept + ' 张坏图 (挪到程序数据目录的「坏图」文件夹, 图库里只留好图)') -ForegroundColor Yellow
-  }
+  Write-Host ''
+  Write-Host '  ============================================================' -ForegroundColor DarkCyan
+  Write-Host ('   微软壁纸助手 v' + $global:BWVersion + '    作者: 海风（kele551）') -ForegroundColor Cyan
+  Write-Host '   gitee.com/kele551/ms-wallpaper-assistant' -ForegroundColor DarkGray
+  Write-Host '  ============================================================' -ForegroundColor DarkCyan
+  Write-Host ''
+  # 下面这几个状态量必须留在这里算好, 后面所有显示都靠它们:
+  #   2026-09-22 重排菜单时曾把这一段一起删掉, 结果首页"今日必应"空白、
+  #   "后台在跑"永远显示没跑, 而且 Repair-BwAutoStart(程序位置变过自动改回开机自启)
+  #   也一起被删了 —— 换菜单版式时务必留意, 别只搬 Write-Host 而漏掉算状态的几行。
   $bingDone = '待切'
   if ($s0.last_bing_date -eq (Today-Str)) { $bingDone = '已切' }
   $last = Get-BwTime $s0.last_swap
@@ -1163,98 +1200,93 @@ do {
   $auto = '关'
   $moved = $false
   if (Test-BwAutoStart) { $auto = '开'; $moved = Repair-BwAutoStart }
-  # 后台到底有没有在跑。开关(启动文件夹里那个快捷方式)只管"下次开机起不起",
-  # 管不了"这次开机有没有后台" —— 两件事, 别拿开关当运行状态。
-  $running = Test-BwDaemonRunning
-  # 关着/后台没跑的时候**不给时间**: 那个点是按"上次换图时刻 + 间隔"算出来的,
-  # 后台没在跑就永远兑现不了, 而且数字纹丝不动 —— 等于给个假承诺, 客户照着等一场空
-  # (海风: "菜单里所有都是关的, 时间要变成零")。所以: 后台真在跑才给真实时刻,
-  # 否则一律显示 `--:--`, 并把"现在是什么状态 + 该按哪个键"写在后面。
-  # 不用 00:00: 那会被读成"半夜十二点换一张", 反而更误导(海风指出)。
-  if ($running) {
-    $swapTxt = '下次自动换: ' + $next + '  (每 ' + (Get-BwCycleMinutes $c0) + ' 分钟, 后台在跑)'
-  }
-  elseif ($auto -eq '开') {
-    $swapTxt = '下次自动换: --:--  (开关开, 后台没跑 —— 按 [A])'
-  }
+  # 后台到底有没有在跑: 开关只管"下次开机起不起", 管不了"这次有没有后台" —— 两件事。
+  $running = Test-BwDaemonRunning  # —— 状态就三行: 换图 / 图库 / 位置与当前壁纸 ——
+  # 2026-09-22 重排: 原来首页堆了十来行状态和提示, 一屏挤满、重点看不出来。
+  $runTxt = '后台没跑'
+  if ($running) { $runTxt = '后台在跑' }
+  $swap2 = '--:--'
+  if ($running) { $swap2 = $next }
+  Write-Host ('  换图  下次自动换 ' + $swap2 + '  ·  每 ' + (Get-BwCycleMinutes $c0) + ' 分钟  ·  ' + $runTxt + '  ·  今日必应 ' + $bingDone) -ForegroundColor Gray
+  Write-Host ('  图库  必应 ' + $bingN + ' 张 · 聚焦 ' + $spotN + ' 张 · 待换 ' + (Left-Queue $s0) + ' 张 · 累计下载 ' + (Get-BwDlTotal $s0) + ' 张') -ForegroundColor Gray
+  $base0 = Get-BwBaseOf $c0
+  if ($base0) { Write-Host ('  位置  ' + $base0) -ForegroundColor DarkGray }
   else {
-    $swapTxt = '下次自动换: --:--  (自动换关着 —— 按 [A] 开)'
+    Write-Host ('  位置  必应 ' + $c0.bing_save_dir) -ForegroundColor DarkGray
+    Write-Host ('        聚焦 ' + $c0.spotlight_save_dir) -ForegroundColor DarkGray
   }
-  Write-Host (' 今日必应: ' + $bingDone + '    ' + $swapTxt + '    开机自动换: ' + $auto) -ForegroundColor DarkGray
-  if ($moved) { Write-Host '  (程序位置变过, 开机自动换已重新指向当前这个 exe)' -ForegroundColor Yellow }
-  if ($desk -eq 'create') { Write-Host '  已放桌面快捷方式 (设置 [6] 可关)' -ForegroundColor DarkYellow }
-  elseif ($desk -eq 'update') { Write-Host '  桌面快捷方式已更新' -ForegroundColor DarkYellow }
-  Write-Host (' 壁纸库: 必应 ' + $bingN + ' 张 · 聚焦 ' + $spotN + ' 张 · 待换队列剩 ' + (Left-Queue $s0) + ' 张') -ForegroundColor DarkGray
-  # 图库上限温馨提醒: 超过上限就提示, 并给出硬盘余量; 不替用户做删除决定。
-  # (已看过的旧图只是自动进回收站, 可还原; 想多留: 设置[S]→[8]调高上限, 或设 0 不限)
+  if ($s0.last_wall) {
+    $leaf = Split-Path $s0.last_wall -Leaf
+    Write-Host ('  壁纸  ' + $leaf) -ForegroundColor White
+    if (-not (Test-Path -LiteralPath $s0.last_wall)) {
+      Write-Host '        (这张已不在库里, 换一张就会更新)' -ForegroundColor DarkYellow
+    }
+  }
+  if ([bool]$c0.fav_only) {
+    Write-Host ('  收藏  ' + @(Get-BwFavFiles $s0).Count + ' 张 · 只在收藏里轮换: 开') -ForegroundColor Gray
+  }
+  # —— 提醒: 一切正常时一行都不出现 ——
+  $warn = New-Object System.Collections.ArrayList
+  if ($global:BwBadSwept -gt 0) { [void]$warn.Add('已隔离 ' + $global:BwBadSwept + ' 张坏图 (挪到数据目录的「坏图」文件夹)') }
+  $upMark = Join-Path $global:BWRoot '.upgraded'
+  if (Test-Path -LiteralPath $upMark) {
+    $uv = ''
+    try { $uv = (Get-Content -LiteralPath $upMark -Raw -Encoding UTF8).Trim() } catch {}
+    Remove-Item -LiteralPath $upMark -Force -ErrorAction SilentlyContinue
+    Write-Host ('  [已自动升级到 v' + $uv + ' —— 本次运行生效]') -ForegroundColor Green
+  }
+  $upInfo = Get-BwUpdateInfo -Offline
+  if ($upInfo -and ((Compare-BwVer ([string]$upInfo.version) (Get-BwLocalScriptVer)) -gt 0)) {
+    $nt = ''
+    try { if ($upInfo.notes) { $nt = ' —— ' + [string]$upInfo.notes } } catch {}
+    [void]$warn.Add('有新版本 v' + $upInfo.version + '  (按 [U] 升级)' + $nt)
+  }
   $capN = 0; try { $capN = [int]$c0.lib_cap } catch {}
   if (($capN -gt 0) -and ($spotN -gt $capN)) {
     $dir2 = [string]$c0.spotlight_save_dir
     $sz = 0; try { $sz = (Get-ChildItem -LiteralPath $dir2 -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum } catch {}
     $free = 0; try { $free = (New-Object System.IO.DriveInfo ((Split-Path $dir2 -Qualifier))).AvailableFreeSpace } catch {}
-    $szMb = [math]::Round($sz / 1MB)
-    $freeGb = [math]::Round($free / 1GB, 1)
-    Write-Host (' 提醒: 聚焦库 ' + $spotN + ' 张, 超过上限 ' + $capN + ' 张 (约 ' + $szMb + ' MB), 该盘剩 ' + $freeGb + ' GB') -ForegroundColor Yellow
-    Write-Host '       超出的旧图会进回收站; 想多留: 设置[S]→[8] 调高或设 0 不限' -ForegroundColor DarkGray
+    [void]$warn.Add('聚焦库 ' + $spotN + ' 张, 超过上限 ' + $capN + ' 张 (约 ' + [math]::Round($sz / 1MB) + ' MB); 该盘剩 ' + [math]::Round($free / 1GB, 1) + ' GB —— 超出的旧图会进回收站, [S]→[8] 可调')
   }
-  if ($spotN -eq 0) { Write-Host ' 聚焦库空的, 后台正在补图; 想马上抓按 [2]' -ForegroundColor DarkYellow }
-  # 程序下载的每张图都在下载清单里登了记; 认不出来的就是你自己放进来/改过名的。
-  # 只做记号: 图原地不动, 但自动轮换会跳过它们。
+  if ($spotN -eq 0) { [void]$warn.Add('聚焦库空的, 后台正在补图; 想马上抓按 [2]') }
   $strN = @(@($s0.strangers) | Where-Object { $_ }).Count
-  if ($strN -gt 0) {
-    Write-Host (' 另有 ' + $strN + ' 张外来图 (不参与自动轮换)') -ForegroundColor DarkYellow
+  if ($strN -gt 0) { [void]$warn.Add('另有 ' + $strN + ' 张外来图 (不参与自动轮换)') }
+  if ($base0) {
+    $why0 = Test-BwUnsafePlace $base0
+    if ($why0) { [void]$warn.Add($why0 + ' —— 按 [S] 再按 [3] 换位置, 换的时候会问你要不要把已有的图一起搬过去') }
   }
-  # 累计下载是笔只增不减的流水账: 删掉的、被库上限清走的都还在这个数里
-  Write-Host (' 累计下载: ' + (Get-BwDlTotal $s0) + ' 张') -ForegroundColor DarkGray
-  # 收藏只在开了「只看收藏」时才占一行 —— 平时不打扰
-  if ([bool]$c0.fav_only) {
-    Write-Host (' 收藏: ' + @(Get-BwFavFiles $s0).Count + ' 张 · 只在收藏里轮换: 开') -ForegroundColor DarkGray
-  }
-  $base0 = Get-BwBaseOf $c0
-  if ($base0) { Write-Host (' 保存位置: ' + $base0) -ForegroundColor DarkGray }
-  else {
-    Write-Host (' 必应库: ' + $c0.bing_save_dir) -ForegroundColor DarkGray
-    Write-Host (' 聚焦库: ' + $c0.spotlight_save_dir) -ForegroundColor DarkGray
-  }
-  if ($s0.last_wall) {
-    $leaf = Split-Path $s0.last_wall -Leaf
-    if (Test-Path -LiteralPath $s0.last_wall) {
-      Write-Host (' 当前壁纸: ' + $leaf) -ForegroundColor DarkGray
-    } else {
-      # 图被用户删掉或挪走了 —— 这是正常操作, 如实说清楚, 不报错也不假装还在
-      Write-Host (' 当前壁纸: ' + $leaf) -ForegroundColor DarkGray
-      Write-Host '        这张已不在库里 (换一张就会更新)' -ForegroundColor DarkYellow
-    }
-  }
-  if ((($bingN + $spotN) -eq 0) -and ([int]$s0.shown -gt 0)) {
+  if ((($bingN + $spotN) -eq 0) -and ([int]$s0.shown -gt 0)) { [void]$warn.Add('库里一张图都没有, 但程序换过壁纸 —— 按 [S] 重设保存位置, 否则会自动重下') }
+  if ($moved) { [void]$warn.Add('程序位置变过, 开机自动换已重新指向当前这个 exe') }
+  if ($warn.Count -gt 0) {
     Write-Host ''
-    Write-Host ' 注意: 库里一张图都没有, 但程序换过壁纸 —— 按 [S] 重设保存位置, 否则会自动重下。' -ForegroundColor Yellow
+    foreach ($w in $warn) { Write-Host ('  ! ' + $w) -ForegroundColor Yellow }
   }
+  if ($desk -eq 'create') { Write-Host '  已放桌面快捷方式 (设置 [S]→[6] 可关)' -ForegroundColor DarkYellow }
+  elseif ($desk -eq 'update') { Write-Host '  桌面快捷方式已更新' -ForegroundColor DarkYellow }
   Write-Host ''
-  Write-Host '  [1] 换图'
-  Write-Host ' —— 图库 ——'
-  Write-Host '  [2] 下载聚焦图片'
-  Write-Host '  [3] 打开壁纸库'
-  Write-Host '  [4] 下载必应图片'
-  Write-Host ' —— 其他 ——'
-  Write-Host '  [F] 收藏 / 取消收藏当前这张'
-  Write-Host '  [S] 设置'
-  # 只摆当前能做那一下: 关着就只给「打开」, 开着就只给「关闭」
-  # 三态, 而不是一个翻面的开关:
-  #   关着            -> 只给 [A] 打开
-  #   开着且后台在跑  -> 只给 [B] 关掉
-  #   开着但后台没跑  -> 两个都给: [A] 把后台拉起来, [B] 整个关掉
-  # 以前"开着但后台没跑"时只摆 [B], 首页却又写"按 [A] 开" —— 菜单上没有 [A] 这一行,
-  # 用户照着提示按 A 只能靠猜。
-  if (($auto -eq '开') -and (-not $running)) {
-    Write-Host '  [A] 启动后台       (开机自动换: 开, 但后台没在跑)' -ForegroundColor Yellow
-    Write-Host '  [B] 关掉开机自动换 (现在: 开)'
+  # —— 按键分组: 动作在前, 设置在后; 每组一条分隔线 ——
+  Write-Host '  ------------------------ 换图 ------------------------' -ForegroundColor DarkCyan
+  Write-Host '   [1] 换一张壁纸          [2] 下载聚焦图片'
+  Write-Host '   [3] 浏览壁纸库          [4] 下载必应图片'
+  Write-Host '   [F] 收藏 / 取消当前这张'
+  Write-Host '  --------------------- 后台与设置 ---------------------' -ForegroundColor DarkCyan
+  # 「后台这次有没有在跑」和「下次开机起不起」是两件事, 分开写清楚, 别让人读成一件。
+  if (($auto -eq '开') -and $running) {
+    Write-Host '   开机自动换: 开 · 后台正在跑' -ForegroundColor Gray
+    Write-Host '   [B] 关掉开机自动换'
   }
-  elseif (Test-BwAutoStart) { Write-Host '  [B] 关掉开机自动换 (现在: 开)' }
-  else { Write-Host '  [A] 打开开机自动换 (现在: 关)' }
-  Write-Host '  [L] 查看运行日志'
-  Write-Host '  [R] 刷新'
-  Write-Host '  [Q] 退出'
+  elseif ($auto -eq '开') {
+    Write-Host '   开机自动换: 开 · 后台没在跑' -ForegroundColor Yellow
+    Write-Host '   [A] 现在就把后台跑起来    [B] 关掉开机自动换' -ForegroundColor Yellow
+  }
+  else {
+    Write-Host '   开机自动换: 关' -ForegroundColor Gray
+    Write-Host '   [A] 打开开机自动换'
+  }
+  Write-Host '   [S] 设置        [U] 检查更新'
+  Write-Host '  ------------------------ 其它 ------------------------' -ForegroundColor DarkCyan
+  Write-Host '   [L] 查看日志   [R] 刷新   [Q] 退出'
+  Write-Host ''
   $k = Normalize-BwKey (Read-Host '请选择')
   $quit = $false
   # 注意: PowerShell 的 switch 对字符串大小写不敏感, 且匹配到的子句"每个都会执行"。
@@ -1271,6 +1303,15 @@ do {
     'l' { Get-Content -LiteralPath $global:BWLog -Tail 40 -Encoding UTF8 -ErrorAction SilentlyContinue; Pause-Bw }
     # [R] 什么都不做, 只是让 do-while 重画一遍菜单 —— 上面那些数字(下次自动换的
     # 时刻、库里几张、队列剩几张)都是进菜单那一刻的快照, 窗口一直开着不会自己更新。
+    'u' {
+      Clear-Host
+      Write-Host '========== 升级 ==========' -ForegroundColor Cyan
+      Write-Host ''
+      Write-Host ('  当前脚本版本: v' + (Get-BwLocalScriptVer) + '   主程序: v' + (Get-BwLauncherVer))
+      Write-Host '  正在检查升级源...'
+      [void](Invoke-BwScriptUpdate -Force -Animated)
+      Pause-Bw
+    }
     'r' { }
     # 退出: 只认 Q。0 保留 (老菜单 [0] 退出留下来的手感)。
     # o 不再退出 —— 设置里的 [o] 是「打开文件夹」, 主菜单按 o 却直接关掉程序, 太容易误伤。
