@@ -94,7 +94,7 @@ def bump_version(ver):
         txt = f.read_text(encoding='utf-8')
         new = pat.sub(rep(ver), txt, count=1)
         if new != txt:
-            f.write_text(new, encoding='utf-8')
+            f.write_text(new, encoding='utf-8', newline='')   # 保住原行尾(LF), 别让 Windows 转成 CRLF
             changed.append(name)
     print('① 版本号已改:', ', '.join(changed) if changed else '(已是该版本)')
     return changed
@@ -271,6 +271,7 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
             nf.unlink()
     else:
         print('⑥ 跳过 GitHub (默认只发 Gitee; 加 --github 才同步)')
+    ok = verify(ver)          # 原来这一步没被执行, 且下一行引用了未定义的 ok 会抛 NameError
     print('全部完成, 用时 %.0f 秒, 验真=%s' % (time.time() - t0, ok))
 
 
