@@ -1,7 +1,7 @@
 ﻿# 微软壁纸助手 - 菜单 (by 海风 & 小腾)
 . (Join-Path $PSScriptRoot 'core.ps1')
 
-$global:BWVersion = '2.0.1'
+$global:BWVersion = '2.0.2'
 
 # 把用户按键归一化: 去首尾空格 + 全角转半角 + 转小写。
 # 中文输入法很容易把 o 打成全角 ｏ, 不归一化就变成"按了键没反应"。
@@ -165,7 +165,14 @@ function Select-BwBase([string]$suggest, [string]$suggestReason) {
   if ($in) { $t = $in.Trim().Trim('"') }
   if (-not $t) { return $suggest }
   if ($t -match '^\d+$') {
-    $idx = [int]$t
+    # 不能直接 [int]$t: 输入 11 位以上数字会抛 Int32 溢出异常, 而这里不在任何
+    # try 里 -> 异常冒到主循环, 整个菜单被干掉 (2026-09-22 修)。
+    $idx = 0
+    if (-not [int]::TryParse($t, [ref]$idx)) {
+      Write-Host '  这个序号太大了, 请重新选。' -ForegroundColor Yellow
+      Pause-Bw
+      return ''
+    }
     if (($idx -lt 1) -or ($idx -gt $manual)) {
       Write-Host ('  没有 [' + $idx + '] 这一项 (共 ' + $manual + ' 个), 请重新选。') -ForegroundColor Yellow
       Pause-Bw
@@ -211,7 +218,11 @@ function Set-BwBase([string]$base) {
   # 位置换了, 老队列里的文件名已经对不上新目录, 重洗一次
   $s = Get-BwState
   $s.queue = @(Get-BwFreshQueue $s)
-  Save-BwState $s
+  # 走 KeepFav 合并写, 不要用 Save-BwState: 后台 daemon 可能刚更新过 state,
+  # 整份覆盖会把它的队列/看过名单/计数回滚 (2026-09-22 修)。
+  # 注意: 本函数**没有**改 favorites, 用 KeepFav 才是对的; 反之凡刚改过
+  # favorites 的地方(见下方收藏那几处)只能用 Save-BwState。
+  Save-BwStateKeepFav $s
   Log ('保存位置: ' + $b)
   Write-Host ('  已设为 ' + $b)
   return $true
@@ -259,6 +270,9 @@ function Show-BrowseAll {
     $idx = [int]$Matches[1]
     if (($idx -ge 0) -and ($idx -lt $files.Count)) {
       $nm = [string]$files[$idx].file.Name
+      # !! 这里刚改完 favorites, 只能用 Save-BwState !!
+      # Save-BwStateKeepFav 会以**磁盘上的** favorites 为准, 用在这里等于
+      # 把用户刚收藏/刚取消的改动当场抹掉。
       if (Add-BwFav $s $nm) {
         Save-BwState $s
         Write-Host ('  已收藏 ★ ' + $nm)
@@ -315,7 +329,9 @@ function Invoke-BwManualSwap {
     Write-Host '  (顺手记下今天必应已切, 免得下次进桌面又插一张必应)'
   }
   Invoke-BwSwap $s (Get-Date) '手动: 立刻换成聚焦里的图片' | Out-Null
-  Save-BwState $s
+  # KeepFav 合并写: 换图期间后台可能也在写 state, 整份覆盖会丢它的记录
+  # (本函数不改 favorites, 所以合并写不会抹掉任何东西, 2026-09-22 修)。
+  Save-BwStateKeepFav $s
   if ($s.last_wall) { Write-Host ('  已更换: ' + (Split-Path $s.last_wall -Leaf)) }
 }
 
@@ -333,7 +349,8 @@ function Invoke-BwRefill {
     # 于是刚抓的这批图在队列里过一遍就被当成"已删除"剔掉, 白抓。
     $newNames = @($new | ForEach-Object { Split-Path $_ -Leaf })
     $s.queue = @(@($s.queue | Where-Object { $_ }) + $newNames)
-    Save-BwState $s
+    # 合并写(本函数不改 favorites), 免得把后台这段时间的进度回滚掉 (2026-09-22 修)
+    Save-BwStateKeepFav $s
   }
   Write-Host ('  聚焦库现在 ' + (Count-Jpg $c.spotlight_save_dir) + ' 张, 待换队列还剩 ' + (Left-Queue $s) + ' 张')
 }
@@ -402,7 +419,8 @@ function Show-BwFavorites {
       # 队列是按旧模式洗好的, 切完开关立刻重洗一次
       $s = Get-BwState
       $s.queue = @(Get-BwFreshQueue $s)
-      Save-BwState $s
+      # 合并写(本函数不改 favorites) —— 切开关时后台 daemon 可能正在写 state (2026-09-22 修)
+      Save-BwStateKeepFav $s
       if ([bool]$c.fav_only) {
         $n = @(Get-BwFavFiles $s).Count
         if ($n -eq 0) {
@@ -458,8 +476,15 @@ function Edit-BwCycleMinutes {
   if (-not $m) {
     # 直接回车 = 不改
   } elseif ($mm -match '^\d+$') {
-    $n = Limit-BwNum ([int]$mm) 'cycle_minutes'
-    if ($n -ne [int]$mm) {
+    # 不能直接 [int]$mm: 填 11 位以上数字(如 99999999999)时 Int32 转换本身就抛异常,
+    # 而数值护栏 Limit-BwNum 是在转换**之后**才生效的 —— 护栏还没轮上, 菜单先被
+    # 异常干掉, 正好是这套护栏想防的那件事 (2026-09-22 修)。
+    # TryParse 失败(位数超 Int32)就按"比上限还大"处理, 交给 Limit-BwNum 夹回上限,
+    # 这样仍然满足"越界夹回边界, 不报错也不把用户打回去重填"的设计。
+    $mmN = 0
+    if (-not [int]::TryParse($mm, [ref]$mmN)) { $mmN = $global:BwLimit.cycle_minutes.Max + 1 }
+    $n = Limit-BwNum $mmN 'cycle_minutes'
+    if ($n -ne $mmN) {
       Write-Host ('  ' + $mm + ' 分钟出界了, 按 ' + $n + ' 分钟算。') -ForegroundColor Yellow
     }
     $c.cycle_minutes = $n
@@ -752,7 +777,8 @@ function Invoke-BwFirstRun {
   $s.last_bing_date = (Today-Str)
   $s.queue = @(Get-BwFreshQueue $s)
   $s.last_swap = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
-  Save-BwState $s
+  # 合并写(本函数不改 favorites): 向导重跑时后台 daemon 可能已经在跑 (2026-09-22 修)
+  Save-BwStateKeepFav $s
 
   Write-Host ''
   Write-Host ('  好了。壁纸保存在: ' + $base) -ForegroundColor Green
