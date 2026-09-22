@@ -1,6 +1,6 @@
 # 微软壁纸助手
 
-![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Windows-blue) ![Version](https://img.shields.io/badge/version-v1.6.6-blue)
+![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Windows-blue) ![Version](https://img.shields.io/badge/version-v2.0.1-blue)
 
 **让电脑桌面壁纸自己换，你不用管。**
 
@@ -35,7 +35,7 @@ Windows 桌面壁纸自动轮换工具。图全都来自微软官方，两个图
 
 ## 下载
 
-### 👉 [点这里下载 v1.6.6 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v1.6.6/MSWallpaperAssistant-v1.6.6.zip)
+### 👉 [点这里下载 v1.6.6 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.0.1/MSWallpaperAssistant-v1.6.6.zip)
 
 > 7.3 MB 的 zip，实测可解压、可运行。
 
@@ -145,7 +145,7 @@ Windows 桌面壁纸自动轮换工具。图全都来自微软官方，两个图
 
 ## 版本迭代
 
-每次改版都会打一个版本号、发一版下载。**当前最新：v1.6.6（v2.0.0 开发中，未发布）**
+每次改版都会打一个版本号、发一版下载。**当前最新：v2.0.1（v2.0.0 开发中，未发布）**
 
 小版本的改动都归到同一个大版本下面说，一行一个版本：
 
