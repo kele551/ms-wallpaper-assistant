@@ -51,6 +51,7 @@ TOKEN_CANDIDATES = [
 TOKEN_FILE = Path(TOKEN_CANDIDATES[0])
 PY = r'F:\Harness\toolchain\python\envs\default\Scripts\python.exe'
 GIT_EXEC_PATH = r'F:/Harness/toolchain/PortableGit/versions/1.2.0/mingw64/bin'
+GIT_EXE = GIT_EXEC_PATH + '/git.exe'              # 绝对路径: 有的执行环境按名字找不到 git(WinError 2)
 GH_PUSH = r'F:\Harness\tools\github_push.py'      # 纯 API 推 GitHub(含附件), 2026-09-22 重写
 ZIP_TPL = 'MSWallpaperAssistant-v%s.zip'
 APP_NAME = '微软壁纸助手'
@@ -132,6 +133,9 @@ def run(cmd, cwd=REPO_DIR, env=None, check=True):
     e['PATH'] = GIT_EXEC_PATH.replace('/', os.sep) + os.pathsep + e.get('PATH', '')
     if env:
         e.update(env)
+    cmd = list(cmd)
+    if cmd and cmd[0] == 'git':                   # 不靠 PATH 找, 直接用绝对路径
+        cmd[0] = GIT_EXE.replace('/', os.sep)
     print('   $', ' '.join(cmd))
     r = subprocess.run(cmd, cwd=str(cwd), env=e,
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
