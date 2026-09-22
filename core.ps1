@@ -1919,6 +1919,27 @@ function Invoke-BwUpdate {
   } catch { Log ('巡检异常: ' + $_.Exception.Message) }
 }
 
+# ---- 心跳: 每轮结束留一行状态 ----
+# 目的: 万一半夜出问题(壁纸不换了 / 队列卡住 / 库空了), 第二天翻日志就能一眼看出
+# "它到底还在不在跑、当时是什么状态", 不用去猜。一次轮换一行, 一天约 48 行。
+function Write-BwHeartbeat {
+  try {
+    $c = Get-BwConfig
+    $s = Get-BwState
+    if (-not $s) { return }
+    $lib  = @(Get-BwSpotlightAll).Count
+    $b    = @(Get-BwBingAll).Count
+    $q    = @($s.queue | Where-Object { $_ }).Count
+    $hist = @(Get-BwHist $s).Count
+    $last = Get-BwTime $s.last_swap
+    $next = '--:--'
+    if ($last) { $next = $last.AddMinutes((Get-BwCycleMinutes $c)).ToString('MM-dd HH:mm') }
+    Log ('心跳: 聚焦库 ' + $lib + ' 张 / 必应库 ' + $b + ' 张 / 队列剩 ' + $q +
+         ' 张 / 看过 ' + $hist + ' 条 / 累计换 ' + $s.shown + ' 次 / 上次 ' +
+         $s.last_swap + ' / 下次 ' + $next)
+  } catch {}
+}
+
 # ==================== 自动轮换 ====================
 # 三条规则 + 一个补漏, 装完不用管:
 #   0) 补漏: 几天没开机, 错过的必应壁纸全部补下载 (只下载, 不切壁纸)
@@ -2020,6 +2041,11 @@ function Invoke-BwCycle {
     # 未到点: 静默, 只把开机时间存下来
     Save-BwStateKeepFav $s
   } catch { Log ('轮换异常: ' + $_.Exception.Message) }
+  finally {
+    # 每轮都留一行心跳 —— 正常结束、异常、以及三条规则里提前 return 的路径
+    # 都会走到 finally, 所以日志里"有没有这行"本身就能判断它是否还活着。
+    Write-BwHeartbeat
+  }
 }
 # 注意: -Update 与 -Cycle 走同一套逻辑。
 # 老版本的开机自启动作是 -Update; 让 -Update 也进新节奏, 老用户不用重装就能零提权生效。
