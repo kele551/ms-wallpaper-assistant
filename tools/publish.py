@@ -114,16 +114,26 @@ def bump_version(ver):
 
 
 def extract_notes(ver):
-    """从 CHANGELOG 取该版本的条目, 去掉项目符号前缀, 保持 Markdown 可读。"""
+    """从 CHANGELOG 取该版本的条目, 去掉项目符号前缀, 保持 Markdown 可读。
+
+    兼容两种写法:
+      `- **v2.0.7** 一句话`        —— v1.6.x 及以前的格式
+      `## v2.0.7 — 日期` + 多行正文 —— v2.x 起改用段落式, 以前这里匹配不到、发布说明会是空的
+    """
     cl = (REPO_DIR / 'CHANGELOG.md').read_text(encoding='utf-8')
     m = re.search(r'^- \*\*v%s\*\*(.+?)(?=^- \*\*v|\Z)' % re.escape(ver),
                   cl, re.S | re.M)
-    if not m:
-        return None
-    body = m.group(1).strip()
-    body = re.sub(r'\s+\n', '\n', body)
-    body = body.replace('\n- ', '\n- ')
-    return '## v%s\n\n%s' % (ver, body)
+    if m:
+        body = m.group(1).strip()
+        body = re.sub(r'\s+\n', '\n', body)
+        body = body.replace('\n- ', '\n- ')
+        return '## v%s\n\n%s' % (ver, body)
+
+    m = re.search(r'^##\s*v%s(?![0-9.])[^\n]*\n(.+?)(?=^##\s|\Z)' % re.escape(ver),
+                  cl, re.S | re.M)
+    if m:
+        return '## v%s\n\n%s' % (ver, m.group(1).strip())
+    return None
 
 
 def run(cmd, cwd=REPO_DIR, env=None, check=True):
@@ -299,11 +309,17 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
 
     notes = None
     if notes_file:
-        notes = Path(notes_file).read_text(encoding='utf-8')
+        p = Path(notes_file)
+        if not p.exists():
+            sys.exit('--notes 指定的文件不存在: %s' % p)
+        notes = p.read_text(encoding='utf-8')
     else:
         notes = extract_notes(ver)
     if not notes:
-        print('!! CHANGELOG 里没有 v%s 的条目, 发布说明会是空的' % ver)
+        sys.exit('CHANGELOG.md 里找不到 v%s 的条目 —— 直接发会得到一个空白的发行页。\n'
+                 '请先在 CHANGELOG.md 里补上该版本段落（`## v%s — 日期`）并用它自动生成，'
+                 '或用 --notes <文件> 指定发布说明。' % (ver, ver))
+    print('   发布说明: %d 字' % len(notes))
 
     bump_version(ver)
     if not skip_build:
