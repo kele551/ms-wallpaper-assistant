@@ -37,10 +37,10 @@ import time
 import datetime
 import ctypes
 
-VERSION = '1.6.6'
+VERSION = '2.0.1'
 APP_NAME = '微软壁纸助手'
 DATA_DIR_NAME = '微软壁纸助手数据'
-PAYLOAD_FILES = ['core.ps1', 'menu.ps1', '使用说明.txt', '微软壁纸助手.ico', '刷新图标缓存.bat']
+PAYLOAD_FILES = ['core.ps1', 'menu.ps1', '使用说明.txt', '微软壁纸助手.ico']
 MUTEX_NAME = 'Local\\MSWallpaperAssistantDaemon'
 CREATE_NO_WINDOW = 0x08000000
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
@@ -363,13 +363,25 @@ def run_cycle(d):
     return ps(os.path.join(d, 'core.ps1'), ['-Cycle'], no_window=True)
 
 
+# 换图间隔的允许范围(分钟), 与 core.ps1 里的 $global:BwLimit.cycle_minutes 保持一致。
+# 给上限不只是"讲道理": gap 超过约 41.9 亿分钟(≈7978 年)时, 算 target 会越过
+# datetime 的上限(9999-12-31)抛 OverflowError, 守护进程直接退出,
+# 表现出来就是"壁纸再也不换了"。与 core.ps1 的 $global:BwLimit.cycle_minutes 对齐。
+CYCLE_MIN, CYCLE_MAX, CYCLE_DEF = 5, 1440, 30
+
+
 def read_interval(d):
+    """读"每多少分钟换一张", 越界一律夹回 [CYCLE_MIN, CYCLE_MAX]。"""
     try:
         with open(os.path.join(d, 'config.json'), encoding='utf-8-sig') as f:
-            n = int(json.load(f).get('cycle_minutes') or 30)
-        return n if n > 0 else 30
+            n = int(json.load(f).get('cycle_minutes') or CYCLE_DEF)
     except Exception:
-        return 30
+        return CYCLE_DEF
+    if n < CYCLE_MIN:
+        return CYCLE_MIN
+    if n > CYCLE_MAX:
+        return CYCLE_MAX
+    return n
 
 
 def read_last_swap(d):
@@ -452,6 +464,12 @@ def mode_daemon(d):
                 # 有人换过图了 (多半是用户在菜单里按了 [1]):
                 # 这时候**不能**跟着换一张 —— 那会把人家刚挑的图顶掉。
                 # 什么都不做, 回到外层按新的换图时刻重新算。
+                break
+            # 间隔被改了(设置 [1] 换图间隔): 回外层按新间隔重算目标时刻。
+            # 以前这里只盯 last_swap / 停止信号, 不看 config, 于是:
+            #   把 30 分钟改小成 5 分钟, 还得按旧的 30 分钟睡满这一觉才轮到下一次判断,
+            #   体感就是"改了半天一点反应都没有"。改大同理, 要白跑一轮才纠正过来。
+            if read_interval(d) != gap:
                 break
 
         if not due:

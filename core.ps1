@@ -429,10 +429,87 @@ function Get-BwConfig {
   # 库里现有的图轮着用就够了, 不过程序自己跑去下载一堆, 库越攒越大。
   # 想要不断有新图就到菜单里打开它。
   if (-not $c.PSObject.Properties['auto_fetch']) { Add-Member -InputObject $c NoteProperty auto_fetch $false -Force }
+  # 数值护栏: 读出来的同时就夹回允许范围 —— 不管是菜单里填的, 还是有人直接
+  # 手改 config.json 写进去的。这样"菜单显示的"和"后台真正按的"永远一致,
+  # 排错时不用再猜是哪一份数据在骗人。
+  foreach ($k in @($global:BwLimit.Keys)) {
+    if ($c.PSObject.Properties[$k]) {
+      $c.PSObject.Properties[$k].Value = (Limit-BwNum $c.PSObject.Properties[$k].Value $k)
+    }
+  }
   return $c
 }
 function Save-BwConfig([psobject]$c) {
   [System.IO.File]::WriteAllText($global:CfgPath, ($c | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))
+}
+
+# ---- 数值护栏 ----
+# 菜单里那几个用户可以自己填的数字, 都给一个"人还能理解"的范围。
+# 限制不是跟用户过不去, 是防止一次手滑把程序搞瘫:
+# 换图间隔填到 41.9 亿分钟以上(约 7978 年), 后台算"下次该几点换"时 AddMinutes
+# 会越过 DateTime 的上限(9999-12-31)直接抛异常 —— 守护进程当场摔死,
+# 表现就是"壁纸再也不换了"。就算没到那个量级, 填几百万分钟也等于永不换图。
+# 实测(2026-09-21): 能加的极限是 4193538076 分钟, 4194000000 就崩, 不是猜的。
+# 所以做法是**越界夹回边界**, 不是报错退出、也不是把用户打回去重填。
+$global:BwLimit = @{
+  # 换图间隔(分钟)。太快看着晃眼、也没人看得清一张图; 超过一天就不叫换壁纸了。
+  cycle_minutes       = @{ Min = 5; Max = 1440; Def = 30;  Zero = $false }
+  # 一轮补几张聚焦图。太多了会让一轮补图跑很久, 像卡死。
+  spotlight_per_cycle = @{ Min = 1; Max = 50;   Def = 6;   Zero = $false }
+  # 图库上限(张)。0 = 不限; 上限卡在 2000, 再多就不是壁纸库而是冷备份了。
+  lib_cap             = @{ Min = 5; Max = 2000; Def = 100; Zero = $true  }
+}
+
+# 把一个值按 kind 夹回合法范围。解析不出来的(被人手改成 "abc")退成默认值。
+function Limit-BwNum($v, [string]$kind) {
+  $r = $global:BwLimit[$kind]
+  if (-not $r) { return 0 }
+  $n = -1
+  try { $n = [int]$v } catch { $n = -1 }
+  if ($n -lt 0) { return $r.Def }
+  # 只有明确允许 0 的项(目前就"图库上限 = 不限")才能取 0
+  if ($r.Zero -and ($n -eq 0)) { return 0 }
+  if ($n -lt $r.Min) { return $r.Min }
+  if ($n -gt $r.Max) { return $r.Max }
+  return $n
+}
+
+# 读"每多少分钟换一张"。各处都走这里, 保证菜单显示的数、后台按的数、
+# 以及算出来的"下次几点换", 三者永远是同一个 —— 不出现两套口径。
+function Get-BwCycleMinutes($c) {
+  return (Limit-BwNum $c.cycle_minutes 'cycle_minutes')
+}
+
+# 把 config 里那几个数字一次性夹回范围并落盘, 返回改了哪些(没改就是空数组)。
+# 菜单进设置时先跑一遍: 允许手改 config.json, 但不允许改出一辆刹不住的车。
+#
+# 注意: 传进来的 $c 是 Get-BwConfig 的产物, 里面的数字**已经**被夹过了 ——
+# 拿它跟自己比永远是"没变", 落盘净化就成了摆设。所以这里要重新读一遍磁盘上的
+# 原始值来比对。目标是让文件里写的和程序真正按的保持一致,
+# 免得用户打开文件看到 99999999、界面却显示 1440, 不知道该信哪个。
+function Repair-BwConfig([psobject]$c) {
+  $fix = @()
+  $raw = $null
+  if (Test-Path $global:CfgPath) {
+    try { $raw = Get-Content $global:CfgPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $raw = $null }
+  }
+  foreach ($k in @($global:BwLimit.Keys)) {
+    if (-not $c.PSObject.Properties[$k]) { continue }
+    $new = Limit-BwNum $c.PSObject.Properties[$k].Value $k
+    $oldN = -1
+    if ($raw -and $raw.PSObject.Properties[$k]) {
+      try { $oldN = [int]$raw.PSObject.Properties[$k].Value } catch { $oldN = -1 }
+    }
+    if ($oldN -ne $new) {
+      $c.PSObject.Properties[$k].Value = $new
+      $fix += ($k + ' ' + $oldN + ' -> ' + $new)
+    }
+  }
+  if ($fix.Count -gt 0) {
+    Save-BwConfig $c
+    Log ('配置里的数字超出允许范围, 已夹回: ' + ($fix -join '; '))
+  }
+  return $fix
 }
 # ---- 自动轮换进度 (state.json): 每次运行是独立进程, 靠这个文件把节奏串起来 ----
 # 只记三件事: 今天切过必应没有 / 上次换壁纸是什么时候 / 上次开机时间。
@@ -1020,7 +1097,12 @@ function Get-BwNextWall($s) {
       $p = Join-Path $c.spotlight_save_dir $name
       # 收藏里可能有必应库的图, 聚焦目录里找不到就再去必应目录找一次
       if (-not (Test-Path -LiteralPath $p)) { $p = Join-Path $c.bing_save_dir $name }
-      if (Test-Path -LiteralPath $p) { $s.queue = $q; return (Get-Item -LiteralPath $p) }
+      if (Test-Path -LiteralPath $p) {
+        # 最后一道闸: 不管前面哪里漏了, 设上桌面之前必须再验一遍 ——
+        # 截断的图进了队列/库的话, 在这里隔离掉、换下一张。
+        if (-not (Test-BwImageOk $p)) { [void](Move-BwBadImage $p); continue }
+        $s.queue = $q; return (Get-Item -LiteralPath $p)
+      }
       # 这张被删了, 丢掉接着取下一张
     }
     $s.queue = @()
@@ -1093,6 +1175,11 @@ function Invoke-BwSwap($s, [DateTime]$now, [string]$why) {
 function Set-BwWallManual($s, [string]$path, [string]$why) {
   if (-not $path) { return $false }
   if (-not (Test-Path -LiteralPath $path)) { Write-Host '  这张图已经不在库里了'; return $false }
+  if (-not (Test-BwImageOk $path)) {
+    Write-Host '  这张图打不开 (文件截断或已损坏), 不能设为壁纸 —— 已把它挪出图库' -ForegroundColor Yellow
+    [void](Move-BwBadImage $path)
+    return $false
+  }
   $ok = Set-BwWall $path
   $s.last_wall = $path
   $s.shown = [int]$s.shown + 1
@@ -1224,7 +1311,196 @@ function Remove-BwFile([string]$path) {
   # 走 .NET 删: 本机 Remove-Item 走回收站, 中文路径下会报 trash 失败
   if ($path -and (Test-Path -LiteralPath $path)) { try { [System.IO.File]::Delete($path) } catch {} }
 }
-function Save-BwFile([string[]]$urls, [string]$path) {
+# ---- 借鉴 SpotlightWall: 文件名带哈希, 强制壁纸刷新 ----
+# 把图片"唯一身份"hash 进文件名: 不同图 -> 不同路径 -> Windows 永远重新加载,
+# 不会拿缓存里的旧版本糊弄桌面; 同一张图(身份不变) -> 同一路径 -> 不重复下载。
+# Bing 用 urlbase、Spotlight 用 slug+url 作身份, 都稳定, 所以幂等。
+function Get-BwHash([string]$s) {
+  if (-not $s) { return '00000000' }
+  try {
+    $sha = [System.Security.Cryptography.SHA1]::Create()
+    $b = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($s))
+    $sb = New-Object System.Text.StringBuilder
+    for ($i = 0; $i -lt 4; $i++) { [void]$sb.Append($b[$i].ToString('x2')) }
+    return $sb.ToString()
+  } catch { return '00000000' }
+}
+# ---- 元数据写进图片自己身上 (JPEG 注释段 FF FE) ----
+# 不在图库里另建文件, 也就不存在"白纸图标的 json 混在图里"那回事;
+# 数据跟着图片走 —— 图拷到哪儿、发给谁, 来源信息还在 (海风: "元数据应该写在
+# 图片里, 这样你调取也方便, 用户也看不见")。
+# 插在 SOI/APP0 后面的注释段, 不重新编码、不动像素, 文件只变大几百字节,
+# 画质和体积都不受影响, 尾部 FF D9 也依然是 FF D9 (坏图校验不受干扰)。
+function Get-BwMetaPayload($info) {
+  $o = [ordered]@{ app = '微软壁纸助手'; date = ''; title = ''; copyright = ''; source_type = ''; source_url = ''; source_link = '' }
+  if ($info) {
+    foreach ($k in @('date', 'title', 'copyright', 'source_type', 'source_url', 'source_link')) {
+      if ($info.ContainsKey($k)) { $o[$k] = [string]$info[$k] }
+    }
+  }
+  return ($o | ConvertTo-Json -Compress)
+}
+function Read-BwImageMeta([string]$path) {
+  # 从 JPEG 注释段里读回程序自己写的元数据。没有就返回 $null。
+  try {
+    $b = [System.IO.File]::ReadAllBytes($path)
+    $i = 2
+    while ($i -lt ($b.Length - 3)) {
+      if ($b[$i] -ne 0xFF) { break }
+      $m = $b[$i + 1]
+      if ($m -eq 0xDA) { break }              # SOS: 后面是压缩数据, 不再有段
+      if (($m -ge 0xD0 -and $m -le 0xD7) -or $m -eq 0x01) { $i += 2; continue }
+      $len = ($b[$i + 2] * 256) + $b[$i + 3]
+      if ($len -lt 2) { break }
+      if ($m -eq 0xFE) {
+        $n = $len - 2
+        if ($n -gt 2 -and ($i + 4 + $n) -le $b.Length) {
+          $s = [System.Text.Encoding]::UTF8.GetString($b, $i + 4, $n)
+          if ($s.StartsWith('{') -and $s.Contains('微软壁纸助手')) {
+            $o = $s | ConvertFrom-Json
+            return @{
+              date        = [string]$o.date
+              title       = [string]$o.title
+              copyright   = [string]$o.copyright
+              source_type = [string]$o.source_type
+              source_url  = [string]$o.source_url
+              source_link = [string]$o.source_link
+            }
+          }
+        }
+      }
+      $i += 2 + $len
+    }
+  } catch {}
+  return $null
+}
+function Write-BwImageMeta([string]$path, [hashtable]$info) {
+  if (-not ($path -and $info)) { return $false }
+  if (-not (Test-Path -LiteralPath $path)) { return $false }
+  # 已经写过的不再重复插一段 (注释段可以有多段, 重复写会越攒越多)
+  if (Read-BwImageMeta $path) { return $true }
+  try {
+    $pay = [System.Text.Encoding]::UTF8.GetBytes((Get-BwMetaPayload $info))
+    if ($pay.Length -gt 65500) { return $false }
+    $b = [System.IO.File]::ReadAllBytes($path)
+    if ($b.Length -lt 4 -or $b[0] -ne 0xFF -or $b[1] -ne 0xD8) { return $false }
+    # 插入点: SOI 之后; 如果紧跟着 APP0 (JFIF), 就插在它后面, 顺序才合规
+    $at = 2
+    if ($b[2] -eq 0xFF -and $b[3] -eq 0xE0) { $at = 4 + ($b[4] * 256) + $b[5] }
+    $L = $pay.Length + 2
+    $seg = New-Object byte[] (4 + $pay.Length)
+    $seg[0] = 0xFF; $seg[1] = 0xFE
+    $seg[2] = [byte](($L -shr 8) -band 0xFF); $seg[3] = [byte]($L -band 0xFF)
+    [Array]::Copy($pay, 0, $seg, 4, $pay.Length)
+    $out = New-Object byte[] ($b.Length + $seg.Length)
+    [Array]::Copy($b, 0, $out, 0, $at)
+    [Array]::Copy($seg, 0, $out, $at, $seg.Length)
+    [Array]::Copy($b, $at, $out, ($at + $seg.Length), ($b.Length - $at))
+    $tmp = $path + '.metatmp'
+    [System.IO.File]::WriteAllBytes($tmp, $out)
+    Move-Item -LiteralPath $tmp -Destination $path -Force
+    return $true
+  } catch { return $false }
+}
+# ---- 借鉴 SpotlightWall: 多区域并抓 ----
+# 各国聚焦图池不一样。每次请求轮换到下一个区域, 配合按 slug 去重,
+# 一次更新就能拿到比单区域多得多的不重复 4K 图 (实测 4 区域 x 4 轮可 60+ 张)。
+$script:BWSpotIdx = 0
+function Get-BwSpotRegion {
+  $c = Get-BwConfig
+  $regs = $null
+  if ($c.PSObject.Properties['spotlight_regions']) { $regs = @($c.spotlight_regions | Where-Object { $_ }) }
+  if (-not $regs -or $regs.Count -eq 0) { $regs = @('cn|zh-CN') }
+  if (-not $script:BWSpotIdx) { $script:BWSpotIdx = 0 }
+  $r = $regs[$script:BWSpotIdx % $regs.Count]
+  $script:BWSpotIdx = ($script:BWSpotIdx + 1) % $regs.Count
+  return $r
+}
+
+# ---- 坏图拦截: 截断的 JPEG 也常常能被 GDI+ "打开", 光查能不能解码拦不住 ----
+# 2026-09-21 实测两连: 一张聚焦图正好下到 4MB 整被掐断(尾部不是 FF D9),
+# GDI+ FromFile 报得出宽高; 又以为"强制整张解码"能现原形, 结果 GDI+ 对截断
+# 更宽容 —— 整张解完也不抛异常, 解出来就是那半张灰图。两次都拦不住,
+# 结论: **尾部 FF D9 是唯一可靠的硬标准**, 没有就一律当坏图, 不给第二次机会。
+# 校验共三层:
+#   1) 文件不小于 100KB;
+#   2) 头 3 字节必须是 FF D8 FF (JPEG 起点);
+#   3) 尾 2 字节必须是 FF D9 (JPEG 结束标记, 下载被掐断几乎必然没有)。
+function Test-BwImageOk([string]$path) {
+  if (-not $path) { return $false }
+  if (-not (Test-Path -LiteralPath $path)) { return $false }
+  try { if ((Get-Item -LiteralPath $path -ErrorAction Stop).Length -lt 100KB) { return $false } } catch { return $false }
+  try {
+    $fs = [System.IO.File]::OpenRead($path)
+    try {
+      if ($fs.Length -lt 4) { return $false }
+      $h = New-Object byte[] 3
+      if ($fs.Read($h, 0, 3) -lt 3) { return $false }
+      if (-not ($h[0] -eq 0xFF -and $h[1] -eq 0xD8 -and $h[2] -eq 0xFF)) { return $false }
+      $null = $fs.Seek(-2, [System.IO.SeekOrigin]::End)
+      $t = New-Object byte[] 2
+      if ($fs.Read($t, 0, 2) -lt 2) { return $false }
+      if (-not ($t[0] -eq 0xFF -and $t[1] -eq 0xD9)) { return $false }
+    } finally { $fs.Close() }
+  } catch { return $false }
+  Add-Type -AssemblyName System.Drawing
+  $im = $null
+  try { $im = [System.Drawing.Image]::FromFile($path); return $true } catch { return $false }
+  finally { if ($im) { $im.Dispose() } }
+}
+function Get-BwImageDim([string]$path) {
+  Add-Type -AssemblyName System.Drawing
+  $im = $null
+  try { $im = [System.Drawing.Image]::FromFile($path); return "$($im.Width)x$($im.Height)" } catch { return '' }
+  finally { if ($im) { $im.Dispose() } }
+}
+# 坏图挪出图库 —— 图库里只该有能用的图 (海风: "图库里就应该是图片,
+# 不应该有其他无关的文件存在")。挪到程序数据目录的「坏图」文件夹,
+# 不删: 万一哪次是程序自己看走眼, 图还在, 还能拿回来。
+function Move-BwBadImage([string]$path) {
+  if (-not ($path -and (Test-Path -LiteralPath $path))) { return $false }
+  try {
+    $bad = Join-Path $global:BWRoot '坏图'
+    if (-not (Test-Path -LiteralPath $bad)) { New-Item -ItemType Directory -Path $bad -Force | Out-Null }
+    # 文件名用 .NET 取: 这里曾用 Split-Path -Leaf, 实测在部分路径上取回空串,
+    # 目标就变成「坏图\.225526」这种点开头的怪名, Move 直接失败 —— 坏图一张都
+    # 没挪走, 外面看扫描"跑过了", 其实库里原样躺着装满半张灰图的 jpg。
+    $leaf = [System.IO.Path]::GetFileName($path)
+    if (-not $leaf) { $leaf = 'bad.jpg' }
+    $dst = Join-Path $bad ($leaf + '.' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    [System.IO.File]::Move($path, $dst)
+    Log ('坏图隔离: ' + $leaf)
+    return $true
+  } catch {
+    # 隔离失败必须留痕: 以前 catch 里一声不吭返回 False, 坏图就一直赖在图库里,
+    # 外面看着是"扫过了", 其实一张都没挪走 (2026-09-21 羽扇豆)。
+    try { Log ('坏图隔离失败: ' + (Split-Path -LiteralPath $path -Leaf) + ' -> ' + $_.Exception.Message) } catch {}
+    return $false
+  }
+}
+# 扫两个库, 把截断/损坏的图隔离出去; 顺手把 .meta.json 元数据小文件清掉
+# (这功能已取消, 图库里只该有图 —— 白纸图标的 json 用户只当它是坏文件)。
+function Sweep-BwBadImages {
+  $c = Get-BwConfig
+  $n = 0
+  foreach ($dir in @($c.spotlight_save_dir, $c.bing_save_dir)) {
+    if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { continue }
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -File -Filter *.jpg -ErrorAction SilentlyContinue)) {
+      if (-not (Test-BwImageOk $f.FullName)) { if (Move-BwBadImage $f.FullName) { $n++ } }
+    }
+    # 老版本把 .meta.json 直接写在图库里, 文件管理器里混着一片白纸图标 —— 清掉
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -File -Filter *.meta.json -ErrorAction SilentlyContinue)) {
+      Remove-BwFile $f.FullName
+    }
+    # 下载中断留下的 .part 半成品同理: 图库里不该有它, 见到就删
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -File -Filter *.part -ErrorAction SilentlyContinue)) {
+      Remove-BwFile $f.FullName
+    }
+  }
+  return $n
+}
+
+function Save-BwFile([string[]]$urls, [string]$path, [hashtable]$meta = $null) {
   # 试运行: 只说一声, 一张都不下。-DryRun 的意思就是"什么都不改",
   # 少了这道闸, 后台补漏 (Invoke-BwBackfill) 在试运行时照样会真去下载。
   if ($global:BWDry) { Log ('试运行: 本应下载 -> ' + (Split-Path $path -Leaf)); return $false }
@@ -1237,19 +1513,18 @@ function Save-BwFile([string[]]$urls, [string]$path) {
     try {
       Invoke-WebRequest -Uri $u -OutFile $tmp -TimeoutSec 300 -UseBasicParsing
       if ((Get-Item $tmp -ErrorAction SilentlyContinue).Length -gt 100KB) {
-        Add-Type -AssemblyName System.Drawing
-        $im = $null; $dim = ''
-        try { $im = [System.Drawing.Image]::FromFile($tmp); $dim = "$($im.Width)x$($im.Height)" } catch {}
-        finally { if ($im) { $im.Dispose() } }
-        # 大小够了但解码失败 = 坏图。以前这种情况带着文件照样返回 True, 脏图就留下了。
-        if (-not $dim) {
-          Log ('下载的不是能用的图, 已丢弃: ' + (Split-Path $path -Leaf))
+        if (-not (Test-BwImageOk $tmp)) {
+          # 大小够了但校验不过 = 截断/坏图。以前只查"能不能打开",
+          # 截断的 JPEG 照样能打开, 半张灰图就上了桌面 (2026-09-21 羽扇豆)。
+          Log ('下载的图不完整(截断或坏图), 已丢弃: ' + (Split-Path $path -Leaf))
           Remove-BwFile $tmp
           continue
         }
         Remove-BwFile $path
         Move-Item -LiteralPath $tmp -Destination $path -Force
-        Log "下载成功: $(Split-Path $path -Leaf) ($dim)"
+        Log ('下载成功: ' + (Split-Path $path -Leaf) + ' (' + (Get-BwImageDim $path) + ')')
+        # 元数据(标题/版权/来源)写进图片自己的注释段, 图库里不另外生成文件
+        if ($meta) { [void](Write-BwImageMeta $path $meta) }
         # 记一笔: 从装上那天起一共下载过多少张(删掉的、清走的都不往回减)。
         # 带上图片编号 —— 流水文件同时是「程序下载清单」, 菜单 [9] 校验图库靠它。
         Add-BwDlCount 1 (Get-BwNameKey (Split-Path $path -Leaf))
@@ -1291,7 +1566,8 @@ function Invoke-BwArchiveBatch([string]$ym) {
     if (Test-Path $path) { $skip++; continue }
     $dir = Split-Path $path -Parent
     [void](New-BwDir $dir)
-    if (Save-BwFile @($it.url) $path) { $ok++ } else { $fail++ }
+    $m = @{ date=$it.date; title=''; copyright=''; source_type='必应归档'; source_url=$it.url; source_link='' }
+    if (Save-BwFile @($it.url) $path $m) { $ok++ } else { $fail++ }
     Start-Sleep -Milliseconds 400
   }
   Write-Host ('  完成: 成功 ' + $ok + ', 跳过 ' + $skip + ', 失败 ' + $fail)
@@ -1304,21 +1580,11 @@ function Invoke-BwArchiveSingle([string]$ym, [string]$date, [switch]$SetWall) {
   $path = Get-BwTargetPath $it.date (Get-BwMonthName $it)
   $dir = Split-Path $path -Parent
   [void](New-BwDir $dir)
-  if (-not (Test-Path $path)) { if (-not (Save-BwFile @($it.url) $path)) { Write-Host '  下载失败'; return } }
+  if (-not (Test-Path $path)) {
+    $m = @{ date=$it.date; title=''; copyright=''; source_type='必应归档'; source_url=$it.url; source_link='' }
+    if (-not (Save-BwFile @($it.url) $path $m)) { Write-Host '  下载失败'; return }
+  }
   if ($SetWall) { $ok = Set-BwDesktopWallpaper $path; Write-Host ("  已设为壁纸: ok=$ok") } else { Write-Host ("  已保存: $path") }
-}
-function Invoke-BwRandom {
-  $c = Get-BwConfig
-  $all = @(Get-ChildItem -LiteralPath $c.bing_save_dir -File -Filter *.jpg -ErrorAction SilentlyContinue) +
-         @(Get-ChildItem -LiteralPath $c.spotlight_save_dir -File -Filter *.jpg -ErrorAction SilentlyContinue)
-  if ($all.Count -eq 0) { Write-Host '  两个壁纸库都是空的'; return }
-  $f = $all | Get-Random -Count 1
-  # 走 Set-BwWallManual 而不是直接设壁纸: 随机这一张也得记账。
-  # 直接设的话 last_wall / history 都不写, 主菜单"当前壁纸"停在上一张,
-  # 按 [F] 收藏会收藏到别的图, 而且这张很快又被洗回来。
-  $s = Get-BwState
-  $ok = Set-BwWallManual $s $f.FullName '随便来一张'
-  Write-Host ('  已随机设置: ' + $f.Name + ' (ok=' + $ok + ')')
 }
 # ---- 补漏: 几天没开机, 错过的必应壁纸一张不少 ----
 # 原理: 必应库文件名都以日期开头。找出库里最新的日期, 它和昨天之间缺的日子全部补下载。
@@ -1413,7 +1679,10 @@ function Invoke-BwBackfill($s) {
       $urls = @($it.url)
     }
     if (Test-Path -LiteralPath $path) { $skip++; $gotThrough = $day; continue }
-    if (Save-BwFile $urls $path) { $ok++; $gotThrough = $day } else { $fail++ }
+    $m = $null
+    if ($meta) { $m = @{ date=$bday; title=$meta.title; copyright=($meta.copyright -replace '\s*[(（]©.*$',''); source_type='必应'; source_url=('https://cn.bing.com' + $meta.urlbase); source_link='https://www.bing.com' } }
+    elseif ($it) { $m = @{ date=$it.date; title=''; copyright=''; source_type='必应归档'; source_url=$it.url; source_link='' } }
+    if (Save-BwFile $urls $path $m) { $ok++; $gotThrough = $day } else { $fail++ }
     Start-Sleep -Milliseconds 400
   }
   if (($ok + $skip + $fail) -gt 0) {
@@ -1431,7 +1700,11 @@ function Get-SpotlightOne {
   # 单次请求 -> @{title,url,copyright,slug,id}; 失败返回 $null
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
   $ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
-  $u = 'https://fd.api.iris.microsoft.com/v4/api/selection?placement=88000820&aid=1195280&country=cn&locale=zh-CN&fmt=json'
+  # 借鉴 SpotlightWall: 每次请求轮换到下一个区域, 不同区域图池不一样 -> 更多不重复 4K 图。
+  $reg = Get-BwSpotRegion
+  $cc = 'cn'; $loc = 'zh-CN'
+  if ($reg -and $reg.Contains('|')) { $cc = $reg.Split('|')[0]; $loc = $reg.Split('|')[1] }
+  $u = ('https://fd.api.iris.microsoft.com/v4/api/selection?placement=88000820&aid=1195280&country={0}&locale={1}&fmt=json' -f $cc, $loc)
   try { $j = Invoke-RestMethod -Uri $u -UserAgent $ua -TimeoutSec 20 -UseBasicParsing } catch { return $null }
   $ad = $j.ad
   if (-not $ad) { return $null }
@@ -1451,7 +1724,10 @@ function Get-SpotlightOne {
 function Get-SpotlightName($it) {
   $t = ($it.title -replace '[\\/:*?"<>|\s？：＊＜＞｜]', '')
   if ($t.Length -gt 28) { $t = $t.Substring(0, 28) }
-  return ('{0}_{1}_{2}.jpg' -f (Get-Date -Format 'yyyy-MM-dd'), $t, $it.slug)
+  # 借鉴 SpotlightWall: 把身份哈希嵌进文件名(slug 仍留在最后, 去重/历史不受影响)。
+  # 不同图 -> 不同路径 -> Windows 必重新加载, 不会拿缓存里的旧图糊弄桌面。
+  $h = Get-BwHash (($it.slug) + '|' + ($it.url))
+  return ('{0}_{1}_{2}_{3}.jpg' -f (Get-Date -Format 'yyyy-MM-dd'), $t, $h, $it.slug)
 }
 function Test-SpotlightDup([string]$dir, $it) {
   if (-not (Test-Path -LiteralPath $dir)) { return $false }
@@ -1463,7 +1739,42 @@ function Test-SpotlightDup([string]$dir, $it) {
   }
   return $false
 }
-function Invoke-SpotlightFetch([int]$count, [switch]$SetWall, [switch]$Quiet) {
+# 菜单 [2] 下载聚焦图片的计数动效 (方案 A): 虚线增长 + 游标流动。
+# 固定的中括号轨道里, 已下载的张数越多, 实线 '-' 越长 (增长);
+# 一颗 '>' 游标在轨道里从左向右不停流动 (流动), 数字同步递增。
+# 只有手动按 [2] 才开 (-Counter), 后台自动补图不开。
+function Show-BwDashedCounter([int]$ok, [int]$frame) {
+  $W = 18
+  $fill = [Math]::Min($ok, $W)
+  $cursor = $frame % $W
+  $sb = New-Object System.Text.StringBuilder
+  $sb.Append('  下载聚焦图片 [') > $null
+  for ($i = 0; $i -lt $W; $i++) {
+    if ($i -eq $cursor) { $sb.Append('>') > $null }
+    elseif ($i -lt $fill) { $sb.Append('-') > $null }
+    else { $sb.Append(' ') > $null }
+  }
+  $sb.Append('] ') > $null
+  $sb.Append([string]$ok) > $null
+  $sb.Append('  ') > $null
+  Write-Host ("`r" + $sb.ToString()) -NoNewline
+}
+# 在两次下载之间的等待里, 让游标持续流动几步, 屏幕一直有动静 (不会像卡死)。
+function Wait-BwFlow([int]$ms, [int]$ok, [ref]$frame) {
+  $step = 90
+  $n = [Math]::Max(1, [Math]::Round($ms / $step))
+  for ($j = 0; $j -lt $n; $j++) {
+    $frame.Value++
+    Show-BwDashedCounter $ok $frame.Value
+    Start-Sleep -Milliseconds $step
+  }
+}
+
+function Invoke-SpotlightFetch([int]$count, [switch]$SetWall, [switch]$Quiet, [switch]$Counter) {
+  # $Counter: 菜单 [2] 手动下载时开 —— 每下成一张就在同一行把数字加一,
+  # 并用「虚线增长 + 游标流动」的动效显示进度 (Show-BwDashedCounter / Wait-BwFlow),
+  # 不然联网这几秒屏幕上一点动静都没有, 像卡住了。
+  # 后台自动补图不开: 它跑在没人的时候, 也不需要有人看。
   # 聚焦接口每次请求几乎都返回一张不同的图(实测 40 次 / 39 张唯一), 因此可批量刷。
   # 返回本次新增的文件全名数组, 调用方可以立刻把它们排进轮换队列。
   $c = Get-BwConfig
@@ -1471,6 +1782,7 @@ function Invoke-SpotlightFetch([int]$count, [switch]$SetWall, [switch]$Quiet) {
   [void](New-BwDir $dir)
   $ok = 0; $skip = 0; $fail = 0; $first = $null
   $newFiles = @()
+  $frame = 0   # 游标流动用的动画帧计数 (仅 -Counter 时用到)
   $tries = 0
   $maxTries = [Math]::Max($count * 5, 20)
   # 循环只看**真的新增了几张**。以前把"已存在"也算进配额, 于是库一大(几十张),
@@ -1480,33 +1792,43 @@ function Invoke-SpotlightFetch([int]$count, [switch]$SetWall, [switch]$Quiet) {
   # 本地查不到, 光靠文件去重会把同一张图再下一遍。
   $seen = @{}
   foreach ($h in @(Get-BwHist (Get-BwState))) { if ($h) { $seen[[string]$h] = $true } }
-  # 试了大半还一张新图都没拿到 -> 说明这个接口的图基本收全了, 放开拦截,
-  # 宁可重复下载也不能没图可换。
-  $allowSeen = $false
+  # 也认下载流水账(dl_ledger.log)里的编号: 库被清空/回收站清走过、或「看过」名单
+  # 超 400 淘汰掉的图, 光靠文件和历史拦不住, 会被同一张图反复下。流水账是
+  # “下过哪些图”的永久记录 —— 认过就不再下, 哪怕本地文件已经没了。
+  foreach ($k in @(Get-BwDlKeys)) { if ($k) { $seen[[string]$k] = $true } }
+  if ($Counter) { $frame = 0; Show-BwDashedCounter 0 $frame }
   while (($ok -lt $count) -and ($tries -lt $maxTries)) {
     $tries++
-    if (($ok -eq 0) -and ($tries -gt [Math]::Min([Math]::Floor($maxTries / 2), 10))) { $allowSeen = $true }
     $it = Get-SpotlightOne
-    if (-not $it) { Start-Sleep -Milliseconds 800; continue }
-    if ((-not $allowSeen) -and $it.slug -and $seen.ContainsKey([string]$it.slug)) {
+    if (-not $it) { if ($Counter) { Wait-BwFlow 800 $ok ([ref]$frame) } else { Start-Sleep -Milliseconds 800 }; continue }
+    # 下过的图绝不再下(流水账/看过名单都认) —— 库清空也不该让它重下,
+    # 宁可这一轮少下几张、等微软出新的, 也不能把旧图当新的重复下。
+    if ($it.slug -and $seen.ContainsKey([string]$it.slug)) {
       $skip++
-      Start-Sleep -Milliseconds 400
+      if ($Counter) { Wait-BwFlow 400 $ok ([ref]$frame) } else { Start-Sleep -Milliseconds 400 }
       continue
     }
     if (Test-SpotlightDup $dir $it) {
       $skip++
       if (-not $first) { $first = (Get-ChildItem -LiteralPath $dir -Filter "*_$($it.slug).jpg" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName }
-      Start-Sleep -Milliseconds 400
+      if ($Counter) { Wait-BwFlow 400 $ok ([ref]$frame) } else { Start-Sleep -Milliseconds 400 }
       continue
     }
     $path = Join-Path $dir (Get-SpotlightName $it)
-    if (Save-BwFile @($it.url) $path) {
+    $m = @{ date=(Get-Date -Format 'yyyy-MM-dd'); title=$it.title; copyright=$it.copyright; source_type='聚焦'; source_url=$it.url; source_link='' }
+    if (Save-BwFile @($it.url) $path $m) {
       $ok++
       $newFiles += $path
       if (-not $first) { $first = $path }
       if (-not $Quiet) { Write-Host ('    OK  ' + (Split-Path $path -Leaf)) }
+      elseif ($Counter) { Show-BwDashedCounter $ok $frame }
     } else { $fail++ }
-    Start-Sleep -Milliseconds 600
+    if ($Counter) { Wait-BwFlow 600 $ok ([ref]$frame) } else { Start-Sleep -Milliseconds 600 }
+  }
+  # 计数器那行是 -NoNewline 写的, 先把这一行收掉再打总结, 免得总结接在数字后面。
+  if ($Counter) {
+    if ($ok -eq 0) { Show-BwDashedCounter 0 $frame }
+    Write-Host ''
   }
   Write-Host ("  完成: 新增 $ok, 已存在 $skip, 失败 $fail")
   Log ("聚焦抓取: 新增$ok 跳过$skip 失败$fail")
@@ -1532,7 +1854,8 @@ function Invoke-BwUpdate {
     $dir = Split-Path $path -Parent
     [void](New-BwDir $dir)
     if (-not (Test-Path $path)) {
-      if (-not (Save-BwFile (Get-BwCandidates $meta ($c.resolution_mode)) $path)) { Log '巡检: 下载失败, 下次再试'; return }
+      $m = @{ date=(Get-BwDisplayDate $meta); title=$meta.title; copyright=($meta.copyright -replace '\s*[(（]©.*$',''); source_type='必应'; source_url=('https://cn.bing.com' + $meta.urlbase); source_link='https://www.bing.com' }
+      if (-not (Save-BwFile (Get-BwCandidates $meta ($c.resolution_mode)) $path $m)) { Log '巡检: 下载失败, 下次再试'; return }
       Log ('巡检: 官方已更新 -> ' + $name)
     }
     $cur = (Get-ItemProperty 'HKCU:\Control Panel\Desktop' -ErrorAction SilentlyContinue).Wallpaper
@@ -1573,8 +1896,9 @@ function Invoke-BwCycle {
     $s = Get-BwState
     $now = Get-Date
     $today = $now.ToString('yyyy-MM-dd')
-    $gap = 30
-    if ($c.cycle_minutes) { $gap = [int]$c.cycle_minutes }
+    # 换图间隔走护栏: 就算 config.json 被手改成离谱的值(比如一亿分钟),
+    # 这里也只会拿到 1440, AddMinutes 不会溢出, 后台不会崩。
+    $gap = Get-BwCycleMinutes $c
 
     $boot = ''
     try { $boot = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime.ToString('yyyy-MM-dd HH:mm:ss') } catch {}
@@ -1610,7 +1934,8 @@ function Invoke-BwCycle {
           Log ('试运行: 本应换必应当日壁纸 -> ' + $name + ' (库中已存在=' + (Test-Path -LiteralPath $path) + ')')
         } else {
           if (-not (Test-Path -LiteralPath $path)) {
-            if (-not (Save-BwFile (Get-BwCandidates $meta ($c.resolution_mode)) $path)) { $path = $null }
+            $m = @{ date=$bday; title=$meta.title; copyright=($meta.copyright -replace '\s*[(（]©.*$',''); source_type='必应'; source_url=('https://cn.bing.com' + $meta.urlbase); source_link='https://www.bing.com' }
+            if (-not (Save-BwFile (Get-BwCandidates $meta ($c.resolution_mode)) $path $m)) { $path = $null }
           }
           if (-not $path) {
             # 这里必须直接 return 且不记账。以前下载失败也照样把 last_bing_date 写成今天,
