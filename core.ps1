@@ -12,8 +12,15 @@ $global:BWState = Join-Path $global:BWRoot 'state.json'
 $global:BWDlLedger = Join-Path $global:BWRoot 'dl_ledger.log'
 $global:BWDry = [bool]$DryRun
 $ProgressPreference = 'SilentlyContinue'
-function Log([string]$m) {
-  Add-Content -Path $global:BWLog -Value ('{0}  {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m) -Encoding UTF8
+# 日志函数：支持 INFO/WARN/ERROR 三级，默认 INFO
+# 用法: Log "消息" 或 Log "消息" "WARN" 或 Log "消息" "ERROR"
+function Log([string]$m, [string]$level = 'INFO') {
+  $prefix = switch ($level.ToUpper()) {
+    'WARN' { '[WARN] ' }
+    'ERROR' { '[ERR]  ' }
+    default { '' }
+  }
+  Add-Content -Path $global:BWLog -Value ('{0}  {1}{2}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $prefix, $m) -Encoding UTF8
   $fi = Get-Item $global:BWLog -ErrorAction SilentlyContinue
   if ($fi -and $fi.Length -gt 256KB) { Set-Content -Path $global:BWLog -Value (Get-Content $global:BWLog -Tail 200 -Encoding UTF8) -Encoding UTF8 }
 }
@@ -534,6 +541,10 @@ function Get-BwConfig {
   return $c
 }
 function Save-BwConfig([psobject]$c) {
+  # 保存前自动备份 config.json.bak (防止用户手改出错后无法回滚)
+  if (Test-Path -LiteralPath $global:CfgPath) {
+    try { Copy-Item -LiteralPath $global:CfgPath -Destination ($global:CfgPath + '.bak') -Force -ErrorAction SilentlyContinue } catch {}
+  }
   [System.IO.File]::WriteAllText($global:CfgPath, ($c | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))
 }
 
@@ -618,8 +629,8 @@ function Repair-BwConfig([psobject]$c) {
 # 下载后**必须校验 SHA256**: 对不上就整批放弃, 继续用旧脚本(绝不半个包)。
 $global:BWUpdateFile = Join-Path $global:BWRoot 'update.json'
 $global:BWUpdateUrls = @(
-  'https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/version.json',
-  'https://raw.githubusercontent.com/kele551/ms-wallpaper-assistant/main/version.json'
+  'https://raw.githubusercontent.com/kele551/ms-wallpaper-assistant/main/version.json',
+  'https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/version.json'
 )
 function Get-BwVerTuple([string]$v) {
   $out = @()
