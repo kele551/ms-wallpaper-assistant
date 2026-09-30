@@ -2,7 +2,7 @@
 
 > 作者：**海风（kele551）** · 仓库：https://gitee.com/kele551/ms-wallpaper-assistant （GitHub 同名镜像）
 
-![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Windows-blue) ![Version](https://img.shields.io/badge/version-v2.0.7-blue)
+![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Windows-blue) ![Version](https://img.shields.io/badge/version-v2.0.7-blue) ![Downloads](https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?label=downloads&color=green)
 
 **让电脑桌面壁纸自己换，你不用管。**
 
