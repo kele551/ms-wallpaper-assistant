@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>微软壁纸助手 - 下载统计</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: #0d1117; color: #c9d1d9; line-height: 1.6;
+  }
+  .container { max-width: 900px; margin: 0 auto; padding: 24px 16px; }
+
+  /* Header */
+  .header {
+    text-align: center; padding: 40px 0 30px;
+    border-bottom: 1px solid #30363d; margin-bottom: 30px;
+  }
+  .header h1 { font-size: 28px; color: #58a6ff; margin-bottom: 8px; }
+  .header p { color: #8b949e; font-size: 14px; }
+  .header .version-badge {
+    display: inline-block; background: #238636; color: #fff;
+    padding: 2px 10px; border-radius: 12px; font-size: 12px; margin-top: 8px;
+  }
+
+  /* Stats cards */
+  .stats-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px; margin-bottom: 36px;
+  }
+  .stat-card {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 20px; text-align: center;
+  }
+  .stat-card .number { font-size: 32px; font-weight: 700; color: #58a6ff; }
+  .stat-card .label { font-size: 13px; color: #8b949e; margin-top: 4px; }
+
+  /* Release list */
+  .release-list { display: flex; flex-direction: column; gap: 12px; }
+  .release-item {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 20px; transition: border-color 0.2s;
+  }
+  .release-item:hover { border-color: #58a6ff; }
+  .release-item.latest { border-color: #238636; }
+  .release-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px; flex-wrap: wrap; gap: 8px;
+  }
+  .release-tag {
+    font-size: 18px; font-weight: 600; color: #e6edf3;
+  }
+  .release-tag .badge {
+    font-size: 11px; background: #238636; color: #fff;
+    padding: 1px 8px; border-radius: 10px; margin-left: 8px; vertical-align: middle;
+  }
+  .release-date { font-size: 13px; color: #8b949e; }
+
+  .release-desc { font-size: 14px; color: #8b949e; margin-bottom: 14px; }
+
+  .download-row {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .download-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: #238636; color: #fff; border: none; border-radius: 6px;
+    padding: 8px 16px; font-size: 14px; cursor: pointer; text-decoration: none;
+    transition: background 0.2s;
+  }
+  .download-btn:hover { background: #2ea043; }
+  .download-btn.secondary { background: #21262d; border: 1px solid #30363d; }
+  .download-btn.secondary:hover { background: #30363d; }
+  .download-count {
+    font-size: 13px; color: #8b949e; margin-left: auto;
+  }
+  .download-count .count-num { color: #58a6ff; font-weight: 600; }
+
+  /* Chart */
+  .chart-section { margin-top: 36px; }
+  .chart-section h2 { font-size: 18px; color: #e6edf3; margin-bottom: 16px; }
+  .bar-chart { display: flex; flex-direction: column; gap: 8px; }
+  .bar-row { display: flex; align-items: center; gap: 12px; }
+  .bar-label { width: 80px; font-size: 13px; color: #8b949e; text-align: right; flex-shrink: 0; }
+  .bar-track { flex: 1; background: #21262d; border-radius: 4px; height: 24px; position: relative; }
+  .bar-fill {
+    height: 100%; border-radius: 4px; background: linear-gradient(90deg, #238636, #58a6ff);
+    transition: width 0.6s ease; min-width: 2px;
+  }
+  .bar-value { font-size: 13px; color: #c9d1d9; width: 40px; flex-shrink: 0; }
+
+  /* Footer */
+  .footer {
+    text-align: center; padding: 30px 0 10px; color: #484f58; font-size: 12px;
+    border-top: 1px solid #30363d; margin-top: 40px;
+  }
+  .footer a { color: #58a6ff; text-decoration: none; }
+  .footer a:hover { text-decoration: underline; }
+
+  /* Toast */
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: #238636; color: #fff; padding: 10px 20px; border-radius: 8px;
+    font-size: 14px; opacity: 0; transition: opacity 0.3s; pointer-events: none;
+    z-index: 999;
+  }
+  .toast.show { opacity: 1; }
+
+  /* Reset btn */
+  .reset-btn {
+    background: none; border: 1px solid #30363d; color: #8b949e;
+    padding: 4px 12px; border-radius: 4px; font-size: 12px; cursor: pointer;
+    margin-top: 16px;
+  }
+  .reset-btn:hover { border-color: #f85149; color: #f85149; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div class="header">
+    <h1>微软壁纸助手</h1>
+    <p>桌面壁纸自动轮换 · 必应每日一图 + Windows 聚焦双图源 · 4K 原图</p>
+    <span class="version-badge">最新 v2.0.7</span>
+  </div>
+
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="number" id="totalDownloads">0</div>
+      <div class="label">总下载次数</div>
+    </div>
+    <div class="stat-card">
+      <div class="number" id="totalReleases">0</div>
+      <div class="label">发行版本数</div>
+    </div>
+    <div class="stat-card">
+      <div class="number" id="latestVersion">-</div>
+      <div class="label">最新版本</div>
+    </div>
+    <div class="stat-card">
+      <div class="number" id="totalStars">0</div>
+      <div class="label">GitHub Stars</div>
+    </div>
+  </div>
+
+  <div class="release-list" id="releaseList"></div>
+
+  <div class="chart-section">
+    <h2>各版本下载分布</h2>
+    <div class="bar-chart" id="barChart"></div>
+  </div>
+
+  <div style="text-align:center;">
+    <button class="reset-btn" onclick="resetStats()">重置统计数据</button>
+  </div>
+
+  <div class="footer">
+    <p>作者：海风（kele551）</p>
+    <p>
+      <a href="https://gitee.com/kele551/ms-wallpaper-assistant" target="_blank">Gitee</a> ·
+      <a href="https://github.com/kele551/ms-wallpaper-assistant" target="_blank">GitHub</a>
+    </p>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const RELEASES = [
+  {
+    tag: "v2.0.7", date: "2026-09-22", latest: true,
+    desc: "主菜单重排三行 · 提醒有问题才出现 · 按键分组 · 在线升级 SHA256 校验",
+    files: [
+      { name: "MSWallpaperAssistant-v2.0.7.zip", size: "7.1 MB",
+        gitee: "https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.0.7/MSWallpaperAssistant-v2.0.7.zip",
+        github: "https://github.com/kele551/ms-wallpaper-assistant/releases/download/v2.0.7/MSWallpaperAssistant-v2.0.7.zip" },
+      { name: "微软壁纸助手.exe", size: "单文件",
+        gitee: "https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.0.7/%E5%BE%AE%E8%BD%AF%E5%A3%81%E7%BA%B8%E5%8A%A9%E6%89%8B.exe",
+        github: "https://github.com/kele551/ms-wallpaper-assistant/releases/download/v2.0.7/MSWallpaperAssistant-v2.0.7.zip" }
+    ]
+  },
+  {
+    tag: "v2.0.2", date: "2026-09-22",
+    desc: "修复升级递归崩溃 · 用户图片被误判 · 菜单数字输入崩溃 · 状态覆盖丢收藏",
+    files: [
+      { name: "MSWallpaperAssistant-v2.0.2.zip", size: "7.1 MB",
+        gitee: "https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.0.2/MSWallpaperAssistant-v2.0.2.zip",
+        github: "https://github.com/kele551/ms-wallpaper-assistant/releases/download/v2.0.2/MSWallpaperAssistant-v2.0.2.zip" }
+    ]
+  },
+  {
+    tag: "v2.0.1", date: "2026-09-22",
+    desc: "菜单秒开 · 坏图扫描挪到后台",
+    files: [
+      { name: "MSWallpaperAssistant-v2.0.1.zip", size: "7.1 MB",
+        gitee: "https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.0.1/MSWallpaperAssistant-v2.0.1.zip",
+        github: "https://github.com/kele551/ms-wallpaper-assistant/releases/download/v2.0.1/MSWallpaperAssistant-v2.0.1.zip" }
+    ]
+  },
+  {
+    tag: "v1.6.6", date: "2026-09-21",
+    desc: "外来图只做记号不动文件 · 认得 jpg 以外的图片 · 库目录被删自己建回来",
+    files: [
+      { name: "MSWallpaperAssistant-v1.6.6.zip", size: "7.1 MB",
+        gitee: "https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v1.6.6/MSWallpaperAssistant-v1.6.6.zip",
+        github: "https://github.com/kele551/ms-wallpaper-assistant/releases/download/v1.6.6/MSWallpaperAssistant-v1.6.6.zip" }
+    ]
+  },
+  {
+    tag: "v1.6.1", date: "2026-09-20",
+    desc: "菜单首页显示「累计下载 N 张」，只增不减",
+    files: [
+      { name: "MSWallpaperAssistant-v1.6.1.zip", size: "7.1 MB",
+        gitee: "https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v1.6.1/MSWallpaperAssistant-v1.6.1.zip",
+        github: "https://github.com/kele551/ms-wallpaper-assistant/releases/download/v1.6.1/MSWallpaperAssistant-v1.6.1.zip" }
+    ]
+  },
+  {
+    tag: "v1.6.0", date: "2026-09-20",
+    desc: "提示不再指错路 · o 键不再误退出 · 文档补齐",
+    files: [
+      { name: "MSWallpaperAssistant-v1.6.0.zip", size: "7.45 MB",
+        gitee: "https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v1.6.0/MSWallpaperAssistant-v1.6.0.zip",
+        github: "https://github.com/kele551/ms-wallpaper-assistant/releases/download/v1.6.0/MSWallpaperAssistant-v1.6.0.zip" }
+    ]
+  },
+  {
+    tag: "v1.5.4", date: "2026-09-20",
+    desc: "图库设上限（默认 100 张）· 自动补新图可关",
+    files: [
+      { name: "MSWallpaperAssistant-v1.5.4.zip", size: "7.1 MB",
+        gitee: "https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v1.5.4/MSWallpaperAssistant-v1.5.4.zip",
+        github: "https://github.com/kele551/ms-wallpaper-assistant/releases/download/v1.5.4/MSWallpaperAssistant-v1.5.4.zip" }
+    ]
+  }
+];
+
+const STORAGE_KEY = "ms_wallpaper_dl_stats";
+
+function loadStats() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+  } catch { return {}; }
+}
+
+function saveStats(stats) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(stats));
+}
+
+function recordDownload(tag, source) {
+  const stats = loadStats();
+  if (!stats[tag]) stats[tag] = { gitee: 0, github: 0, total: 0 };
+  stats[tag][source] = (stats[tag][source] || 0) + 1;
+  stats[tag].total = (stats[tag].gitee || 0) + (stats[tag].github || 0);
+  saveStats(stats);
+  return stats[tag].total;
+}
+
+function showToast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 2200);
+}
+
+function render() {
+  const stats = loadStats();
+  const list = document.getElementById("releaseList");
+  const chart = document.getElementById("barChart");
+  let totalDl = 0;
+  let maxDl = 1;
+
+  // Calculate totals
+  RELEASES.forEach(r => {
+    const s = stats[r.tag] || { total: 0 };
+    totalDl += s.total;
+    if (s.total > maxDl) maxDl = s.total;
+  });
+
+  // Stats cards
+  document.getElementById("totalDownloads").textContent = totalDl;
+  document.getElementById("totalReleases").textContent = RELEASES.length;
+  document.getElementById("latestVersion").textContent = "v2.0.7";
+  document.getElementById("totalStars").textContent = "2";
+
+  // Release list
+  list.innerHTML = RELEASES.map(r => {
+    const s = stats[r.tag] || { gitee: 0, github: 0, total: 0 };
+    return `
+      <div class="release-item ${r.latest ? 'latest' : ''}">
+        <div class="release-header">
+          <span class="release-tag">${r.tag}${r.latest ? '<span class="badge">最新</span>' : ''}</span>
+          <span class="release-date">${r.date}</span>
+        </div>
+        <div class="release-desc">${r.desc}</div>
+        <div class="download-row">
+          <a class="download-btn" href="${r.files[0].gitee}" target="_blank"
+             onclick="handleDl('${r.tag}','gitee',this)">
+            Gitee 下载
+          </a>
+          <a class="download-btn secondary" href="${r.files[0].github}" target="_blank"
+             onclick="handleDl('${r.tag}','github',this)">
+            GitHub 下载
+          </a>
+          <span class="download-count">
+            本页下载 <span class="count-num">${s.total}</span> 次
+            （Gitee ${s.gitee || 0} · GitHub ${s.github || 0}）
+          </span>
+        </div>
+      </div>`;
+  }).join("");
+
+  // Bar chart
+  chart.innerHTML = RELEASES.map(r => {
+    const s = stats[r.tag] || { total: 0 };
+    const pct = Math.max((s.total / maxDl) * 100, 1);
+    return `
+      <div class="bar-row">
+        <span class="bar-label">${r.tag}</span>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:${pct}%"></div>
+        </div>
+        <span class="bar-value">${s.total}</span>
+      </div>`;
+  }).join("");
+}
+
+function handleDl(tag, source, el) {
+  const count = recordDownload(tag, source);
+  showToast(`已记录下载 · ${tag}（${source}）· 本页累计 ${count} 次`);
+  setTimeout(() => render(), 300);
+}
+
+function resetStats() {
+  if (confirm("确定要重置所有统计数据吗？")) {
+    localStorage.removeItem(STORAGE_KEY);
+    render();
+    showToast("统计数据已重置");
+  }
+}
+
+render();
+</script>
+</body>
+</html>
