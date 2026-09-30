@@ -2,7 +2,7 @@
 # 作者: 海风（kele551）   https://gitee.com/kele551/ms-wallpaper-assistant
 . (Join-Path $PSScriptRoot 'core.ps1')
 
-$global:BWVersion = '2.0.7'
+$global:BWVersion = '2.0.8'
 
 # 把用户按键归一化: 去首尾空格 + 全角转半角 + 转小写。
 # 中文输入法很容易把 o 打成全角 ｏ, 不归一化就变成"按了键没反应"。
