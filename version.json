@@ -1,5 +1,5 @@
 {
-    "version": "2.0.8",
+    "version": "2.0.7",
     "min_launcher": "2.0.7",
     "notes": "代码质量改进：升级源调整（GitHub优先）、config自动备份、日志分级",
     "scripts": {
@@ -8,7 +8,7 @@
             "url": "https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/core.ps1"
         },
         "menu.ps1": {
-            "sha256": "2D35D487393932804B357A8CAE06C547B2ED08B46D49C988B1A1211E0F3FE6D7",
+            "sha256": "C2AD63E369090075B05D9F2A1AEE957A756B2FE2B943D77077AB8E68A90ABD3A",
             "url": "https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/menu.ps1"
         }
     },

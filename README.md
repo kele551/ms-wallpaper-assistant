@@ -2,7 +2,7 @@
 
 > 作者：**海风（kele551）** · 仓库：https://gitee.com/kele551/ms-wallpaper-assistant （GitHub 同名镜像）
 
-![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Windows-blue) ![Version](https://img.shields.io/badge/version-v2.0.8-blue) ![Downloads](https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?label=downloads&color=green)
+![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Windows-blue) ![Version](https://img.shields.io/badge/version-v2.0.7-blue) ![Downloads](https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?label=downloads&color=green)
 
 **让电脑桌面壁纸自己换，你不用管。**
 
@@ -37,9 +37,9 @@ Windows 桌面壁纸自动轮换工具。图全都来自微软官方，两个图
 
 ## 下载
 
-### 👉 [点这里下载 v2.0.8 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.0.7/MSWallpaperAssistant-v2.0.7.zip)
+### 👉 [点这里下载 v2.0.7 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.0.7/MSWallpaperAssistant-v2.0.7.zip)
 
-> 7.3 MB 的 zip，实测可解压、可运行。当前云端最新版本：v2.0.8（自动升级已就绪）。
+> 7.3 MB 的 zip，实测可解压、可运行。当前云端最新版本：v2.0.7（自动升级已就绪）。
 
 下载下来是一个 zip，解压后里面就两样东西：
 
@@ -203,7 +203,7 @@ Windows 桌面壁纸自动轮换工具。图全都来自微软官方，两个图
 
 ## 版本迭代
 
-每次改版都会打一个版本号、发一版下载。**当前最新：v2.0.8**
+每次改版都会打一个版本号、发一版下载。**当前最新：v2.0.7**
 
 小版本的改动都归到同一个大版本下面说，一行一个版本：
 
