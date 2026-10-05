@@ -822,7 +822,7 @@ function Get-BwExePath {
   return ''
 }
 function Invoke-BwLauncherUpdate {
-  param([switch]$Quiet, [object]$Info, [switch]$NoStart, [switch]$Animated)
+  param([switch]$Quiet, [object]$Info, [switch]$NoStart, [switch]$Animated, [switch]$ReopenMenu)
   if (-not $Info) { $Info = Get-BwUpdateInfo -Force }
   if (-not $Info) { return $false }
   $url = ''; $want = ''
@@ -904,6 +904,13 @@ function Invoke-BwLauncherUpdate {
   if (-not $NoStart) {
     $hl += 'Start-Process -FilePath $exe -ArgumentList ''--daemon'' -WindowStyle Hidden'
     $hl += 'W ''已用新版本重新启动'''
+  if ($ReopenMenu) {
+    # 用户要求: 升级完要把**新版本**的菜单窗口弹出来。
+    # 但菜单自己不能等 (它在等新版本就位, 小助手在等菜单窗口关闭 -> 互等 60 秒),
+    # 所以由小助手在换完 exe、拉起后台之后, 自己把菜单打开。
+    $hl += 'Start-Sleep -Seconds 2'
+    $hl += 'try { Start-Process -FilePath $exe; W ''已把新版本的菜单窗口打开'' } catch { W (''打开菜单失败: '' + $_.Exception.Message) }'
+  }
   } else {
     $hl += 'W ''(测试模式: 不启动)'''
   }
@@ -932,7 +939,7 @@ function Invoke-BwLauncherUpdate {
   return $true
 }
 function Invoke-BwScriptUpdate {
-  param([switch]$Quiet, [switch]$Force, [switch]$Animated)
+  param([switch]$Quiet, [switch]$Force, [switch]$Animated, [switch]$ReopenMenu)
   $info = Get-BwUpdateInfo -Force:$Force
   if (-not $info) {
     if (-not $Quiet) { Write-Host '  连不上升级源(或还没发布升级信息), 稍后再试。' -ForegroundColor Yellow }
@@ -956,7 +963,7 @@ function Invoke-BwScriptUpdate {
   if ($minL -and $lau -and ((Compare-BwVer $minL $lau) -gt 0)) {
     # 这一版脚本要求更高的主程序 -> 直接走"自动覆盖主程序"(用户要求自动升级, 自动覆盖)
     Log ('升级: v' + $info.version + ' 需要主程序 v' + $minL + ' 以上 (本机 v' + $lau + '), 转去自动覆盖主程序')
-    return (Invoke-BwLauncherUpdate -Quiet:$Quiet -Info $info -Animated:$Animated)
+    return (Invoke-BwLauncherUpdate -Quiet:$Quiet -Info $info -Animated:$Animated -ReopenMenu:$ReopenMenu)
   }
   # 下载 -> 校验 -> 落地
   $plan = @()
