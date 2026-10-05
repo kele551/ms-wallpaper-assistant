@@ -39,7 +39,7 @@ import time
 import datetime
 import ctypes
 
-VERSION = '2.0.7'
+VERSION = '2.0.8'
 APP_NAME = '微软壁纸助手'
 DATA_DIR_NAME = '微软壁纸助手数据'
 PAYLOAD_FILES = ['core.ps1', 'menu.ps1', '使用说明.txt', '微软壁纸助手.ico']
@@ -207,7 +207,13 @@ def data_dir():
 def ver_tuple(v):
     """把 '2.0.5' 变成 (2,0,5)。比不了就当成 0 —— 宁可不升级, 也不能因为版本号怪就乱覆盖。"""
     try:
-        return tuple(int(x) for x in str(v).strip().split('.'))
+        # 2026-10-05 修: 必须去掉 BOM。core.ps1 用 PowerShell 的 Set-Content -Encoding UTF8
+        # 写 `.version` 时, PS 5.1 会**在开头加上 UTF-8 BOM**(EF BB BF), 而 Python 用
+        # encoding='utf-8' 读出来是 '\ufeff2.0.8', int('\ufeff2') 抛异常 ->
+        # 版本号被当成 (0,) -> launcher 判定"数据目录的脚本比 exe 旧" -> 下次启动就把
+        # 刚升级好的脚本覆盖回旧版。现象: 提示升级成功, 重启又变回旧版本。
+        v = str(v).strip().lstrip('\ufeff').strip()
+        return tuple(int(x) for x in v.split('.'))
     except Exception:
         return (0,)
 
@@ -218,7 +224,8 @@ def sync_payload(d):
     cur = ''
     if os.path.isfile(ver_file):
         try:
-            cur = open(ver_file, encoding='utf-8').read().strip()
+            # 顺带把 BOM 也去掉, 让 cur 直接能跟 VERSION 做字符串比较
+            cur = open(ver_file, encoding='utf-8').read().strip().lstrip('\ufeff').strip()
         except Exception:
             cur = ''
     # 2026-09-22 自动升级(core.ps1 Invoke-BwScriptUpdate): `.version` 记的是

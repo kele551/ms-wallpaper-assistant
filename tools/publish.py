@@ -49,8 +49,9 @@ TOKEN_CANDIDATES = [
     r'C:\Users\kele551\.workbuddy\secrets\gitee_token',        # 旧位置(退回)
 ]
 TOKEN_FILE = Path(TOKEN_CANDIDATES[0])
-PY = r'F:\Harness\toolchain\python\envs\default\Scripts\python.exe'
-GIT_EXEC_PATH = r'F:/Harness/toolchain/PortableGit/versions/1.2.0/mingw64/bin'
+# 优先读环境变量(任意机器都能跑); 没有时退回作者本机 F:\Harness 工具链默认路径
+PY = os.environ.get('MWA_PY', r'F:\Harness\toolchain\python\envs\default\Scripts\python.exe')
+GIT_EXEC_PATH = os.environ.get('MWA_GIT', r'F:/Harness/toolchain/PortableGit/versions/1.2.0/mingw64/bin')
 GIT_EXE = GIT_EXEC_PATH + '/git.exe'              # 绝对路径: 有的执行环境按名字找不到 git(WinError 2)
 GH_PUSH = r'F:\Harness\tools\github_push.py'      # 纯 API 推 GitHub(含附件), 2026-09-22 重写
 ZIP_TPL = 'MSWallpaperAssistant-v%s.zip'

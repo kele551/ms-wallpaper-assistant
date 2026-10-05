@@ -2,7 +2,12 @@
 # 作者: 海风（kele551）   https://gitee.com/kele551/ms-wallpaper-assistant
 . (Join-Path $PSScriptRoot 'core.ps1')
 
-$global:BWVersion = '2.0.7'
+$global:BWVersion = '2.0.8'
+
+# 2026-10-05 修: 窗口标题栏也要写脚本版本。标题栏原本只有 launcher.py 设过一次(用的是
+# **exe 的版本**), 而脚本可以被自动升级到比 exe 更新 —— 于是标题栏写 v2.0.7、菜单正文写
+# v2.0.8, 用户会以为"升级没成功"。这里进来就按脚本版本改回来, 两处保持一致。
+try { $Host.UI.RawUI.WindowTitle = ('微软壁纸助手 v' + $global:BWVersion) } catch {}
 
 # 把用户按键归一化: 去首尾空格 + 全角转半角 + 转小写。
 # 中文输入法很容易把 o 打成全角 ｏ, 不归一化就变成"按了键没反应"。
@@ -268,7 +273,10 @@ function Show-BrowseAll {
     return
   }
   if ($sel -match '^f(\d+)$') {
-    $idx = [int]$Matches[1]
+    # 不能直接 [int]$Matches[1]: 输入 11 位以上数字会抛 Int32 溢出异常, 而这里不在
+    # 任何 try 里 -> 异常冒到主循环, 整个菜单被干掉 (2026-09-22 修, 同 Select-BwBase)。
+    $idx = 0
+    if (-not [int]::TryParse($Matches[1], [ref]$idx)) { $idx = -1 }
     if (($idx -ge 0) -and ($idx -lt $files.Count)) {
       $nm = [string]$files[$idx].file.Name
       # !! 这里刚改完 favorites, 只能用 Save-BwState !!
@@ -436,7 +444,9 @@ function Show-BwFavorites {
     elseif ($k -match '^x(\d+)$') {
       # 移出收藏用 x 而不是 r: 主菜单的 [R] 已经是「刷新画面」了,
       # 同一个字母在两级菜单里干两件不同的事, 按下去心里没底。
-      $idx = [int]$Matches[1]
+      # 同 BUG-4: 超长序号不能让菜单崩, 转型失败按"没有这一项"处理。
+      $idx = 0
+      if (-not [int]::TryParse($Matches[1], [ref]$idx)) { $idx = -1 }
       if (($idx -ge 0) -and ($idx -lt $files.Count)) {
         $nm = [string]$files[$idx].Name
         if (Remove-BwFav $s $nm) { Save-BwState $s; Write-Host ('  已移出收藏: ' + $nm) }
@@ -448,7 +458,9 @@ function Show-BwFavorites {
       Pause-Bw
     }
     elseif ($k -match '^(\d+)$') {
-      $idx = [int]$Matches[1]
+      # 同 BUG-4: 超长序号不能让菜单崩, 转型失败按"没有这一项"处理。
+      $idx = 0
+      if (-not [int]::TryParse($Matches[1], [ref]$idx)) { $idx = -1 }
       if (($idx -ge 0) -and ($idx -lt $files.Count)) {
         $p = $files[$idx].FullName
         $ok = Set-BwWallManual $s $p '收藏夹设壁纸'

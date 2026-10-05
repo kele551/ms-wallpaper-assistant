@@ -12,8 +12,15 @@ $global:BWState = Join-Path $global:BWRoot 'state.json'
 $global:BWDlLedger = Join-Path $global:BWRoot 'dl_ledger.log'
 $global:BWDry = [bool]$DryRun
 $ProgressPreference = 'SilentlyContinue'
-function Log([string]$m) {
-  Add-Content -Path $global:BWLog -Value ('{0}  {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m) -Encoding UTF8
+# 日志函数：支持 INFO/WARN/ERROR 三级，默认 INFO
+# 用法: Log "消息" 或 Log "消息" "WARN" 或 Log "消息" "ERROR"
+function Log([string]$m, [string]$level = 'INFO') {
+  $prefix = switch ($level.ToUpper()) {
+    'WARN' { '[WARN] ' }
+    'ERROR' { '[ERR]  ' }
+    default { '' }
+  }
+  Add-Content -Path $global:BWLog -Value ('{0}  {1}{2}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $prefix, $m) -Encoding UTF8
   $fi = Get-Item $global:BWLog -ErrorAction SilentlyContinue
   if ($fi -and $fi.Length -gt 256KB) { Set-Content -Path $global:BWLog -Value (Get-Content $global:BWLog -Tail 200 -Encoding UTF8) -Encoding UTF8 }
 }
@@ -534,6 +541,10 @@ function Get-BwConfig {
   return $c
 }
 function Save-BwConfig([psobject]$c) {
+  # 保存前自动备份 config.json.bak (防止用户手改出错后无法回滚)
+  if (Test-Path -LiteralPath $global:CfgPath) {
+    try { Copy-Item -LiteralPath $global:CfgPath -Destination ($global:CfgPath + '.bak') -Force -ErrorAction SilentlyContinue } catch {}
+  }
   [System.IO.File]::WriteAllText($global:CfgPath, ($c | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))
 }
 
@@ -618,8 +629,8 @@ function Repair-BwConfig([psobject]$c) {
 # 下载后**必须校验 SHA256**: 对不上就整批放弃, 继续用旧脚本(绝不半个包)。
 $global:BWUpdateFile = Join-Path $global:BWRoot 'update.json'
 $global:BWUpdateUrls = @(
-  'https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/version.json',
-  'https://raw.githubusercontent.com/kele551/ms-wallpaper-assistant/main/version.json'
+  'https://raw.githubusercontent.com/kele551/ms-wallpaper-assistant/main/version.json',
+  'https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/version.json'
 )
 function Get-BwVerTuple([string]$v) {
   $out = @()
@@ -896,12 +907,17 @@ function Invoke-BwScriptUpdate {
     return $false
   }
   $local = Get-BwLocalScriptVer
-  if ($Animated) { Show-BwUpGradeHead $local ([string]$info.version) }
+  # 2026-10-05 修: 版本横幅要放在"是否真的需要升级"判断**之后**。
+  # 本机脚本比升级源新时(例如刚热更过、而线上还没发新版), 原来会画出
+  # `v2.0.8 ====> v2.0.7` 这种"从新指向旧"的箭头, 看着像要降级 —— 用户已经看到过。
+  # 现在: 不需要升级就不画迁移箭头, 只说明本机与升级源各是什么版本。
   if ((Compare-BwVer ([string]$info.version) $local) -le 0) {
+    if ($Animated) { Write-Host ('  本机脚本 v' + $local + '  ·  升级源 v' + [string]$info.version + '  —— 无需升级') -ForegroundColor DarkGray }
     Log ('升级检查: 已是最新 (本机脚本 ' + $local + ', 升级源 ' + $info.version + ')')
     if (-not $Quiet) { Write-Host ('  已是最新版 v' + $local) -ForegroundColor Green }
     return $false
   }
+  if ($Animated) { Show-BwUpGradeHead $local ([string]$info.version) }
   $lau = Get-BwLauncherVer
   $minL = ''
   try { if ($info.PSObject.Properties['min_launcher']) { $minL = [string]$info.min_launcher } } catch {}
@@ -945,8 +961,12 @@ if ($Animated) { Show-BwUpGradeStep 1 3 '连接升级源' $true ('升级源: ' +
       return $false
     }
   }
-  try { Set-Content -LiteralPath (Join-Path $global:BWRoot '.version') -Value ([string]$info.version) -Encoding UTF8 -NoNewline } catch {}
-  try { Set-Content -LiteralPath (Join-Path $global:BWRoot '.upgraded') -Value ([string]$info.version) -Encoding UTF8 -NoNewline } catch {}
+  # 2026-10-05 修: 这里**不能**用 Set-Content -Encoding UTF8 —— PS 5.1 会在文件开头加上
+  # UTF-8 BOM(EF BB BF), 而 launcher.py 用 Python 读 `.version` 时 BOM 会把版本号解析坏
+  # (当成 0.0), 于是 launcher 判定"数据目录里的脚本比 exe 旧", 下次启动就把刚升级好的
+  # 脚本覆盖回旧版 —— 现象是"提示升级成功, 重启又变回旧版本"。改用 .NET 直写(不带 BOM)。
+  try { [System.IO.File]::WriteAllText((Join-Path $global:BWRoot '.version'),  [string]$info.version, (New-Object System.Text.UTF8Encoding($false))) } catch {}
+  try { [System.IO.File]::WriteAllText((Join-Path $global:BWRoot '.upgraded'), [string]$info.version, (New-Object System.Text.UTF8Encoding($false))) } catch {}
   if ($Animated) { Show-BwUpGradeStep 3 3 '校验与安装' $true 'sha256 全部通过'; Show-BwUpGradeDone $true ([string]$info.version) '下一次运行生效' }
   Log ('升级完成: 脚本 -> v' + $info.version + ' (下次运行生效; 主程序仍是 v' + $lau + ')')
   if (-not $Quiet) { Write-Host ('  已升级到 v' + $info.version + ', 下次启动生效。') -ForegroundColor Green }
