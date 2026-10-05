@@ -21,3 +21,6 @@ __pycache__/
 
 # Release 附件 (zip 由打包脚本生成后手动上传)
 MSWallpaperAssistant-*.zip
+
+# Release 附件用的 ASCII 名 exe (给 GitHub 传附件用, 不进仓库)
+MSWallpaperAssistant-*.exe

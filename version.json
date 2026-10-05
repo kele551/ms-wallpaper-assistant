@@ -13,8 +13,8 @@
     }
   },
   "launcher": {
-    "sha256": "EA0D9F0DCEF679609A36944406FF293B000029247773C7B05DD928E93E1242C4",
+    "sha256": "B25D9C1B4AFE1061E125FC14F973D517BD7B12AEFF0AFA50E93BA053B31D0285",
     "url": "https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.0.8/微软壁纸助手.exe",
-    "size": 7656269
+    "size": 7655238
   }
 }
