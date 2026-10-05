@@ -629,8 +629,8 @@ function Repair-BwConfig([psobject]$c) {
 # 下载后**必须校验 SHA256**: 对不上就整批放弃, 继续用旧脚本(绝不半个包)。
 $global:BWUpdateFile = Join-Path $global:BWRoot 'update.json'
 $global:BWUpdateUrls = @(
-  'https://raw.githubusercontent.com/kele551/ms-wallpaper-assistant/main/version.json',
-  'https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/version.json'
+  'https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/version.json',
+  'https://raw.githubusercontent.com/kele551/ms-wallpaper-assistant/main/version.json'
 )
 function Get-BwVerTuple([string]$v) {
   $out = @()

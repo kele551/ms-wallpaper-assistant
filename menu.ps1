@@ -1183,8 +1183,16 @@ try {
   $up0 = Get-BwUpdateInfo
   if ($up0 -and ((Compare-BwVer ([string]$up0.version) (Get-BwLocalScriptVer)) -gt 0)) {
     Write-Host ('  检测到新版本 v' + $up0.version + ', 正在自动升级...') -ForegroundColor Cyan
-    [void](Invoke-BwScriptUpdate -Animated)
-    Start-Sleep -Seconds 2
+    $did = [bool](Invoke-BwScriptUpdate -Animated)
+    if ($did) {
+      # 升完必须把菜单窗口关掉。两个原因:
+      #   ① 这个窗口跑的是内存里的旧脚本, 不关就一直显示旧版本, 看着像"升级没生效";
+      #   ② 菜单的父进程就是那个 exe —— 窗口不关, exe 不退出, 小助手就没法覆盖它换新版。
+      Write-Host ''
+      Write-Host ('  已升级到 v' + [string]$up0.version + '。本窗口马上关闭, 重新打开就是新版本。') -ForegroundColor Green
+      Start-Sleep -Seconds 1
+      return
+    }
   }
 } catch {}
 
@@ -1334,8 +1342,18 @@ do {
       Write-Host ''
       Write-Host ('  当前脚本版本: v' + (Get-BwLocalScriptVer) + '   主程序: v' + (Get-BwLauncherVer))
       Write-Host '  正在检查升级源...'
-      [void](Invoke-BwScriptUpdate -Force -Animated)
-      Pause-Bw
+      $tgtU = ''; try { $iU = Get-BwUpdateInfo; if ($iU) { $tgtU = [string]$iU.version } } catch {}
+      $didU = [bool](Invoke-BwScriptUpdate -Force -Animated)
+      if ($didU) {
+        # 和自动升级一样: 升完就关窗口, 免得停在旧版本上、也免得 exe 被菜单父进程占着换不掉。
+        if (-not $tgtU) { $tgtU = Get-BwLocalScriptVer }
+        Write-Host ''
+        Write-Host ('  已升级到 v' + $tgtU + '。本窗口马上关闭, 重新打开就是新版本。') -ForegroundColor Green
+        Start-Sleep -Seconds 1
+        $quit = $true
+      } else {
+        Pause-Bw
+      }
     }
     'r' { }
     # 退出: 只认 Q。0 保留 (老菜单 [0] 退出留下来的手感)。
