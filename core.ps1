@@ -907,12 +907,17 @@ function Invoke-BwScriptUpdate {
     return $false
   }
   $local = Get-BwLocalScriptVer
-  if ($Animated) { Show-BwUpGradeHead $local ([string]$info.version) }
+  # 2026-10-05 修: 版本横幅要放在"是否真的需要升级"判断**之后**。
+  # 本机脚本比升级源新时(例如刚热更过、而线上还没发新版), 原来会画出
+  # `v2.0.8 ====> v2.0.7` 这种"从新指向旧"的箭头, 看着像要降级 —— 用户已经看到过。
+  # 现在: 不需要升级就不画迁移箭头, 只说明本机与升级源各是什么版本。
   if ((Compare-BwVer ([string]$info.version) $local) -le 0) {
+    if ($Animated) { Write-Host ('  本机脚本 v' + $local + '  ·  升级源 v' + [string]$info.version + '  —— 无需升级') -ForegroundColor DarkGray }
     Log ('升级检查: 已是最新 (本机脚本 ' + $local + ', 升级源 ' + $info.version + ')')
     if (-not $Quiet) { Write-Host ('  已是最新版 v' + $local) -ForegroundColor Green }
     return $false
   }
+  if ($Animated) { Show-BwUpGradeHead $local ([string]$info.version) }
   $lau = Get-BwLauncherVer
   $minL = ''
   try { if ($info.PSObject.Properties['min_launcher']) { $minL = [string]$info.min_launcher } } catch {}
