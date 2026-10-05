@@ -956,8 +956,12 @@ if ($Animated) { Show-BwUpGradeStep 1 3 '连接升级源' $true ('升级源: ' +
       return $false
     }
   }
-  try { Set-Content -LiteralPath (Join-Path $global:BWRoot '.version') -Value ([string]$info.version) -Encoding UTF8 -NoNewline } catch {}
-  try { Set-Content -LiteralPath (Join-Path $global:BWRoot '.upgraded') -Value ([string]$info.version) -Encoding UTF8 -NoNewline } catch {}
+  # 2026-10-05 修: 这里**不能**用 Set-Content -Encoding UTF8 —— PS 5.1 会在文件开头加上
+  # UTF-8 BOM(EF BB BF), 而 launcher.py 用 Python 读 `.version` 时 BOM 会把版本号解析坏
+  # (当成 0.0), 于是 launcher 判定"数据目录里的脚本比 exe 旧", 下次启动就把刚升级好的
+  # 脚本覆盖回旧版 —— 现象是"提示升级成功, 重启又变回旧版本"。改用 .NET 直写(不带 BOM)。
+  try { [System.IO.File]::WriteAllText((Join-Path $global:BWRoot '.version'),  [string]$info.version, (New-Object System.Text.UTF8Encoding($false))) } catch {}
+  try { [System.IO.File]::WriteAllText((Join-Path $global:BWRoot '.upgraded'), [string]$info.version, (New-Object System.Text.UTF8Encoding($false))) } catch {}
   if ($Animated) { Show-BwUpGradeStep 3 3 '校验与安装' $true 'sha256 全部通过'; Show-BwUpGradeDone $true ([string]$info.version) '下一次运行生效' }
   Log ('升级完成: 脚本 -> v' + $info.version + ' (下次运行生效; 主程序仍是 v' + $lau + ')')
   if (-not $Quiet) { Write-Host ('  已升级到 v' + $info.version + ', 下次启动生效。') -ForegroundColor Green }
