@@ -900,7 +900,7 @@ function Invoke-BwLauncherUpdate {
   $hl += '  if (-not (Test-Path -LiteralPath $new)) { $done = $true; break }'
   $hl += '  Start-Sleep -Seconds 2'
   $hl += '}'
-  $hl += 'if ($done) { W (''已覆盖主程序: '' + (Get-Item -LiteralPath $exe).Length + '' 字节'') } else { W (''覆盖失败: 文件一直被占用, 保持旧版; 新版本留在 '' + $new) }'
+  $hl += 'if ($done) { W (''已覆盖主程序: '' + (Get-Item -LiteralPath $exe).Length + '' 字节'') } else { W ''覆盖失败: 文件一直被占用, 保持旧版(临时文件已清理)''; Remove-Item -LiteralPath $new -Force -ErrorAction SilentlyContinue }'
   if (-not $NoStart) {
     $hl += 'Start-Process -FilePath $exe -ArgumentList ''--daemon'' -WindowStyle Hidden'
     $hl += 'W ''已用新版本重新启动'''

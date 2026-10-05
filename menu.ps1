@@ -1175,6 +1175,19 @@ try {
   }
 } catch {}
 
+# 默认自动升级 (2026-10-05 用户要求:「用户不需要手动升级」)。
+# 以前只在后台轮换周期里顺带检查(每天一次、还得后台在跑), 菜单本身只提示"按 [U] 升级" ——
+# 用户得自己动手。现在进菜单就先检查一次: 有新版本**直接升**, 不用按任何键。
+# [U] 保留成手动重试(比如上次联网失败)。脚本升级下次启动生效; 需要换主程序时程序会自己重启。
+try {
+  $up0 = Get-BwUpdateInfo
+  if ($up0 -and ((Compare-BwVer ([string]$up0.version) (Get-BwLocalScriptVer)) -gt 0)) {
+    Write-Host ('  检测到新版本 v' + $up0.version + ', 正在自动升级...') -ForegroundColor Cyan
+    [void](Invoke-BwScriptUpdate -Animated)
+    Start-Sleep -Seconds 2
+  }
+} catch {}
+
 do {
   $c0 = Get-BwConfig
   $s0 = Get-BwState
@@ -1251,7 +1264,7 @@ do {
   if ($upInfo -and ((Compare-BwVer ([string]$upInfo.version) (Get-BwLocalScriptVer)) -gt 0)) {
     $nt = ''
     try { if ($upInfo.notes) { $nt = ' —— ' + [string]$upInfo.notes } } catch {}
-    [void]$warn.Add('有新版本 v' + $upInfo.version + '  (按 [U] 升级)' + $nt)
+    [void]$warn.Add('有新版本 v' + $upInfo.version + ' —— 自动升级没成功 (按 [U] 重试)' + $nt)
   }
   $capN = 0; try { $capN = [int]$c0.lib_cap } catch {}
   if (($capN -gt 0) -and ($spotN -gt $capN)) {
