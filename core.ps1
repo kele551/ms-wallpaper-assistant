@@ -629,8 +629,8 @@ function Repair-BwConfig([psobject]$c) {
 # 下载后**必须校验 SHA256**: 对不上就整批放弃, 继续用旧脚本(绝不半个包)。
 $global:BWUpdateFile = Join-Path $global:BWRoot 'update.json'
 $global:BWUpdateUrls = @(
-  'https://raw.githubusercontent.com/kele551/ms-wallpaper-assistant/main/version.json',
-  'https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/version.json'
+  'https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/version.json',
+  'https://raw.githubusercontent.com/kele551/ms-wallpaper-assistant/main/version.json'
 )
 function Get-BwVerTuple([string]$v) {
   $out = @()
@@ -822,7 +822,7 @@ function Get-BwExePath {
   return ''
 }
 function Invoke-BwLauncherUpdate {
-  param([switch]$Quiet, [object]$Info, [switch]$NoStart, [switch]$Animated)
+  param([switch]$Quiet, [object]$Info, [switch]$NoStart, [switch]$Animated, [switch]$ReopenMenu)
   if (-not $Info) { $Info = Get-BwUpdateInfo -Force }
   if (-not $Info) { return $false }
   $url = ''; $want = ''
@@ -838,17 +838,33 @@ function Invoke-BwLauncherUpdate {
     if (-not $Quiet) { Write-Host '  找不到主程序路径, 先不升。' -ForegroundColor Yellow }
     return $false
   }
+  # 2026-10-05 修: 同一时刻**只允许一个小助手**在换 exe。
+  # 实测现场: 菜单里按 [U] 的同时后台的每日检查也在升级 -> 起了两个小助手,
+  # 互相抢着停进程、覆盖文件, 结果两个都失败, 而且日志还谎报"已覆盖主程序"。
+  $lockf = Join-Path $global:BWRoot 'launcher-update.lock'
+  if (Test-Path -LiteralPath $lockf) {
+    $fresh = $false
+    try { $fresh = (((Get-Date) - (Get-Item -LiteralPath $lockf).LastWriteTime).TotalMinutes -lt 10) } catch {}
+    if ($fresh) {
+      Log '升级: 已有一个主程序升级在进行中, 本次跳过'
+      if (-not $Quiet) { Write-Host '  已经有一个升级在进行, 稍等它完成。' -ForegroundColor Yellow }
+      return $false
+    }
+  }
+  try { [System.IO.File]::WriteAllText($lockf, (Get-Date -Format 'o'), (New-Object System.Text.UTF8Encoding($false))) } catch {}
   if ($Animated) { Show-BwUpGradeStep 2 3 '下载主程序' $false ('约 ' + [Math]::Round(([double]$Info.launcher.size) / 1MB, 1) + ' MB') }
   $bytes = if ($Animated) { Get-BwBytesAnimated $url 300 '主程序' 2 3 } else { Get-BwBytes $url 120 }
   if (-not $bytes) {
     Log '升级失败: 主程序下载没成功, 保持旧版'
     if (-not $Quiet) { Write-Host '  主程序下载失败, 保持旧版。' -ForegroundColor Yellow }
+    try { Remove-Item -LiteralPath $lockf -Force -ErrorAction SilentlyContinue } catch {}
     return $false
   }
   $got = Get-BwSha256Hex $bytes
   if ($want -and ($got -ne $want)) {
     Log ('升级失败: 主程序校验不过 (期望 ' + $want.Substring(0,16) + ', 实际 ' + $got.Substring(0,16) + '), 保持旧版')
     if (-not $Quiet) { Write-Host '  主程序校验不过, 已放弃(保持旧版)。' -ForegroundColor Red }
+    try { Remove-Item -LiteralPath $lockf -Force -ErrorAction SilentlyContinue } catch {}
     return $false
   }
   $nu = $exe + '.new'
@@ -856,6 +872,7 @@ function Invoke-BwLauncherUpdate {
   catch {
     Log ('升级失败: 主程序目录写不进去(' + $_.Exception.Message + '), 需要手动换 exe: ' + $url)
     if (-not $Quiet) { Write-Host ('  程序目录写不进去, 这次要手动换: ' + $url) -ForegroundColor Yellow }
+    try { Remove-Item -LiteralPath $lockf -Force -ErrorAction SilentlyContinue } catch {}
     return $false
   }
   # 小助手用 **PowerShell 脚本**而不是 .cmd:
@@ -869,15 +886,35 @@ function Invoke-BwLauncherUpdate {
   $hl += 'try { & $exe --stop | Out-Null } catch { W (''调 --stop 出错: '' + $_.Exception.Message) }'
   $hl += '$nm = [System.IO.Path]::GetFileNameWithoutExtension($exe)'
   $hl += '$n = 0'
-  $hl += 'while ($n -lt 90) { if (-not (Get-Process -Name $nm -ErrorAction SilentlyContinue)) { break }; Start-Sleep -Seconds 1; $n++ }'
-  $hl += 'W (''进程已退出, 等了 '' + $n + '' 秒'')'
-  $hl += 'try { Move-Item -LiteralPath $new -Destination $exe -Force; W ''已覆盖主程序'' } catch { W (''覆盖失败: '' + $_.Exception.Message) }'
+  $hl += 'while ($n -lt 60) { if (@(Get-Process -Name $nm -ErrorAction SilentlyContinue).Count -eq 0) { break }; Start-Sleep -Seconds 1; $n++ }'
+  $hl += 'if (@(Get-Process -Name $nm -ErrorAction SilentlyContinue).Count -gt 0) { W (''--stop 等了 '' + $n + '' 秒还没退, 兜底结束进程''); try { Get-Process -Name $nm -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue } catch {}; Start-Sleep -Seconds 3 }'
+  $hl += 'W (''旧进程已退出(等了 '' + $n + '' 秒)'')'
+  # 2026-10-05 修: 覆盖必须**真的换成功**才算数。
+  # 原来写的是 `Move-Item ...; W '已覆盖主程序'`, 而脚本头部是 ErrorActionPreference=Continue,
+  # Move-Item 失败只是非终止错误 -> 不抛异常 -> 照样写下"已覆盖主程序", 实际文件一个字节没动。
+  $hl += '$done = $false'
+  $hl += 'for ($k = 1; $k -le 20; $k++) {'
+  $hl += '  try { Move-Item -LiteralPath $new -Destination $exe -Force -ErrorAction Stop } catch {'
+  $hl += '    try { Copy-Item -LiteralPath $new -Destination $exe -Force -ErrorAction Stop; Remove-Item -LiteralPath $new -Force -ErrorAction SilentlyContinue } catch {}'
+  $hl += '  }'
+  $hl += '  if (-not (Test-Path -LiteralPath $new)) { $done = $true; break }'
+  $hl += '  Start-Sleep -Seconds 2'
+  $hl += '}'
+  $hl += 'if ($done) { W (''已覆盖主程序: '' + (Get-Item -LiteralPath $exe).Length + '' 字节'') } else { W ''覆盖失败: 文件一直被占用, 保持旧版(临时文件已清理)''; Remove-Item -LiteralPath $new -Force -ErrorAction SilentlyContinue }'
   if (-not $NoStart) {
     $hl += 'Start-Process -FilePath $exe -ArgumentList ''--daemon'' -WindowStyle Hidden'
     $hl += 'W ''已用新版本重新启动'''
+  if ($ReopenMenu) {
+    # 用户要求: 升级完要把**新版本**的菜单窗口弹出来。
+    # 但菜单自己不能等 (它在等新版本就位, 小助手在等菜单窗口关闭 -> 互等 60 秒),
+    # 所以由小助手在换完 exe、拉起后台之后, 自己把菜单打开。
+    $hl += 'Start-Sleep -Seconds 2'
+    $hl += 'try { Start-Process -FilePath $exe; W ''已把新版本的菜单窗口打开'' } catch { W (''打开菜单失败: '' + $_.Exception.Message) }'
+  }
   } else {
     $hl += 'W ''(测试模式: 不启动)'''
   }
+  $hl += 'try { Remove-Item -LiteralPath $lock -Force -ErrorAction SilentlyContinue } catch {}'
   $hl += '$k = 0'
   $hl += 'while ($k -lt 10) { try { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction Stop; break } catch { Start-Sleep -Milliseconds 500; $k++ } }'
   $head = @(
@@ -885,6 +922,7 @@ function Invoke-BwLauncherUpdate {
     ('$exe = ' + (Q-Str $exe))
     ('$new = ' + (Q-Str $nu))
     ('$log = ' + (Q-Str $logf))
+    ('$lock = ' + (Q-Str $lockf))
   )
   $helper = Join-Path $env:TEMP ('bwupd_' + [guid]::NewGuid().ToString('N') + '.ps1')
   try {
@@ -892,6 +930,7 @@ function Invoke-BwLauncherUpdate {
     Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $helper) -WindowStyle Hidden
   } catch {
     Log ('升级失败: 放小助手出错 ' + $_.Exception.Message)
+    try { Remove-Item -LiteralPath $lockf -Force -ErrorAction SilentlyContinue } catch {}
     return $false
   }
   if ($Animated) { Show-BwUpGradeStep 3 3 '覆盖并重启' $true '已交给小助手, 几秒后自动完成'; Show-BwUpGradeDone $true ([string]$Info.version) '程序会自己重启, 本窗口可以关掉' }
@@ -900,7 +939,7 @@ function Invoke-BwLauncherUpdate {
   return $true
 }
 function Invoke-BwScriptUpdate {
-  param([switch]$Quiet, [switch]$Force, [switch]$Animated)
+  param([switch]$Quiet, [switch]$Force, [switch]$Animated, [switch]$ReopenMenu)
   $info = Get-BwUpdateInfo -Force:$Force
   if (-not $info) {
     if (-not $Quiet) { Write-Host '  连不上升级源(或还没发布升级信息), 稍后再试。' -ForegroundColor Yellow }
@@ -924,7 +963,7 @@ function Invoke-BwScriptUpdate {
   if ($minL -and $lau -and ((Compare-BwVer $minL $lau) -gt 0)) {
     # 这一版脚本要求更高的主程序 -> 直接走"自动覆盖主程序"(用户要求自动升级, 自动覆盖)
     Log ('升级: v' + $info.version + ' 需要主程序 v' + $minL + ' 以上 (本机 v' + $lau + '), 转去自动覆盖主程序')
-    return (Invoke-BwLauncherUpdate -Quiet:$Quiet -Info $info -Animated:$Animated)
+    return (Invoke-BwLauncherUpdate -Quiet:$Quiet -Info $info -Animated:$Animated -ReopenMenu:$ReopenMenu)
   }
   # 下载 -> 校验 -> 落地
   $plan = @()

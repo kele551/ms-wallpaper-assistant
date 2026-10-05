@@ -268,27 +268,37 @@ def _download(url):
     return None
 
 
-def verify(ver, assets):
-    """逐个附件从 Gitee / GitHub 下载回来比对 SHA256（中文名要 percent-encode）。"""
+def verify(ver, assets, gh_assets=None):
+    """逐个附件从 Gitee / GitHub 下载回来比对 SHA256（中文名要 percent-encode）。
+
+    Gitee 与 GitHub 的**附件名可以不一样**（GitHub 会把中文名削成 ASCII/空名），
+    所以两边分别按各自的名字下载：Gitee 用 assets，GitHub 用 gh_assets。
+    """
+    if gh_assets is None:
+        gh_assets = assets
     ok = True
+    targets = []
     for p in assets:
-        p = str(p)
-        name = os.path.basename(p)
+        targets.append(('Gitee ', os.path.basename(str(p)), str(p), True))
+    for p in gh_assets:
+        targets.append(('GitHub', os.path.basename(str(p)), str(p), False))
+    for label, name, p, is_gitee in targets:
         want = hashlib.sha256(open(p, 'rb').read()).hexdigest()
-        for label, url in (
-                ('Gitee ', '%s/%s/%s/releases/download/v%s/%s'
-                 % (GITEE_WEB, OWNER, REPO, ver, quote(name))),
-                ('GitHub', 'https://github.com/%s/%s/releases/download/v%s/%s'
-                 % (OWNER, REPO, ver, quote(name)))):
-            data = _download(url)
-            if data is None:
-                print('  [FAIL] %s %-32s 下载失败' % (label, name))
-                ok = False
-                continue
-            same = hashlib.sha256(data).hexdigest() == want
-            ok = ok and same
-            print('  [%s] %s %-32s %9d B  一致=%s'
-                  % ('PASS' if same else 'FAIL', label, name, len(data), same))
+        if is_gitee:
+            url = '%s/%s/%s/releases/download/v%s/%s' % (GITEE_WEB, OWNER, REPO, ver,
+                                                         quote(name))
+        else:
+            url = 'https://github.com/%s/%s/releases/download/v%s/%s' % (OWNER, REPO, ver,
+                                                                         quote(name))
+        data = _download(url)
+        if data is None:
+            print('  [FAIL] %s %-32s 下载失败' % (label, name))
+            ok = False
+            continue
+        same = hashlib.sha256(data).hexdigest() == want
+        ok = ok and same
+        print('  [%s] %s %-32s %9d B  一致=%s'
+              % ('PASS' if same else 'FAIL', label, name, len(data), same))
     print('   下载页:', '%s/%s/%s/releases/tag/v%s' % (GITEE_WEB, OWNER, REPO, ver))
     return ok
 
@@ -338,6 +348,15 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
     vj = make_version_json()
     assets = [zip_path, vj] + [p for p in (plain_exe, tagged_exe) if p.exists()]
 
+    # 2026-10-05 踩的坑: GitHub 会把中文附件名里的汉字**直接削掉** ——
+    #   微软壁纸助手.exe      -> default.exe
+    #   微软壁纸助手-v2.0.8.exe -> -v2.0.8.exe
+    # 文件其实传上去了, 但名字改坏, 按原名下载必然 404。所以给 GitHub 单独准备一份 ASCII 名的 exe。
+    ascii_exe = REPO_DIR / ('MSWallpaperAssistant-v%s.exe' % ver)
+    if plain_exe.exists():
+        shutil.copy2(str(plain_exe), str(ascii_exe))
+    gh_assets = [zip_path, vj] + ([ascii_exe] if ascii_exe.exists() else [])
+
     git_commit_push(ver, ['CHANGELOG.md', 'README.md', 'core.ps1', 'menu.ps1',
                           'launcher.py', '使用说明.txt', 'version.json'])
     gitee_release(ver, token, assets, notes)
@@ -346,12 +365,12 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
         nf = notes_file or (REPO_DIR / '_notes.md')
         if not notes_file:
             nf.write_text(notes or 'v%s' % ver, encoding='utf-8')
-        sync_github(ver, assets, nf)
+        sync_github(ver, gh_assets, nf)
         if not notes_file and nf.exists():
             nf.unlink()
     else:
         print('⑥ 跳过 GitHub (默认只发 Gitee; 加 --github 才同步)')
-    ok = verify(ver, assets)   # 原来这一步没被执行, 且下一行引用了未定义的 ok 会抛 NameError
+    ok = verify(ver, assets, gh_assets)   # 原来这一步没被执行, 且下一行引用了未定义的 ok 会抛 NameError
     print('全部完成, 用时 %.0f 秒, 验真=%s' % (time.time() - t0, ok))
 
 

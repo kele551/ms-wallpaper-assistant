@@ -1175,6 +1175,46 @@ try {
   }
 } catch {}
 
+# 默认自动升级 (2026-10-05 用户要求:「用户不需要手动升级」)。
+# 以前只在后台轮换周期里顺带检查(每天一次、还得后台在跑), 菜单本身只提示"按 [U] 升级" ——
+# 用户得自己动手。现在进菜单就先检查一次: 有新版本**直接升**, 不用按任何键。
+# [U] 保留成手动重试(比如上次联网失败)。脚本升级下次启动生效; 需要换主程序时程序会自己重启。
+try {
+  $up0 = Get-BwUpdateInfo
+  if ($up0 -and ((Compare-BwVer ([string]$up0.version) (Get-BwLocalScriptVer)) -gt 0)) {
+    Write-Host ('  检测到新版本 v' + $up0.version + ', 正在自动升级...') -ForegroundColor Cyan
+    $did = [bool](Invoke-BwScriptUpdate -Animated -ReopenMenu)
+    if ($did) {
+      # 升级成功后的收尾 (2026-10-05 三轮用户反馈后定稿):
+      #   ① 窗口"一下就没了"太突兀 -> 绿色成功框, 停 3 秒让人看见;
+      #   ② 用户要"新版本的窗口自己弹出来";
+      #   ③ 但**绝不能在这里等"新版本就位"**: 换主程序时 .version 要等新 exe 启动后才更新,
+      #      而新 exe 要等小助手覆盖, 小助手又要等**本窗口关闭**(菜单的父进程就是那个 exe)
+      #      —— 互相等, 实测白等 60 秒还把新菜单卡死。
+      #   所以分两种:
+      #     * 只换脚本: 新脚本已在硬盘上, 立刻在**同一个窗口**里打开新菜单(不用等);
+      #     * 要换主程序: 本窗口马上关, 由小助手在换完之后**自己弹出**新版本的菜单窗口。
+      $exePath = ''
+      try { $exePath = Get-BwExePath } catch {}
+      $needLauncher = $false
+      try { if ($exePath -and (Get-BwLauncherVer)) { $needLauncher = ((Compare-BwVer ([string]$up0.version) (Get-BwLauncherVer)) -gt 0) } } catch {}
+      Write-Host ''
+      Write-Host '  ============================================' -ForegroundColor Green
+      Write-Host ('     升级成功   ->   v' + [string]$up0.version) -ForegroundColor Green
+      if ($needLauncher) {
+        Write-Host '     主程序正在后台替换, 几秒后会自动打开新版本的窗口' -ForegroundColor Green
+      }
+      Write-Host '  ============================================' -ForegroundColor Green
+      Start-Sleep -Seconds 3
+      if (-not $needLauncher) {
+        Write-Host '  正在打开新版本...' -ForegroundColor Green
+        try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'menu.ps1') } catch {}
+      }
+      return
+    }
+  }
+} catch {}
+
 do {
   $c0 = Get-BwConfig
   $s0 = Get-BwState
@@ -1251,7 +1291,7 @@ do {
   if ($upInfo -and ((Compare-BwVer ([string]$upInfo.version) (Get-BwLocalScriptVer)) -gt 0)) {
     $nt = ''
     try { if ($upInfo.notes) { $nt = ' —— ' + [string]$upInfo.notes } } catch {}
-    [void]$warn.Add('有新版本 v' + $upInfo.version + '  (按 [U] 升级)' + $nt)
+    [void]$warn.Add('有新版本 v' + $upInfo.version + ' —— 自动升级没成功 (按 [U] 重试)' + $nt)
   }
   $capN = 0; try { $capN = [int]$c0.lib_cap } catch {}
   if (($capN -gt 0) -and ($spotN -gt $capN)) {
@@ -1321,8 +1361,27 @@ do {
       Write-Host ''
       Write-Host ('  当前脚本版本: v' + (Get-BwLocalScriptVer) + '   主程序: v' + (Get-BwLauncherVer))
       Write-Host '  正在检查升级源...'
-      [void](Invoke-BwScriptUpdate -Force -Animated)
-      Pause-Bw
+      $tgtU = ''; try { $iU = Get-BwUpdateInfo; if ($iU) { $tgtU = [string]$iU.version } } catch {}
+      $needLauU = $false
+      try { if (Get-BwLauncherVer) { $needLauU = ((Compare-BwVer $tgtU (Get-BwLauncherVer)) -gt 0) } } catch {}
+      $didU = [bool](Invoke-BwScriptUpdate -Force -Animated -ReopenMenu)
+      if ($didU) {
+        # 和自动升级同一套收尾: 成功框 -> 只换脚本就同窗口开新菜单; 要换主程序就交给小助手弹新窗口。
+        if (-not $tgtU) { $tgtU = Get-BwLocalScriptVer }
+        Write-Host ''
+        Write-Host '  ============================================' -ForegroundColor Green
+        Write-Host ('     升级成功   ->   v' + $tgtU) -ForegroundColor Green
+        if ($needLauU) { Write-Host '     主程序正在后台替换, 几秒后会自动打开新版本的窗口' -ForegroundColor Green }
+        Write-Host '  ============================================' -ForegroundColor Green
+        Start-Sleep -Seconds 3
+        if (-not $needLauU) {
+          Write-Host '  正在打开新版本...' -ForegroundColor Green
+          try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'menu.ps1') } catch {}
+        }
+        $quit = $true
+      } else {
+        Pause-Bw
+      }
     }
     'r' { }
     # 退出: 只认 Q。0 保留 (老菜单 [0] 退出留下来的手感)。
