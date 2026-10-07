@@ -206,6 +206,24 @@ Windows 桌面壁纸自动轮换工具。图全都来自微软官方，两个图
 
 ---
 
+## 构建方式（Build from source）
+
+本项目**完全从本仓库源码构建**，产物只有一个 exe，任何人可复现：
+
+`powershell
+pip install "pyinstaller==6.22.3"
+# 在仓库根目录执行：脚本会先检查所有 .ps1 都是 UTF-8 带 BOM，再开始打包
+python build-exe.py --release
+# 产出：微软壁纸助手.exe（单文件，内含 core.ps1 / menu.ps1 / 使用说明.txt / 图标）
+`
+
+- 入口程序：launcher.py　负载：core.ps1、menu.ps1、使用说明.txt、微软壁纸助手.ico
+- 打包脚本：uild-exe.py（写入 exe 版本信息与图标）
+- 发布脚本：	ools/publish.py（生成升级源 ersion.json、Gitee + GitHub 双平台发布与下载验真）
+- 发布历史：CHANGELOG.md
+
+Releases are built from the source code in this repository; the build command is the one above.
+
 ## Code signing policy（代码签名政策）
 
 **Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).**
