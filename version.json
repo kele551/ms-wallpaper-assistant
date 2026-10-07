@@ -1,6 +1,6 @@
 {
-  "version": "2.0.9",
-  "min_launcher": "2.0.9",
+  "version": "2.0.10",
+  "min_launcher": "2.0.10",
   "notes": "",
   "scripts": {
     "core.ps1": {
@@ -8,13 +8,13 @@
       "url": "https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/core.ps1"
     },
     "menu.ps1": {
-      "sha256": "64F29B14096D28FDA9BE4CE0195E5EB127327B17D7B206F6AB352796C42FC221",
+      "sha256": "3DE7C978C91D376053FE27E96E92A52B7D5C9593718FCF104672FC9A877BB7C0",
       "url": "https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/menu.ps1"
     }
   },
   "launcher": {
-    "sha256": "63D7C210987D299BF0927B0CFA65C1F8D6DCF5D66372B57E7AC700404DAA555D",
-    "url": "https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.0.9/微软壁纸助手.exe",
-    "size": 7659652
+    "sha256": "369FFBB6ED65113C8AE3FDE9650FE004FAF45F2DE2CFB7414E9DEF92FF65B792",
+    "url": "https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.0.10/微软壁纸助手.exe",
+    "size": 7661511
   }
 }

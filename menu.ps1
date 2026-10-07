@@ -2,7 +2,7 @@
 # 作者: 海风（kele551）   https://gitee.com/kele551/ms-wallpaper-assistant
 . (Join-Path $PSScriptRoot 'core.ps1')
 
-$global:BWVersion = '2.0.9'
+$global:BWVersion = '2.0.10'
 
 # 2026-10-05 修: 窗口标题栏也要写脚本版本。标题栏原本只有 launcher.py 设过一次(用的是
 # **exe 的版本**), 而脚本可以被自动升级到比 exe 更新 —— 于是标题栏写 v2.0.7、菜单正文写
