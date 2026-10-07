@@ -39,7 +39,7 @@ import time
 import datetime
 import ctypes
 
-VERSION = '2.0.8'
+VERSION = '2.0.9'
 APP_NAME = '微软壁纸助手'
 DATA_DIR_NAME = '微软壁纸助手数据'
 PAYLOAD_FILES = ['core.ps1', 'menu.ps1', '使用说明.txt', '微软壁纸助手.ico']
@@ -107,6 +107,56 @@ def keep_sleep_allowed():
         return bool(K32.SetThreadExecutionState(ctypes.c_uint(ES_CONTINUOUS)))
     except Exception:
         return False
+
+
+# ── 用户是不是在电脑前（空闲检测） ──────────────────────────────────────────────
+# 2026-10-07 用户反馈「用了这个工具后电脑无法进入睡眠」。本程序不申请任何唤醒请求
+# （见上面的 keep_sleep_allowed），但"没人看着也照点换壁纸"这件事本身会在系统准备
+# 休眠的节骨眼上插一脚：拉起 PowerShell、下载图片、并向所有窗口广播系统设置变更。
+# 所以新规矩：**用户离开超过 IDLE_SKIP_S 就不换图，等他回来再换** ——
+# 人不在，换了也没人看；顺带把这段时间的动静降到最低。
+IDLE_SKIP_S = 600       # 10 分钟没有任何键鼠输入 -> 视为"人不在"
+AWAY_RECHECK_S = 300    # 人不在时每 5 分钟回来看一眼（回来就立刻换）
+# 逃生口: 想让它"人不在也照换"(例如拿它当展示屏), 把环境变量设小或设 0 即可:
+#   MWA_IDLE_SKIP_S=0   -> 永不因空闲跳过
+try:
+    _env_skip = (os.environ.get('MWA_IDLE_SKIP_S') or '').strip()
+    if _env_skip.isdigit():
+        IDLE_SKIP_S = int(_env_skip)
+except Exception:
+    pass
+
+
+class _LASTINPUTINFO(ctypes.Structure):
+    _fields_ = [('cbSize', ctypes.c_uint), ('dwTime', ctypes.c_uint)]
+
+
+def idle_seconds():
+    """距上次键鼠输入过了多少秒。取不到就返回 0（= 当作人在，宁可正常换图）。
+
+    注意: GetLastInputInfo 在 **user32.dll**, 不在 kernel32 ——
+    2026-10-07 一开始调错了 DLL, 取不到值退化成 0, 等于这个功能没生效（单测抓出来的）。
+    """
+    try:
+        li = _LASTINPUTINFO()
+        li.cbSize = ctypes.sizeof(li)
+        if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(li)):
+            return 0.0
+        return max(0.0, (K32.GetTickCount() - li.dwTime) / 1000.0)
+    except Exception:
+        return 0.0
+
+
+def should_skip_swap(idle, threshold=None):
+    """纯函数（好测）：空闲到阈值就不换图。
+
+    阈值 <= 0 表示**关闭**这个功能（人不在也照换）—— 别写成 `idle >= 0`，
+    那会变成"永远跳过"，正好反了（这个坑也是单测抓出来的）。
+    """
+    t = IDLE_SKIP_S if threshold is None else threshold
+    if t <= 0:
+        return False
+    return idle >= t
 
 
 def _note(dst, msg):
@@ -477,6 +527,7 @@ def mode_daemon(d):
 
     prev = read_last_swap(d)
     hold_until = 0.0     # 这轮没换成图时的兜底: 至少等到这个时刻, 免得空转
+    away_logged = False  # "用户离开"这条日志只写一次, 免得刷屏
     while True:
         if os.path.isfile(stop_file):
             try:
@@ -521,6 +572,21 @@ def mode_daemon(d):
 
         if not due:
             continue
+
+        # 人不在就不换图（2026-10-07 用户反馈「无法进入睡眠」）：
+        # 换图会拉起 PowerShell、下载、并向所有窗口广播设置变更 ——
+        # 别在系统准备休眠的节骨眼上插一脚。回来立刻补上。
+        idle = idle_seconds()
+        if should_skip_swap(idle):
+            if not away_logged:
+                _note(d, '用户离开（已空闲 %.0f 分钟），暂停换图，回来再换'
+                         % (idle / 60.0))
+                away_logged = True
+            hold_until = time.time() + AWAY_RECHECK_S
+            continue
+        if away_logged:
+            _note(d, '用户回来了，恢复换图')
+            away_logged = False
 
         run_cycle(d)
         after = read_last_swap(d)
