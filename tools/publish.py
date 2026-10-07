@@ -286,6 +286,49 @@ def _download(url):
     return None
 
 
+def _download_github_asset(ver, name):
+    """从 GitHub 取回发行版附件内容。
+
+    2026-10-07 加：`github.com/.../releases/download/...` 在这条线路上时通时断，
+    验真会误报「下载失败」。而 **api.github.com 一直通**，所以直连失败就改走
+    API 的 assets 接口（Accept: application/octet-stream，拿到的是原始字节）。
+    """
+    try:
+        tok = gh_token()
+    except Exception:
+        return None
+    h = {'Authorization': 'Bearer ' + tok, 'Accept': 'application/vnd.github+json',
+         'User-Agent': 'dsh-verify'}
+    try:
+        rel = requests.get('https://api.github.com/repos/%s/%s/releases/tags/v%s'
+                           % (OWNER, REPO, ver), headers=h, timeout=120).json()
+        for a in rel.get('assets', []):
+            if a.get('name') == name:
+                hh = dict(h)
+                hh['Accept'] = 'application/octet-stream'
+                r = requests.get(a['url'], headers=hh, timeout=1800)
+                if r.status_code == 200:
+                    print('        （走 API 取回 %s）' % name)
+                    return r.content
+    except Exception:
+        pass
+    return None
+
+
+def gh_token():
+    """GitHub 令牌：优先环境变量，其次 gh CLI。"""
+    t = os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
+    if t:
+        return t.strip()
+    exe = r'F:\Harness\toolchain\gh\bin\gh.exe'
+    if os.path.isfile(exe):
+        import subprocess as _sp
+        out = _sp.run([exe, 'auth', 'token'], capture_output=True)
+        if out.returncode == 0:
+            return out.stdout.decode('utf-8', 'replace').strip()
+    raise RuntimeError('拿不到 GitHub 令牌')
+
+
 def verify(ver, assets, gh_assets=None):
     """逐个附件从 Gitee / GitHub 下载回来比对 SHA256（中文名要 percent-encode）。
 
@@ -309,6 +352,8 @@ def verify(ver, assets, gh_assets=None):
             url = 'https://github.com/%s/%s/releases/download/v%s/%s' % (OWNER, REPO, ver,
                                                                          quote(name))
         data = _download(url)
+        if data is None and not is_gitee:
+            data = _download_github_asset(ver, name)   # github.com 不通时改走 API
         if data is None:
             print('  [FAIL] %s %-32s 下载失败' % (label, name))
             ok = False
