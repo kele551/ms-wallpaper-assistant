@@ -94,6 +94,21 @@ def _md5(p):
     return h.hexdigest()
 
 
+# ── 不阻止系统睡眠 (2026-10-05 有用户反馈「用完之后电脑不进睡眠」) ──────────────
+# 本程序从来没有调用过 SetThreadExecutionState 去要「保持唤醒」, 也没有改过用户的电源设置;
+# 这里再显式声明一次 ES_CONTINUOUS, 作用是把本线程上**可能**被第三方库设过的唤醒请求清掉
+# (纯声明, 不占资源)。以后再有人加相关调用, 这一句也能兜住。
+ES_CONTINUOUS = 0x80000000
+
+
+def keep_sleep_allowed():
+    """告诉 Windows: 本线程不要求系统保持唤醒。调用成功返回 True。"""
+    try:
+        return bool(K32.SetThreadExecutionState(ctypes.c_uint(ES_CONTINUOUS)))
+    except Exception:
+        return False
+
+
 def _note(dst, msg):
     """搬家的过程记到数据目录的日志里 —— 真搬错了有据可查。"""
     try:
@@ -446,6 +461,11 @@ def mode_daemon(d):
             os.remove(stop_file)
         except Exception:
             pass
+
+    # 声明"我不阻止系统睡眠"。用户反馈过"用了这个工具后电脑不进睡眠",
+    # 而本程序从不申请保持唤醒; 这一句把可能的残留请求清掉, 并留一条日志备查。
+    if keep_sleep_allowed():
+        _note(d, '守护进程: 已声明不阻止系统睡眠 (SetThreadExecutionState ES_CONTINUOUS)')
 
     # 节拍跟着「上次换图时刻」走, 不跟着本进程的启动时刻走。
     # 老写法是"跑一轮 -> 睡满 30 分钟 -> 再跑一轮", 于是:

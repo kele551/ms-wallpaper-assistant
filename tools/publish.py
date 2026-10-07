@@ -175,15 +175,32 @@ def git_commit_push(ver, files):
     print('③ 代码与 tag 已推 Gitee')
 
 
-def update_readme(ver):
+def update_readme(ver, commit=True):
+    """把 README 里所有版本字样改到 v<ver>。
+
+    2026-10-05 修: 原来只改"网址里的版本"和两处文字, 于是发完版 README 上
+    还写着「点这里下载 v2.0.7 安装包」、链接文件名也是 v2.0.7 —— 用户点进去 404,
+    上一次就是这个问题被站长当面指出来的。现在**网址、文件名、链接文字、
+    「当前最新」这类说明、菜单截图里的版本号**一网打尽。
+    """
     f = REPO_DIR / 'README.md'
     txt = f.read_text(encoding='utf-8')
     new = txt
     new = re.sub(r'releases/download/v[0-9.]+/', 'releases/download/v%s/' % ver, new)
+    new = re.sub(r'MSWallpaperAssistant-v[0-9.]+\.zip', 'MSWallpaperAssistant-v%s.zip' % ver, new)
+    new = re.sub(r'微软壁纸助手-v[0-9.]+\.exe', '微软壁纸助手-v%s.exe' % ver, new)
     new = re.sub(r'version-v[0-9.]+', 'version-v%s' % ver, new)
+    new = re.sub(r'下载 v[0-9.]+ 安装包', '下载 v%s 安装包' % ver, new)
+    new = re.sub(r'当前云端最新版本：v[0-9.]+', '当前云端最新版本：v%s' % ver, new)
     new = re.sub(r'当前最新：v[0-9.]+', '当前最新：v%s' % ver, new)
+    new = re.sub(r'微软壁纸助手 v[0-9.]+', '微软壁纸助手 v%s' % ver, new)
+    new = re.sub(r'比如 `v[0-9.]+`', '比如 `v%s`' % ver, new)
+    new = re.sub(r'例如 v[0-9.]+', '例如 v%s' % ver, new)
     if new != txt:
         f.write_text(new, encoding='utf-8')
+        if not commit:
+            print('⑤ README 已更新到 v%s (交给本次提交一起推)' % ver)
+            return True
         run(['git', 'add', 'README.md'])
         run(['git', '-c', 'user.name=kele551', '-c', 'user.email=75219857@qq.com',
              'commit', '-m', 'docs: README 指向 v%s' % ver])
@@ -191,6 +208,7 @@ def update_readme(ver):
         print('⑤ README 已更新并推送')
     else:
         print('⑤ README 无变化')
+    return new != txt
 
 
 # ---------- 发行版 ----------
@@ -357,10 +375,12 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
         shutil.copy2(str(plain_exe), str(ascii_exe))
     gh_assets = [zip_path, vj] + ([ascii_exe] if ascii_exe.exists() else [])
 
+    # README 必须在**提交之前**改好, 否则本次推送里 README 还是旧版本号 ——
+    # 2026-10-05 就是这么把「点这里下载 v2.0.7」推到线上的。
+    update_readme(ver, commit=False)
     git_commit_push(ver, ['CHANGELOG.md', 'README.md', 'core.ps1', 'menu.ps1',
                           'launcher.py', '使用说明.txt', 'version.json'])
     gitee_release(ver, token, assets, notes)
-    update_readme(ver)
     if with_github:
         nf = notes_file or (REPO_DIR / '_notes.md')
         if not notes_file:
@@ -370,8 +390,13 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
             nf.unlink()
     else:
         print('⑥ 跳过 GitHub (默认只发 Gitee; 加 --github 才同步)')
-    ok = verify(ver, assets, gh_assets)   # 原来这一步没被执行, 且下一行引用了未定义的 ok 会抛 NameError
-    print('全部完成, 用时 %.0f 秒, 验真=%s' % (time.time() - t0, ok))
+    ok = verify(ver, assets, gh_assets)
+    # 2026-10-05 修: 这一步原来只是打印, 验真失败也照样 exit 0 —— 于是
+    # 「GitHub 附件没换成新的」被当成发布成功。现在验真不过就是**失败退出**。
+    if not ok:
+        sys.exit('❌ 验真失败: 两平台下载回来的东西和本地对不上, 这次发布不算成功, '
+                 '请按上面的 [FAIL] 逐条补齐后重跑。')
+    print('全部完成, 用时 %.0f 秒, 验真通过' % (time.time() - t0))
 
 
 def main():
