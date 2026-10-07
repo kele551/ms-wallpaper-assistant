@@ -159,6 +159,30 @@ def should_skip_swap(idle, threshold=None):
     return idle >= t
 
 
+DESKTOP_SWITCHDESKTOP = 0x0100
+
+
+def session_locked():
+    """当前会话是不是锁屏了（锁屏 = 肯定没人在看）。
+
+    锁屏时 OpenInputDesktop 打不开（进不去当前输入桌面），拿不到句柄就当作锁屏。
+    判断不出来（API 不可用）时返回 False = 当作人在，宁可正常换图。
+    """
+    try:
+        h = ctypes.windll.user32.OpenInputDesktop(0, False, DESKTOP_SWITCHDESKTOP)
+        if not h:
+            return True
+        ctypes.windll.user32.CloseDesktop(h)
+        return False
+    except Exception:
+        return False
+
+
+def stay_quiet(idle, locked):
+    """该不该"安静待着、这一轮不换图"：人不在（空闲超阈值）**或**锁屏了。"""
+    return bool(locked) or should_skip_swap(idle)
+
+
 def _note(dst, msg):
     """搬家的过程记到数据目录的日志里 —— 真搬错了有据可查。"""
     try:
@@ -544,14 +568,16 @@ def mode_daemon(d):
             prev = ls
         target = 0.0 if ls is None else max(ls.timestamp() + gap * 60, hold_until)
 
-        # 分片睡到目标时刻; 中途每 CHECK_S 秒醒一次看有没有变化
+        # 分片睡到目标时刻。**人不在/锁屏时就睡大觉**（5 分钟一次），
+        # 人在时才用 CHECK_S（30 秒）保持灵敏 —— 既少打扰系统，退出/改设置又不迟钝。
         due = False
         while True:
             left = target + LEAD_S - time.time()
             if left <= 0:
                 due = True
                 break
-            time.sleep(min(CHECK_S, left))
+            step = AWAY_RECHECK_S if stay_quiet(idle_seconds(), session_locked()) else CHECK_S
+            time.sleep(min(step, left))
             if os.path.isfile(stop_file):
                 try:
                     os.remove(stop_file)
@@ -573,19 +599,23 @@ def mode_daemon(d):
         if not due:
             continue
 
-        # 人不在就不换图（2026-10-07 用户反馈「无法进入睡眠」）：
+        # 人不在 / 锁屏就不换图（2026-10-07 用户反馈「无法进入睡眠/休眠」）：
         # 换图会拉起 PowerShell、下载、并向所有窗口广播设置变更 ——
-        # 别在系统准备休眠的节骨眼上插一脚。回来立刻补上。
+        # 别在系统准备休眠的节骨眼上插一脚。人一回来（或解锁）立刻补上。
         idle = idle_seconds()
-        if should_skip_swap(idle):
+        locked = session_locked()
+        if stay_quiet(idle, locked):
             if not away_logged:
-                _note(d, '用户离开（已空闲 %.0f 分钟），暂停换图，回来再换'
-                         % (idle / 60.0))
+                if locked:
+                    _note(d, '屏幕已锁，暂停换图，解锁后立刻换')
+                else:
+                    _note(d, '用户离开（已空闲 %.0f 分钟），暂停换图，回来再换'
+                             % (idle / 60.0))
                 away_logged = True
             hold_until = time.time() + AWAY_RECHECK_S
             continue
         if away_logged:
-            _note(d, '用户回来了，恢复换图')
+            _note(d, '用户回来了（已解锁/有操作），恢复换图')
             away_logged = False
 
         run_cycle(d)
