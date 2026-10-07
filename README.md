@@ -206,6 +206,34 @@ Windows 桌面壁纸自动轮换工具。图全都来自微软官方，两个图
 
 ---
 
+## Code signing policy（代码签名政策）
+
+**Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).**
+
+（本项目正在申请上述免费代码签名服务；通过之后，发布的可执行文件在构建流程中自动签名，
+签名即表示该文件由本仓库的源码自动构建而来。）
+
+**团队角色（Team roles）**
+
+| 角色 | 成员 |
+|---|---|
+| 提交者与审查者 Committers and reviewers | [@kele551](https://github.com/kele551) |
+| 签名批准者 Approvers | [@kele551](https://github.com/kele551) |
+
+本项目目前由作者一人维护，上述角色由同一人承担；所有成员均已启用两步验证（MFA）。
+
+**隐私声明（Privacy policy）**
+
+本程序只在需要时**从微软官方图源**（必应每日一图、Windows 聚焦）下载壁纸图片，
+所有图片都保存在用户自己的电脑上；**不收集、不上传任何用户数据**。
+除这些图片请求之外，本程序**不会向其它联网系统传输信息，
+除非用户（或安装、操作它的人）明确提出要求**。
+
+**卸载（Uninstallation）**
+
+见《使用说明》的「卸载」一节：菜单 [S] → [6] 关闭自动换并删除桌面快捷方式，
+再删除 exe 与数据目录即可 —— 不写注册表、不改系统设置。
+
 ## 版本迭代
 
 每次改版都会打一个版本号、发一版下载。**当前最新：v2.0.8**
