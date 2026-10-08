@@ -1,3 +1,82 @@
+# MS Wallpaper Assistant（微软壁纸助手）
+
+**Auto-rotating 4K desktop wallpapers from Microsoft's official image sources.**
+
+A small, free, open-source Windows utility — a single portable `.exe` — that downloads
+Microsoft's own wallpaper sources (the **Bing daily image** and **Windows Spotlight**, 4K)
+and rotates them as your desktop wallpaper on a schedule. No installer, no administrator
+rights, no registry writes; all images stay on your own machine.
+
+> 作者 / Author: **HaiFeng (kele551)** · Gitee（主）: <https://gitee.com/kele551/ms-wallpaper-assistant> · GitHub（镜像）: <https://github.com/kele551/ms-wallpaper-assistant>
+
+## Features
+
+- **Two official sources**: Bing daily image + Windows Spotlight, downloaded at 4K (UHD)
+- **Automatic rotation** at an interval you choose (default: 30 minutes)
+- **Never repeats**: it remembers which images you have already seen, and keeps a favourites list
+- **Catches up**: if your PC was off for days, missed Bing images are backfilled automatically
+- **Green / portable**: one `.exe`; no installer, **no administrator rights, no registry writes**
+- **Quiet**: no window flash, no popups; it also skips swapping while your screen is locked
+  or you are away from the computer
+- **Sleep-friendly**: it requests no wake state, changes no power settings, plays no audio,
+  and (since v2.0.10) stays completely quiet while you are away or locked
+- **Private by design**: images are stored locally; no user data is collected or uploaded
+- **Self-updating**: it checks the release feed and upgrades itself — no manual downloads
+
+## Download
+
+- GitHub Releases: <https://github.com/kele551/ms-wallpaper-assistant/releases>
+- Gitee Releases (main, China): <https://gitee.com/kele551/ms-wallpaper-assistant/releases>
+
+Unzip the archive and double-click `微软壁纸助手.exe` (Windows 10/11 x64). The UI is a
+console menu in Chinese; press `Q` to quit, `B` to toggle automatic rotation.
+Version: right-click the exe → Properties → Details.
+
+## Build from source
+
+The executable is built entirely from the source code in this repository, with PyInstaller:
+
+```powershell
+pip install "pyinstaller==6.22.3"
+python build-exe.py --release      # produces 微软壁纸助手.exe
+```
+
+Entry point: `launcher.py`; bundled payload: `core.ps1`, `menu.ps1`, `使用说明.txt`, icon.
+The build script refuses to package a payload whose `.ps1` files are not UTF-8 with BOM.
+
+## Antivirus false positives
+
+The executable is currently **unsigned**, and it is packaged as a single-file PyInstaller
+bundle which extracts PowerShell scripts at runtime for its auto-update feature.
+Antivirus heuristic engines can therefore report a **false positive** (Kaspersky has done so).
+You can verify the file yourself against the SHA256 published on the release page:
+
+```powershell
+certutil -hashfile 微软壁纸助手.exe SHA256
+```
+
+The full source code is public and reviewable, and the program contains no malicious
+functionality: it downloads images from Microsoft's public image services and sets them
+as the desktop wallpaper.
+
+## Privacy
+
+This program collects and uploads **no** user data. It only requests wallpaper images from
+Microsoft's public image services (Bing, Windows Spotlight) and stores them on the user's
+own computer. Apart from those image requests it transfers no information to other
+networked systems unless the user explicitly asks it to.
+
+## Code signing policy
+
+See the "Code signing policy（代码签名政策）" section below.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+---
+
+> 以下是中文原始说明（内容与上面一致，更详细）。
 # 微软壁纸助手
 
 > 作者：**海风（kele551）** · 仓库：https://gitee.com/kele551/ms-wallpaper-assistant （GitHub 同名镜像）
