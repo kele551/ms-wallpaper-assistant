@@ -132,9 +132,9 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 下载
 
-### 👉 [点这里下载 v2.0.10 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.0.10/MSWallpaperAssistant-v2.0.10.zip)
+### 👉 [点这里下载 v2.1.0 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.1.0/MSWallpaperAssistant-v2.1.0.zip)
 
-> 7.3 MB 的 zip，实测可解压、可运行。当前云端最新版本：v2.0.10（打开即自动升级）。
+> 7.3 MB 的 zip，实测可解压、可运行。当前云端最新版本：v2.1.0（打开即自动升级）。
 > **杀软报毒是误报，可以放心。** 程序没有购买数字签名，又是「单文件自解压」打包，
 > 加上自动升级会下载脚本再运行 —— 这三样最容易触发杀软的启发式误判。
 > 想自己确认文件没被动过：发行页上写了安装包的 SHA256，下载后执行
@@ -343,7 +343,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 顺手带上这几样，能省一轮来回：
 
 1. Windows 版本（设置 → 系统 → 关于）
-2. 程序版本号（菜单标题上就有，比如 `v2.0.10`）
+2. 程序版本号（菜单标题上就有，比如 `v2.1.0`）
 3. `wallpaper.log` 末尾十几行（菜单 `[L]` 能看到）
 
 ---
@@ -398,7 +398,7 @@ Releases are built from the source code in this repository; the build command is
 
 ## 版本迭代
 
-每次改版都会打一个版本号、发一版下载。**当前最新：v2.0.10**
+每次改版都会打一个版本号、发一版下载。**当前最新：v2.1.0**
 
 小版本的改动都归到同一个大版本下面说，一行一个版本：
 
