@@ -26,3 +26,10 @@ MSWallpaperAssistant-*.zip
 MSWallpaperAssistant-*.exe
 # 发布脚本用的临时发布说明
 _notes.md
+
+# 【2026-10-09 事故防线】误落进仓库的凭据文件（文件名被反斜杠吃掉产生的野文件）
+Harnesssecrets*
+*git-credentials
+secrets/
+*.pem
+*.key
