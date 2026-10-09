@@ -343,7 +343,8 @@ function Move-BwLibraryFiles([string]$fromBase, [string]$toBase) {
   if ($fb.ToUpper() -eq $tb.ToUpper()) { return 0 }
   if (-not (Test-Path -LiteralPath $fb)) { return 0 }
   $moved = 0
-  foreach ($nm in @('必应', '聚焦', 'NASA', '名画')) {
+  # 只搬本程序自己的库目录(「必应」「聚焦」两类); 库目录之外的文件夹一个字都不碰。
+  foreach ($nm in @('必应', '聚焦')) {
     $src = Join-Path $fb $nm
     $dst = Join-Path $tb $nm
     if (-not (Test-Path -LiteralPath $src)) { continue }
@@ -358,7 +359,7 @@ function Move-BwLibraryFiles([string]$fromBase, [string]$toBase) {
     if ($left.Count -eq 0) { try { [System.IO.Directory]::Delete($src, $false) } catch {} }
   }
   $still = 0
-  foreach ($nm in @('必应', '聚焦', 'NASA', '名画')) { if (Test-Path -LiteralPath (Join-Path $fb $nm)) { $still++ } }
+  foreach ($nm in @('必应', '聚焦')) { if (Test-Path -LiteralPath (Join-Path $fb $nm)) { $still++ } }
   if ($still -eq 0) { try { [System.IO.Directory]::Delete($fb, $false) } catch {} }
   return $moved
 }
@@ -473,9 +474,6 @@ function Get-BwDefaults {
     base      = $base
     bing      = (Join-Path $base '必应')
     spotlight = (Join-Path $base '聚焦')
-    # 2026-10-09 新增的两个图源: 各自的库目录与「必应」「聚焦」平级(同一个壁纸根下面)
-    nasa      = (Join-Path $base 'NASA')
-    met       = (Join-Path $base '名画')
     reason    = $global:BWBaseReason
   }
   return $global:BWDefaults
@@ -485,7 +483,7 @@ function Ensure-BwDirs {
   $c = Get-BwConfig
   [void](New-BwDir $c.bing_save_dir)
   [void](New-BwDir $c.spotlight_save_dir)
-  # 2026-10-09: 两个新图源(NASA / 名画)的库目录。只建"开着"的那些 ——
+  # 其它图源(将来的图源)的库目录: 只建"开着"的那些 ——
   # 关掉的源不该在用户盘上留一个永远空的文件夹。
   foreach ($def in @(Get-BwSourceDefs)) {
     if (-not (Get-BwSrcEnabled $c $def.Key)) { continue }
@@ -546,50 +544,20 @@ function Get-BwConfig {
   if (-not $c.PSObject.Properties['fetch_round_cap'])  { Add-Member -InputObject $c NoteProperty fetch_round_cap 6 -Force }
   if (-not $c.PSObject.Properties['fetch_day_cap'])    { Add-Member -InputObject $c NoteProperty fetch_day_cap 20 -Force }
   if (-not $c.PSObject.Properties['recycle_min_days']) { Add-Member -InputObject $c NoteProperty recycle_min_days 30 -Force }
-  # ---- 两个新图源: NASA 图像库 / 大都会博物馆名画 (2026-10-09 用户要求) ----
-  # src_nasa / src_met: 开关, 默认**开**; nasa_keywords / met_keywords: 抓取关键词(逗号分隔);
-  # nasa_cap / met_cap: 各自独立的库容上限(默认 100, 0 = 不限)。
-  # 一律"字段不存在才补" —— 已经装好的用户手里那份 config.json **一个字节都不覆盖**,
-  # 他只是没有这几个新字段而已, 程序按上面的默认值走。
-  if (-not $c.PSObject.Properties['nasa_save_dir']) {
-    $par3 = Split-Path $c.bing_save_dir -Parent
-    if ($par3) { Add-Member -InputObject $c NoteProperty nasa_save_dir (Join-Path $par3 'NASA') -Force }
-    else { Add-Member -InputObject $c NoteProperty nasa_save_dir $d.nasa -Force }
-  }
-  if (-not $c.PSObject.Properties['met_save_dir']) {
-    $par4 = Split-Path $c.bing_save_dir -Parent
-    if ($par4) { Add-Member -InputObject $c NoteProperty met_save_dir (Join-Path $par4 '名画') -Force }
-    else { Add-Member -InputObject $c NoteProperty met_save_dir $d.met -Force }
-  }
-  if (-not $c.PSObject.Properties['src_nasa']) { Add-Member -InputObject $c NoteProperty src_nasa $true -Force }
-  if (-not $c.PSObject.Properties['src_met'])  { Add-Member -InputObject $c NoteProperty src_met $true -Force }
-  if (-not $c.PSObject.Properties['nasa_keywords']) {
-    Add-Member -InputObject $c NoteProperty nasa_keywords 'nebula,galaxy,earth,mars,saturn,astronaut,spacecraft,aurora,jupiter,sun' -Force
-  }
-  if (-not $c.PSObject.Properties['met_keywords']) {
-    Add-Member -InputObject $c NoteProperty met_keywords 'landscape painting,impressionism,van gogh,monet,japanese print,still life,seascape,portrait' -Force
-  }
-  if (-not $c.PSObject.Properties['nasa_cap']) { Add-Member -InputObject $c NoteProperty nasa_cap 100 -Force }
-  if (-not $c.PSObject.Properties['met_cap'])  { Add-Member -InputObject $c NoteProperty met_cap 100 -Force }
-  # ---- 画质门槛 + 不放大显示 (2026-10-09 用户要求: "体验感不能减") ----
+  # 2026-10-09: 两个试过的图源因"出的图不适合当壁纸"已按用户决定摘除, 上面这些配置键
+  # (各自的开关 / 关键词 / 库容上限 / 画质线 / 只收横图)不再补默认值。
+  # 用户机器上那份 config.json 里的旧字段**一个字节都不动** —— 读不到就不生效。
+  # ---- 不放大显示 (2026-10-09 用户要求: "体验感不能减") ----
   # 两道线, 一个源的画质口径就是这两句话:
   #   *_min_width  : **能进候选的最低线** —— 比它窄的图直接跳过(太小的画放中间也不好看);
   #   *_full_width : **能满屏铺满的线** —— 到了这条线才走老的 fill(裁剪铺满, 最锐);
   #                  卡在两条线中间的走"不放大": 原图 1:1 居中 + 四周同一张图放大模糊作底。
-  # 两台机器上这两个数不是"审美偏好"而是实测口径: 本机 2560x1440, 名画多在 1000~2500px,
-  # 所以 1600 / 2560 正好把"能看的"和"能铺满的"分开。0 = 不限(那一道门槛不生效)。
-  # 一律"字段不存在才补", 不动用户手里那份 config.json。
-  if (-not $c.PSObject.Properties['nasa_min_width'])  { Add-Member -InputObject $c NoteProperty nasa_min_width 1600 -Force }
-  if (-not $c.PSObject.Properties['nasa_full_width']) { Add-Member -InputObject $c NoteProperty nasa_full_width 2560 -Force }
-  if (-not $c.PSObject.Properties['met_min_width'])   { Add-Member -InputObject $c NoteProperty met_min_width 1600 -Force }
-  if (-not $c.PSObject.Properties['met_full_width'])  { Add-Member -InputObject $c NoteProperty met_full_width 2560 -Force }
-  # 名画默认**只收横图**(宽高比 >= 1.3): 竖幅/方形在 16:9 屏上"铺满"必裁主体,
-  # "居中"又左右留两条空 —— 直接不收最省事。想收竖图在 [S] -> [m] 里关掉。
-  if (-not $c.PSObject.Properties['met_landscape_only']) { Add-Member -InputObject $c NoteProperty met_landscape_only $true -Force }
+  # 每张图的两道宽度线由各图源自己给(见 Get-BwSrcWidthCfg): 比最低线窄的不收,
+  # 到了满屏线才裁剪铺满, 卡在中间的走"不放大"。0 = 不限(那一道门槛不生效)。
   # 不放大显示(默认开): 不到满屏线的图**绝不拉大** —— 糊的唯一来源就是拉大。
   # 关掉它就退回老样子(一律 fill, 小图会被放大), 留给"我就爱铺满"的用户。
   if (-not $c.PSObject.Properties['art_fit_mode']) { Add-Member -InputObject $c NoteProperty art_fit_mode 'on' -Force }
-  # 单张图下载超时(秒)。名画图床实测能慢到 ~130 秒/张: 硬等一张就把整轮补货拖成几十分钟,
+  # 单张图下载超时(秒)。实测有的图床能慢到 ~130 秒/张: 硬等一张就把整轮补货拖成几十分钟,
   # 后面排队的源全被挡住。20 秒下不完就放弃、记一次失败、换下一张; 同一个源连着两张超时就
   # 本轮不再取它(见 Invoke-BwSrcFetch)。改大/改小都在 [S] 里。
   if (-not $c.PSObject.Properties['src_timeout_sec']) { Add-Member -InputObject $c NoteProperty src_timeout_sec 20 -Force }
@@ -676,17 +644,8 @@ $global:BwLimit = @{
   fetch_round_cap     = @{ Min = 1; Max = 50;   Def = 6;   Zero = $false }
   fetch_day_cap       = @{ Min = 1; Max = 200;  Def = 20;  Zero = $false }
   recycle_min_days    = @{ Min = 1; Max = 3650; Def = 30;  Zero = $false }
-  # 新图源各自的库容上限(张)。0 = 不限; 与 lib_cap 同一个量级与口径。
-  # 独立上限而不是共用 lib_cap: 微软聚焦那种"总共 800+ 张"的池子跟 NASA(几万张)体量差太远,
-  # 共用一个数会让"库满不补"的语义在两边都别扭。
-  nasa_cap            = @{ Min = 5; Max = 2000; Def = 100; Zero = $true  }
-  met_cap             = @{ Min = 5; Max = 2000; Def = 100; Zero = $true  }
-  # 画质门槛(2026-10-09): 每个源两道宽度线(像素)。0 = 不限(允许, 那就是"不看宽度")。
-  # 上限 20000 是因为再宽的图当壁纸没有任何意义, 填错了只会让源"一张都收不进来"。
-  nasa_min_width      = @{ Min = 0; Max = 20000; Def = 1600; Zero = $true  }
-  nasa_full_width     = @{ Min = 0; Max = 20000; Def = 2560; Zero = $true  }
-  met_min_width       = @{ Min = 0; Max = 20000; Def = 1600; Zero = $true  }
-  met_full_width      = @{ Min = 0; Max = 20000; Def = 2560; Zero = $true  }
+  # 每个图源自己的库容上限 / 两道画质宽度线(像素), 由各源的静态定义给键名与默认值
+  # (见 Get-BwSourceDefs / Get-BwSrcWidthCfg); 这里只留各源共用的一项。
   # 单张下载超时(秒): **0 = 用默认的 20 秒**(不是"不限" —— 不限就等于被一张慢图卡住整轮);
   # 1~4 抬到 5(再快会误杀正常图床); 上限 300 秒(与老版本写死的值一致)。
   src_timeout_sec     = @{ Min = 0; Max = 300; Def = 20; Zero = $true  }
@@ -731,7 +690,7 @@ function Repair-BwConfig([psobject]$c) {
     # 2026-10-09: 用户文件里**根本没有这个字段**时跳过 —— 那种情况是"这一版新加的配置项",
     # Get-BwConfig 已经给它填了默认值, 不需要(也不该)借这次机会去改写用户手里的 config.json。
     # 以前这里会把"字段不存在"当成 -1、判成"超出范围", 于是进一次设置页就顺手改了用户的文件,
-    # 还打一句"配置里有数字超出允许范围, 已夹回: nasa_cap -1 -> 100"的假警报。
+    # 还打一句"配置里有数字超出允许范围, 已夹回: 某个新字段 -1 -> 默认值"的假警报。
     if (-not ($raw -and $raw.PSObject.Properties[$k])) { continue }
     $oldN = -1
     try { $oldN = [int]$raw.PSObject.Properties[$k].Value } catch { $oldN = -1 }
@@ -1719,9 +1678,10 @@ function Get-BwTime([string]$t) {
 #      四周用**同一张图放大 + 模糊**铺底 —— 比黑边自然, 比拉伸清楚;
 #   ③ 真比屏幕还小的图(正常不会进库, 门槛挡着)也走 ②, 绝不拉大。
 # 合成用 PowerShell + .NET System.Drawing 直接画, 不需要任何第三方库;
-# 结果落成一张 PNG **缓存**在数据目录的「合成」下, 同一张图再次轮到直接命中, 不重算。
-$global:BWArtFitVer      = 1      # 合成算法版本: 改了画法就 +1, 缓存键跟着变(旧缓存自动失效)
-# 合成结果是一张 2560x1440 的 PNG, 一张约 5.9MB(中间那块原图是锐的, PNG 压不动它)。
+# 结果落成一张 **JPEG**(质量 95) **缓存**在数据目录的「合成」下, 同一张图再次轮到直接命中, 不重算。
+$global:BWArtFitVer      = 2      # 合成算法版本: 改了画法/格式就 +1, 缓存键跟着变(旧缓存自动失效)
+$global:BWArtFitQuality  = 95     # JPEG 质量(用户 2026-10-09 定: 合成图存 JPEG 省盘; 95 肉眼无损)
+# 合成结果是一张 2560x1440 的 JPEG(质量 95), 一张约 1MB(用户 2026-10-09 定, 省盘且肉眼无损)。
 # 所以缓存既不许多、也不许胖: 张数封顶 + 总字节封顶(实测 5.9MB/张, 48MB 约 8 张)。
 # 比屏幕窄的图才会用到合成, 平时命中几张就够轮换, 不会一直重算。
 $global:BWArtFitCacheMax = 12     # 合成结果最多留几张(超出按最老淘汰)
@@ -1802,7 +1762,7 @@ function Get-BwArtFitPath([string]$path, [int]$w, [int]$h) {
     $stamp = ([string]$fi.Length + '_' + [string]$fi.LastWriteTimeUtc.Ticks)
   } catch { $stamp = '' }
   $key = (Get-BwHash ($path + '|' + $stamp)) + '_' + $w + 'x' + $h + '_' + $len + 'b_v' + $global:BWArtFitVer
-  return (Join-Path (Join-Path $global:BWRoot '合成') ($key + '.png'))
+  return (Join-Path (Join-Path $global:BWRoot '合成') ($key + '.jpg'))
 }
 # 小图上的盒式模糊(就地改)。用 C# 干这段是为了速度: 纯 PowerShell 逐像素要几秒,
 # 编译一次之后只要几毫秒。**编译不出来就跳过**(前面的缩放本身已经糊了, 只是没那么绵)。
@@ -1869,7 +1829,7 @@ function New-BwArtFitImage([string]$src, [string]$dst, [int]$W, [int]$H) {
   Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
   $im = $null; $bmp = $null; $g = $null; $small = $null; $gs = $null
   # 临时文件名带本进程号: 后台守护和菜单有可能同时要给同一张图做合成,
-  # 共用同一个 .tmp 的话, 一边搬走另一边还在写, 落地的 PNG 就可能是半张。
+  # 共用同一个 .tmp 的话, 一边搬走另一边还在写, 落地的图就可能是半张。
   $tmp = $dst + '.' + $PID + '.tmp'
   try {
     [void](New-BwDir (Split-Path $dst -Parent))
@@ -1920,8 +1880,21 @@ function New-BwArtFitImage([string]$src, [string]$dst, [int]$W, [int]$H) {
     }
     $g.DrawImage($im, (New-Object System.Drawing.Rectangle($x, $y, $dw2, $dh2)))
     $g.Dispose(); $g = $null
-    # 先写 .tmp 再原子换名: 半张 PNG 被当成壁纸会直接花屏
-    $bmp.Save($tmp, [System.Drawing.Imaging.ImageFormat]::Png)
+    # 先写 .tmp 再原子换名: 半张图被当成壁纸会直接花屏
+    # 2026-10-09 用户定: 合成图存 JPEG(质量 95) —— 一张约 1MB, 比 PNG 省 4~5 倍盘;
+    # 中间那块是 1:1 照搬后再过一次 q95 编码, 肉眼与原图无差别。
+    $encJpg = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() |
+                Where-Object { $_.MimeType -eq 'image/jpeg' } | Select-Object -First 1
+    if ($encJpg) {
+      $ep = New-Object System.Drawing.Imaging.EncoderParameters -ArgumentList 1
+      $ep.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter `
+                       -ArgumentList ([System.Drawing.Imaging.Encoder]::Quality), ([int64]$global:BWArtFitQuality)
+      $bmp.Save($tmp, $encJpg, $ep)
+      $ep.Dispose()
+    } else {
+      # 取不到 JPEG 编码器就退回 PNG(保证功能不中断)
+      $bmp.Save($tmp, [System.Drawing.Imaging.ImageFormat]::Png)
+    }
     if (Test-Path -LiteralPath $dst) { Remove-BwFile $dst }
     Move-Item -LiteralPath $tmp -Destination $dst -Force -ErrorAction Stop
     return $true
@@ -2220,7 +2193,7 @@ function Get-BwSeenDays($s, [string]$key, [DateTime]$now) {
 #   约束: 距上次看到至少 $minDays 天; 时间戳不明的用「看过」名单的位置当年龄
 #   (只在最近 20 条之外才算老); -AnyAge 用于"库整个空了"的补救(那时有图最重要)。
 # 2026-10-09: 判定逻辑抽成"名单 + 时间戳表"的通用版本 —— 聚焦用 state.json 的
-# history/hist_at, 两个新图源用 sources.json 的 rot 表(键 -> 最近一次换到桌面的时刻),
+# history/hist_at, 其它图源用 sources.json 的 rot 表(键 -> 最近一次换到桌面的时刻),
 # 两边走的是**同一段代码**, 口径不会跑偏。外层那个 Test-BwOldImageReusable 保持原签名不变。
 function Test-BwOldKeyReusable($seenList, $seenAt, [string]$key, [DateTime]$now, [int]$minDays, [switch]$AnyAge) {
   if (-not $key) { return $false }
@@ -2356,21 +2329,20 @@ function Reset-BwSourceRecords {
   $st.day_used = 0
   $st.low_log_day = ''
   Save-BwFetchStats $st
-  # 2026-10-09: 新图源(NASA / 名画)的"下过 / 轮换过"记录也在清空范围内 ——
-  # 否则用户清完记录, 那两个源还是记着"这些图都下过", 一点反应都没有。原件同样留档。
-  try {
-    if (Test-Path -LiteralPath $global:BWSources) {
-      $bk2 = $global:BWSources + '.cleared-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
-      Move-Item -LiteralPath $global:BWSources -Destination $bk2 -Force -ErrorAction Stop
-      Log ('清空下载记录: 新图源记录已留档为 ' + (Split-Path $bk2 -Leaf))
-    }
-  } catch { Log ('清空下载记录: 新图源记录留档失败(不影响图片文件) - ' + $_.Exception.Message) }
   $lib = @(Get-BwSpotlightAll).Count
   Log ('清空下载记录(重新抓取源池): 下载流水/看过名单已清空(流水留档为 ' + (Split-Path $moved -Leaf) + '), 图片文件一张没动; 库里现有 ' + $lib + ' 张')
   return ('记录已清空（流水留档 ' + (Split-Path $moved -Leaf) + '）；库里现有 ' + $lib + ' 张图一张没动，下次补货会重新从源池里抓。')
 }
-# ==================== 两个新图源: NASA 图像库 / 大都会博物馆名画 (2026-10-09 用户要求) ====================
-# 这两个源与「必应」「聚焦」**平级**: 各自的抓取函数、各自的库目录(<壁纸根>\NASA、<壁纸根>\名画)、
+# ==================== 可插拔图源框架: 与「必应」「聚焦」平级的独立图源 ====================
+# 2026-10-09 用户决定: 两个试过的图源出的图不适合当壁纸(多为方形图或超宽长卷, 铺到 16:9 屏上
+# 不是裁掉主体就是留两条空), **从产品里摘掉**, 等找到合适的图源再说。
+# 但这一整套框架**原样保留** —— 它就是"将来换合适的图源"要用的东西: 加一个源只需在
+# Get-BwSourceDefs 里加一条定义, 再补上它的"搜索 / 取图"两个函数(见 Get-BwSrcCandidates /
+# Get-BwSrcAsset 的写法), 后面的抓取闸门、记账、菜单、心跳全自动跟上。
+# 目前 Get-BwSourceDefs 返回空表, 所以下面这些函数处于"暂未启用"状态(没有任何调用者);
+# 代码留着、注释写明, 等合适的图源接上就能用。
+#
+# 与「必应」「聚焦」**平级**: 各自的抓取函数、各自的库目录(<壁纸根>\<源名>)、
 # 各自的去重键与「看过」记录(sources.json)、各自的容量上限。抓取纪律则**完全复用**上面聚焦那一套:
 #   · 单轮 <= fetch_round_cap 张、单日 <= fetch_day_cap 张 —— 每个源各记一份账(换天自动归零);
 #   · 库到了该源自己的上限就不再补货(补回来也只会挤掉别的图);
@@ -2382,43 +2354,31 @@ function Reset-BwSourceRecords {
 # **同名同口径**, 所以 Get-BwFetchBudget / Get-BwFetchAllow / Test-BwFetchDue / Update-BwFetchStats
 # 这些现成的纯函数直接拿来用 —— 这就是"复用一套"而不是"另起一套"。
 #
-# 去重键(用户实测口径): NASA = nasa_id; 名画 = objectID。两者都小写化成"文件名最后一段"
-# (NASA 前缀 nasa、名画前缀 met), 于是与程序原有的 Get-BwNameKey(取最后一段当编号)天然对齐 ——
+# 去重键: 各源自己的 id(用户实测口径), 小写化成"文件名最后一段"(带本源的短前缀),
+# 于是与程序原有的 Get-BwNameKey(取最后一段当编号)天然对齐 ——
 # 队列、收藏、去重、库容统计这些既有机制对新源的图**自动生效**, 不需要另开一套。
 #
-# 授权(README / 使用说明里也写了): NASA 图像库 = NASA 公开素材(images-api.nasa.gov),
-# 多为公有领域 / NASA 版权, 仅供个人当壁纸; 大都会博物馆(Met)= **只取 isPublicDomain 为真**
-# 的公域作品, 非公域的一眼都不看。程序只在本机保存与轮换, 不做任何二次分发。
+# 授权(README / 使用说明里也写了): 图只**下载到用户本机**, 不随发行版打包分发;
+# 公版库**逐张校验公版标记**, 非公域的一眼都不看; 图片版权归**原提供方**。
 $global:BWSources     = Join-Path $global:BWRoot 'sources.json'
 $global:BWSrcSeenMax  = 3000     # 每个源最多记多少条"下过"的键(按时刻淘汰最老的)
 $global:BWSrcRotMax   = 400      # 每个源最多记多少条"轮换过"的键
-$global:BWSrcMaxBytes = 12MB     # 单张图大小上限: 超过就跳过(NASA 有些条目挂着几十 MB 的原图)
+$global:BWSrcMaxBytes = 12MB     # 单张图大小上限: 超过就跳过(有的源条目挂着几十 MB 的原图)
 $global:BWSrcUa       = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
 
+# [暂未启用 —— 等合适的图源] 新图源的静态定义表: **目前是空的**。
+# 2026-10-09 用户决定摘除两个试过的图源(出的图不适合当壁纸)之后, 这里不再有任何源;
+# 将来找到合适的图源, 只在这里加一条就够: 抓取闸门 / 记账 / 菜单 / 心跳全自动跟上。
+# 一条定义要给的字段:
+#   Key / Name / DirName : 内部键 / 显示名 / 库目录名(库在 <壁纸根>\<DirName>)
+#   EnableKey / KwKey / CapKey / DirKey : 这一源在 config.json 里的开关/关键词/库容上限/库目录键名
+#   MinKey / FullKey / MinDef / FullDef : 这个源自己的两道画质线(见 Get-BwSrcWidthCfg)
+#   LandscapeOnly / LandscapeAr       : 只收横图(宽高比 >= LandscapeAr)
+#   Doc / DefaultKw                   : 界面上的来源说明 / 默认关键词
+# 定义照着上面这几行填, 再把这一源的"搜索 / 取图"两个函数接到 Get-BwSrcCandidates /
+# Get-BwSrcAsset 上, 即可直接用下面整套抓取与轮换机制。
 function Get-BwSourceDefs {
-  # 新图源的静态定义。以后要再加一个源, 只在这里加一条: 抓取闸门 / 菜单 / 心跳全自动跟上。
-  # 2026-10-09 补: MinKey/FullKey = 这个源自己的两道画质线(见 Get-BwSrcMinWidth / Get-BwSrcFullWidth);
-  # LandscapeOnly = 只收横图(宽高比 >= LandscapeAr)。
-  return @(
-    [PSCustomObject]@{
-      Key = 'nasa'; Name = 'NASA'; DirName = 'NASA'
-      EnableKey = 'src_nasa'; KwKey = 'nasa_keywords'; CapKey = 'nasa_cap'; DirKey = 'nasa_save_dir'
-      MinKey = 'nasa_min_width'; FullKey = 'nasa_full_width'
-      MinDef = 1600; FullDef = 2560
-      LandscapeOnly = $false; LandscapeAr = 1.0
-      Doc = 'NASA 公开素材 (images-api.nasa.gov)'
-      DefaultKw = 'nebula,galaxy,earth,mars,saturn,astronaut,spacecraft,aurora,jupiter,sun'
-    }
-    [PSCustomObject]@{
-      Key = 'met'; Name = '名画'; DirName = '名画'
-      EnableKey = 'src_met'; KwKey = 'met_keywords'; CapKey = 'met_cap'; DirKey = 'met_save_dir'
-      MinKey = 'met_min_width'; FullKey = 'met_full_width'
-      MinDef = 1600; FullDef = 2560
-      LandscapeOnly = $true; LandscapeAr = 1.3
-      Doc = '大都会博物馆 (Met) 公域作品 —— 只取 isPublicDomain 为真的'
-      DefaultKw = 'landscape painting,impressionism,van gogh,monet,japanese print,still life,seascape,portrait'
-    }
-  )
+  return @()
 }
 function Get-BwSrcDef([string]$key) {
   if (-not $key) { return $null }
@@ -2446,23 +2406,27 @@ function Get-BwSrcWidthCfg([psobject]$c, [string]$key, [string]$which) {
 }
 function Get-BwSrcMinWidth([psobject]$c, [string]$key)  { return (Get-BwSrcWidthCfg $c $key 'min') }
 function Get-BwSrcFullWidth([psobject]$c, [string]$key) { return (Get-BwSrcWidthCfg $c $key 'full') }
-# 名画默认只收横图(宽高比 >= 1.3)。默认开: 字段不存在 = 开。
+# 某个源要不要"只收横图"(宽高比 >= 该源定义里的 LandscapeAr)。默认开: 字段不存在 = 开。
+# [暂未启用 —— 等合适的图源] 由 Invoke-BwSrcFetch 调用; 表里没有源时不会被走到。
 function Get-BwSrcLandscapeOnly([psobject]$c, [string]$key) {
   $def = Get-BwSrcDef $key
   if (-not ($def -and $def.LandscapeOnly)) { return $false }
   if (-not $c) { return $true }
   try {
-    if (-not $c.PSObject.Properties['met_landscape_only']) { return $true }
-    $v = $c.PSObject.Properties['met_landscape_only'].Value
+    $lk = [string]$def.LandscapeKey
+    if (-not $lk) { return $true }
+    if (-not $c.PSObject.Properties[$lk]) { return $true }
+    $v = $c.PSObject.Properties[$lk].Value
     if ($v -is [bool]) { return [bool]$v }
     $s = ([string]$v).Trim().ToLower()
     if (($s -eq 'off') -or ($s -eq 'false') -or ($s -eq '0') -or ($s -eq 'no') -or ($s -eq '关')) { return $false }
     return $true
   } catch { return $true }
 }
-# 单张下载超时(秒)。老的两源(必应/聚焦)不受影响 —— 它们走的还是写死的 300 秒。
+# 单张下载超时(秒)。必应/聚焦不受影响 —— 它们走的还是写死的 300 秒。
 # 0 = 用默认的 20 秒: **不允许"不限"** —— 这里一旦不限, 一张慢图就能把整轮补货卡死,
 # 那正是这一批要解决的问题。填 1~4 抬到 5 秒。
+# [暂未启用 —— 等合适的图源] 由 Invoke-BwSrcFetch 调用; 值仍在设置里的 [t] 一项里可改。
 function Get-BwSrcTimeoutSec([psobject]$c) {
   $v = 20
   try { if ($c -and $c.PSObject.Properties['src_timeout_sec']) { $v = [int]$c.src_timeout_sec } } catch { $v = 20 }
@@ -2476,21 +2440,37 @@ function Get-BwSrcTimeoutSec([psobject]$c) {
   return $v
 }
 # 一个源的"画质门槛"打包成一次调用要用的几个数(抓取处只取一次, 循环里直接用)。
+# 宽高比窗口: @{Min=下限; Max=上限}, 0 = 那一边不限。
+# [暂未启用 —— 等合适的图源] 这里是"接近 16:9 的横构图"这一口径的默认窗口;
+# 实测教训(2026-10-09): 方形图(1.0~1.4)铺 16:9 必裁主体、长卷(2.6~2.9)铺满会留两条空,
+# 所以将来接新图源时, 建议把窗口设在 1.5~2.1 附近, 再按那个源的实际出图调。
+function Get-BwSrcAspectWindow([psobject]$c) {
+  $lo = 1.5; $hi = 2.1
+  if ($lo -lt 0) { $lo = 0 }
+  if ($hi -lt 0) { $hi = 0 }
+  if (($hi -gt 0) -and ($lo -gt $hi)) { $lo = $hi }
+  return @{ Min = $lo; Max = $hi }
+}
 function Get-BwSrcGate([psobject]$c, [string]$key) {
   $minW = Get-BwSrcMinWidth $c $key
   $ar = 0.0
-  if (Get-BwSrcLandscapeOnly $c $key) { $ar = 1.3 }
-  elseif ($key -eq 'nasa') { $ar = 1.0 }     # NASA: 竖图直接不要(用户要求跳过宽高比 < 1.0 的)
-  return @{ MinWidth = $minW; MinAspect = $ar; FullWidth = (Get-BwSrcFullWidth $c $key) }
+  $def = Get-BwSrcDef $key
+  if ($def -and (Get-BwSrcLandscapeOnly $c $key)) { $ar = [double]$def.LandscapeAr }
+  # 2026-10-09: 再加一道**比例窗口**(用户要求"只收适合当壁纸的横构图"): 比下限窄的(方图/竖图)
+  # 和比上限宽的(长卷)都不要。
+  $w = Get-BwSrcAspectWindow $c
+  if ($w.Min -gt $ar) { $ar = $w.Min }
+  return @{ MinWidth = $minW; MinAspect = $ar; MaxAspect = $w.Max; FullWidth = (Get-BwSrcFullWidth $c $key) }
 }
-# 源开着没有。字段不存在 = 默认**开**(用户要求默认开启; 老配置里本来就没有这两个字段,
-# 升级上来也是开的 —— 但那份 config.json 一个字节都不会被改写, 想关就在菜单 [S] 里关)。
+# 源开着没有。2026-10-09 用户要求**默认关**(保持必应+聚焦的原始体验), 字段不存在 = 关;
+# 想开就在菜单里对应的那一项打开。
+# [暂未启用 —— 等合适的图源] 由轮换 / 浏览 / 库目录那几处调用; 表里没有源时不会被走到。
 function Get-BwSrcEnabled([psobject]$c, [string]$key) {
   $def = Get-BwSrcDef $key
   if (-not $def) { return $false }
   if (-not $c) { return $true }
   try {
-    if (-not $c.PSObject.Properties[$def.EnableKey]) { return $true }
+    if (-not $c.PSObject.Properties[$def.EnableKey]) { return $false }
     $v = $c.PSObject.Properties[$def.EnableKey].Value
     if ($v -is [bool]) { return [bool]$v }
     $s = ([string]$v).Trim().ToLower()
@@ -2504,8 +2484,10 @@ function Get-BwSrcDir([psobject]$c, [string]$key) {
   try { if ($c.PSObject.Properties[$def.DirKey]) { return [string]$c.PSObject.Properties[$def.DirKey].Value } } catch {}
   return ''
 }
-# 这个源自己的库容上限(0 = 不限)。独立上限而不是共用 lib_cap: 微软聚焦总共 800+ 张,
-# NASA 是几万张的量级, 共用一个数会让"库满不补"在两边都别扭。
+# 这个源自己的库容上限(0 = 不限)。每个源一个独立的上限而不是共用 lib_cap ——
+# 各源池子的总量差得很远(聚焦总共 800+ 张, 有的源能到几万张), 共用一个数会让
+# "库满不补"的语义在两边都别扭。
+# [暂未启用 —— 等合适的图源] 由 Invoke-BwSrcFetch 与状态行调用。
 function Get-BwSrcCap([psobject]$c, [string]$key) {
   $def = Get-BwSrcDef $key
   if (-not $def) { return 0 }
@@ -2523,6 +2505,7 @@ function Get-BwSrcCap([psobject]$c, [string]$key) {
 }
 # 关键词: 逗号(中英文都认)分隔的一行。解析与清洗都在这里, 菜单和抓取共用同一个口径:
 # 最多 12 个、每个最长 40 字、去重、去空白。
+# [暂未启用 —— 等合适的图源] 与关键词相关的这几个函数都留给将来的图源。
 function Format-BwSrcKeywords([string]$raw) {
   $out = @()
   $txt = [string]$raw
@@ -2551,7 +2534,9 @@ function Get-BwSrcFiles([string]$dir) {
   if (-not (Test-Path -LiteralPath $dir)) { return @() }
   return @(Get-ChildItem -LiteralPath $dir -File -Filter *.jpg -ErrorAction SilentlyContinue)
 }
-# ---- 每个源的记录(sources.json) ----
+# ---- 每个源的记录(sources.json) ---- [暂未启用 —— 等合适的图源]
+# 这套记录(seen / rot 与各源的单轮单日记账)是给将来的图源用的: 目前 Get-BwSourceDefs
+# 是空表, sources.json 不会被创建, 下面这些函数也不会被走到。
 # seen = { 键: 下载时刻 }            永久去重: 下过的不再下(与聚焦"下过就不再下"一个口径)
 # rot  = { 键: 最近换到桌面的时刻 }   参与过轮换的记录, 老图回收靠它算间隔
 # day/day_used/zero_rounds/mode/next_try/low_log_day: 与 fetch_stats.json 同名字同口径
@@ -2670,125 +2655,18 @@ function Get-BwSrcName([string]$key, [string]$token, [string]$title, [string]$ur
   if (-not $t) { $t = 'wallpaper' }
   return ('{0}_{1}_{2}_{3}.jpg' -f (Get-Date -Format 'yyyy-MM-dd'), $t, (Get-BwHash ($key + '|' + $url)), $token)
 }
-# ---- 源 A: NASA 图像库 ----
-# 搜索: https://images-api.nasa.gov/search?q=<kw>&media_type=image&page_size=N
-#   每条 href 指向该条目的 collection.json —— 里面有这个条目的**全部**文件 URL。
-#   挑最大的 jpg/png, 超过 12MB 的跳过; metadata.json / tif / 视频一律不算图片。
-# 实测(2026-10-09 本机): 搜索 ~1.3s; 清单 1.9s ~ 22s(波动很大, 所以超时给 30s); 下载 ~2s。
-function Get-BwNasaSearch([string]$kw) {
-  $out = @()
-  if (-not $kw) { return $out }
-  $u = 'https://images-api.nasa.gov/search?q=' + [uri]::EscapeDataString($kw) + '&media_type=image&page_size=20'
-  $j = $null
-  try {
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $j = Invoke-RestMethod -Uri $u -UserAgent $global:BWSrcUa -TimeoutSec 20 -UseBasicParsing
-  } catch {
-    Log ('NASA 搜索失败(' + $kw + '): ' + $_.Exception.Message) 'WARN'
-    return $out
-  }
-  try {
-    foreach ($it in @($j.collection.items)) {
-      $d = @($it.data)[0]
-      if (-not $d) { continue }
-      $id = [string]$d.nasa_id
-      $hr = [string]$it.href
-      if (-not ($id -and $hr)) { continue }
-      $out += [PSCustomObject]@{ id = $id; title = [string]$d.title; href = $hr }
-    }
-  } catch { Log ('NASA 搜索结果解析失败: ' + $_.Exception.Message) 'WARN' }
-  return @($out)
-}
-function Get-BwNasaAsset($item) {
-  # 清单 -> 挑一张能下的图(最大且 <= 12MB); 挑不到返回 $null
-  if (-not $item) { return $null }
-  $col = $null
-  try { $col = Invoke-RestMethod -Uri ([string]$item.href) -UserAgent $global:BWSrcUa -TimeoutSec 30 -UseBasicParsing }
-  catch {
-    Log ('NASA 清单取不到(' + [string]$item.id + '): ' + $_.Exception.Message) 'WARN'
-    return $null
-  }
-  $cands = @()
-  foreach ($x in @($col)) {
-    $s = [string]$x
-    if (-not $s) { continue }
-    # 非图片一律跳过: metadata.json / 原始 tif / 视频封面之外的东西
-    if ($s -notmatch '(?i)\.(jpg|jpeg|png)$') { continue }
-    $rank = 0
-    if ($s -match '(?i)~orig\.') { $rank = 3 }
-    elseif ($s -match '(?i)~large\.') { $rank = 2 }
-    elseif ($s -match '(?i)~medium\.') { $rank = 1 }
-    $cands += [PSCustomObject]@{ url = $s; rank = $rank; len = -1 }
-  }
-  if ($cands.Count -eq 0) { return $null }
-  # 先量大小: 超过 12MB 的直接不选(免得白下几十 MB); HEAD 不给长度就留 -1, 下载后再兜底
-  foreach ($cd in $cands) {
-    try {
-      $r = Invoke-WebRequest -Uri $cd.url -Method Head -UserAgent $global:BWSrcUa -TimeoutSec 12 -UseBasicParsing
-      $cd.len = [int64]$r.Headers['Content-Length']
-    } catch { $cd.len = -1 }
-  }
-  $pool = @($cands | Where-Object { -not ($_.len -gt $global:BWSrcMaxBytes) })
-  if ($pool.Count -eq 0) {
-    Log ('NASA 跳过一个条目(' + [string]$item.id + '): 图都超过 ' + [int]($global:BWSrcMaxBytes / 1MB) + ' MB')
-    return $null
-  }
-  $pick = @($pool | Sort-Object -Property @{ Expression = { $v = $_.len; if ($v -le 0) { [int64](-1) } else { $v } }; Descending = $true },
-                                       @{ Expression = { $_.rank }; Descending = $true } | Select-Object -First 1)
-  if ($pick.Count -eq 0) { return $null }
-  return [PSCustomObject]@{ url = [string]$pick[0].url; title = [string]$item.title; link = ('https://images.nasa.gov/details-' + [string]$item.id); copy = 'NASA' }
-}
-# ---- 源 B: 大都会博物馆 (Met) ----
-# 搜索**必须**走 v1.1: /public/collection/v1.1/search?q=<kw>&hasImages=true
-#   -> /public/collection/v1/objects/{objectID} 取 primaryImage。
-#   **必须 isPublicDomain == true** —— 非公域作品一眼都不看(授权红线)。
-# 实测(2026-10-09 本机): 搜索 0.9s; 对象 0.3s; 图 1.46MB / 2.2s, 真 JPEG。
-function Get-BwMetSearch([string]$kw) {
-  $out = @()
-  if (-not $kw) { return $out }
-  $u = 'https://collectionapi.metmuseum.org/public/collection/v1.1/search?q=' + [uri]::EscapeDataString($kw) + '&hasImages=true'
-  $j = $null
-  try {
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $j = Invoke-RestMethod -Uri $u -UserAgent $global:BWSrcUa -TimeoutSec 20 -UseBasicParsing
-  } catch {
-    Log ('名画 搜索失败(' + $kw + '): ' + $_.Exception.Message) 'WARN'
-    return $out
-  }
-  try {
-    foreach ($id in @($j.objectIDs | Select-Object -First 40)) {
-      $s = [string]$id
-      if ($s -match '^\d+$') { $out += [PSCustomObject]@{ id = $s; title = ''; href = '' } }
-    }
-  } catch { Log ('名画 搜索结果解析失败: ' + $_.Exception.Message) 'WARN' }
-  return @($out)
-}
-function Get-BwMetAsset($item) {
-  if (-not $item) { return $null }
-  $u = 'https://collectionapi.metmuseum.org/public/collection/v1/objects/' + [string]$item.id
-  $ob = $null
-  try { $ob = Invoke-RestMethod -Uri $u -UserAgent $global:BWSrcUa -TimeoutSec 20 -UseBasicParsing }
-  catch {
-    Log ('名画 对象取不到(' + [string]$item.id + '): ' + $_.Exception.Message) 'WARN'
-    return $null
-  }
-  # 授权红线: 只要公域作品
-  if (-not ([bool]$ob.isPublicDomain)) { return $null }
-  $img = [string]$ob.primaryImage
-  if (-not $img) { return $null }
-  $tt = [string]$ob.title
-  $ar = [string]$ob.artistDisplayName
-  if ($ar) { $tt = $tt + ' - ' + $ar }
-  return [PSCustomObject]@{ url = $img; title = $tt; link = [string]$ob.objectURL; copy = 'Met (Public Domain)' }
-}
+# ---- 图源的"搜索 / 取图"两个钩子 (新图源要接的两个函数) ----
+# [暂未启用 —— 等合适的图源] 目前 Get-BwSourceDefs 是空表, 这两个函数不会被调用。
+# 加新图源时照下面这个形状写:
+#   Get-BwSrcCandidates $key $kw -> 返回候选数组, 每条至少要有 id(去重键) 与 title; 需要再取一次
+#                                  接口才拿得到图片地址的源, 可以在这里顺手带上 href 之类的中间信息。
+#   取图那一侧 -> 由候选返回 @{ url = 图片直链; title = 标题; link = 详情页; copy = 版权说明 }
+#                 (挑不到图就返回 $null, 抓取循环会当成"这一条跳过"继续下一条)。
+# 下面两个函数就是这两个钩子的分发点: 一个源一个分支即可。
 function Get-BwSrcCandidates([string]$key, [string]$kw) {
-  if ($key -eq 'nasa') { return @(Get-BwNasaSearch $kw) }
-  if ($key -eq 'met') { return @(Get-BwMetSearch $kw) }
   return @()
 }
 function Get-BwSrcAsset([string]$key, $item) {
-  if ($key -eq 'nasa') { return (Get-BwNasaAsset $item) }
-  if ($key -eq 'met') { return (Get-BwMetAsset $item) }
   return $null
 }
 # ---- 与既有机制的接合点 ----
@@ -2915,7 +2793,7 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
       return @()
     }
     # 慢源退避(2026-10-09): 上一轮这个源连着超时过 -> 在退避时间到达之前一轮都不碰它。
-    # 名画图床实测能慢到 ~130 秒/张, 连着超时的时段里硬试只是白等; 别的源照常抓。
+    # 实测有的图床能慢到 ~130 秒/张, 连着超时的时段里硬试只是白等; 别的源照常抓。
     $slowUntil = Get-BwTime ([string]$rec.slow_until)
     if ($slowUntil -and ($now -lt $slowUntil)) {
       Log ([string]$def.Name + ' 源在超时退避中(到 ' + $slowUntil.ToString('yyyy-MM-dd HH:mm') + '), 本轮跳过, 不影响其它源')
@@ -3010,7 +2888,7 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
       # 真实分辨率由 Save-BwFile 用 System.Drawing 量, 写进日志与图片元数据。
       # -TotalDeadline: 新图源走"总时长硬期限"(慢图床到点就放弃), 必应/聚焦那条路不传这个开关。
       $got = Save-BwFile -urls @([string]$asset.url) -path $path -meta $m -MaxBytes $global:BWSrcMaxBytes `
-                          -TimeoutSec $toSec -MinWidth ([int]$gate.MinWidth) -MinAspect ([double]$gate.MinAspect) -TotalDeadline
+                          -TimeoutSec $toSec -MinWidth ([int]$gate.MinWidth) -MinAspect ([double]$gate.MinAspect) -MaxAspect ([double]$gate.MaxAspect) -TotalDeadline
       $dlSt = [string]$global:BWLastDlStatus
       if ($got) {
         $ok++
@@ -3056,7 +2934,7 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
     Save-BwSrcRecs $all
     $extra = ''
     if ($reuse -gt 0) { $extra = ', 回收老图 ' + $reuse + ' 张' }
-    if ($qskip -gt 0) { $extra += ', 画质门槛筛掉 ' + $qskip + ' 张(宽<' + [int]$gate.MinWidth + ' 或宽高比<' + [double]$gate.MinAspect + ')' }
+    if ($qskip -gt 0) { $extra += ', 画质门槛筛掉 ' + $qskip + ' 张(宽<' + [int]$gate.MinWidth + ' 或比例不在 ' + [double]$gate.MinAspect + '~' + [double]$gate.MaxAspect + ' 之间)' }
     if (($ok -eq 0) -and ($skip -eq 0) -and ($tries -eq 0)) {
       Log ([string]$def.Name + ' 抓取: 一个候选都没拿到(网络或接口异常, 不影响别的源)') 'WARN'
     } elseif ([string]$rec.mode -eq 'pool_end') {
@@ -3077,7 +2955,8 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
     return @($out)
   }
 }
-# 逐源抓取: 两个源各自独立, 谁失败都不影响谁。
+# 逐源抓取: 每个源各自独立, 谁失败都不影响谁。
+# [暂未启用 —— 等合适的图源] Get-BwSourceDefs 是空表时, 这里就是个空循环(不发任何请求)。
 function Invoke-BwAllSrcFetch([int]$count, [switch]$Quiet, [switch]$Force, [switch]$IgnoreCap) {
   $out = @()
   if ($count -le 0) { return $out }
@@ -3088,8 +2967,8 @@ function Invoke-BwAllSrcFetch([int]$count, [switch]$Quiet, [switch]$Force, [swit
   return @($out)
 }
 # 2026-10-09 轮换均衡(用户要求"四个源轮流出现, 别让某源霸屏或缺席"):
-# 纯随机洗牌在库容悬殊时很难看 —— 聚焦 100 张、名画 6 张, 随机排出来经常
-# "连着七八张都是聚焦"或者"名画大半天没露面"。
+# 纯随机洗牌在库容悬殊时很难看 —— 比如一类 100 张、另一类 6 张, 随机排出来经常
+# "连着七八张都是同一类"或者"张数少的那类大半天没露面"。
 # 做法: 先按来源分组、每组自己洗牌, 再**轮流从每组抽一张**;
 # 起点每轮往后挪一格, 所以也不会永远是同一个源打头。张数少的源因此能均匀插在整个队列里。
 function Get-BwBalancedOrder([string[]]$names, [int]$turn) {
@@ -3158,8 +3037,8 @@ function Get-BwFreshQueue($s) {
       foreach ($f in @(Get-BwRotPool)) { $names += [string]$f.Name }
     }
   } else {
-    # 2026-10-09: 轮换图池 = 聚焦库 + 开着的新图源库(NASA / 名画) —— 新源的图与聚焦图
-    # **同一个队列**轮换(用户要求"参与正常轮换")。队列里只存文件名, 取图时四个库挨个找。
+    # 2026-10-09: 轮换图池 = 聚焦库 + 开着的其它图源库 —— 新源的图与聚焦图
+    # **同一个队列**轮换(用户要求"参与正常轮换")。队列里只存文件名, 取图时各个库挨个找。
     foreach ($f in @(Get-BwRotPool)) { $names += [string]$f.Name }
   }
   if ($names.Count -eq 0) { return @() }
@@ -3252,7 +3131,7 @@ function Get-BwFreshQueue($s) {
   }
   # 老图循环: 新图洗牌排在前面(先把没看过的看完), 回收的老图洗牌跟在后面。
   # 2026-10-09: 洗牌改成"按来源轮流抽"(Get-BwBalancedOrder) —— 四个源轮流出现,
-  # 张数少的源(名画)不会被张数多的源淹没。轮转起点跟着换图次数走, 不总是同一个源打头。
+  # 张数少的源不会被张数多的源淹没。轮转起点跟着换图次数走, 不总是同一个源打头。
   $turn = 0
   try { $turn = [int]$s.refills + [int]$s.shown } catch { $turn = 0 }
   if ($recycleMode) {
@@ -3316,7 +3195,7 @@ function Sync-BwQueue($s) {
   $dir = $c.spotlight_save_dir
   if (-not (Test-Path -LiteralPath $dir)) { return 0 }
   $live = @{}
-  # 2026-10-09: "还在库里"要把新图源的库也算上 —— 否则队列里那些 NASA / 名画 的图
+  # 2026-10-09: "还在库里"要把其它图源的库也算上 —— 否则队列里那些图
   # 每一轮都会被当成"已经被删掉"剔出去, 白抓一场。
   foreach ($f in @(Get-BwRotPool)) { $live[[string]$f.Name] = $true }
   # 开了「只看收藏」时队列里会混进必应库的图, 把它们也算作"还在",
@@ -3401,7 +3280,7 @@ function Get-BwNextWall($s) {
     while ($q.Count -gt 0) {
       $name = [string]$q[0]
       $q = @($q | Select-Object -Skip 1)
-      # 队列里只有文件名, 而图可能在四个库里的任何一个(聚焦 / 必应 / NASA / 名画) ——
+      # 队列里只有文件名, 而图可能在几个库里的任何一个(聚焦 / 必应 / 其它图源) ——
       # 挨个找一遍, 都没找到才当"这张被删了"。
       $p = Find-BwWallFile $c $name
       if ($p) {
@@ -3469,8 +3348,8 @@ function Invoke-BwSwap($s, [DateTime]$now, [string]$why) {
   $s.shown = [int]$s.shown + 1
   $s.last_swap = $now.ToString('yyyy-MM-dd HH:mm:ss')
   Add-BwHist $s $f.Name
-  # 2026-10-09: 这张要是新图源(NASA / 名画)的图, 顺手记进它自己的「轮换过」表 ——
-  # 老图回收(>= recycle_min_days 天再排回来)靠这个时间。
+  # 2026-10-09: 这张要是某个图源的图, 顺手记进它自己的「轮换过」表 ——
+  # 老图回收(>= recycle_min_days 天再排回来)靠这个时间。(图源表目前是空的, 不动任何东西)
   Add-BwSrcRot $f.FullName
   Log ($why + ' -> ' + $f.Name + ' (ok=' + $ok + '; 队列还剩 ' + @($s.queue | Where-Object { $_ }).Count + ' 张)')
   # 库超上限就顺手淘汰看过的最老的(移进回收站, 能还原)
@@ -3878,7 +3757,7 @@ function Sweep-BwBadImages {
 # 为什么不能只靠 Invoke-WebRequest 的 -TimeoutSec: 它管的是"多久拿到响应头",
 # 一旦响应头到手就开始慢慢吐字节的图床, 它一点办法都没有 ——
 # 2026-10-09 自测实测: 本地一个"每 2 秒才给 1KB"的服务器, -TimeoutSec 5 照样一直下下去
-# (卡了 2 分多钟还没回来, 只能人为掐掉)。而名画图床实测 ~130 秒/张, 正是这种慢法。
+# (卡了 2 分多钟还没回来, 只能人为掐掉)。实测有的图床 ~130 秒/张, 正是这种慢法。
 # 所以新图源这条路自己盯表: 超过 $TimeoutSec 秒还没搬完就中止。
 # 两个都设: Timeout 管"连不上/不回响应头", ReadWriteTimeout 管"连上了但一直不给数据",
 # 循环里的 deadline 管"一直在给、但给得太慢"。
@@ -3911,14 +3790,14 @@ function Save-BwUrlToFile([string]$u, [string]$tmp, [int]$TimeoutSec) {
     if ($resp) { $resp.Dispose() }
   }
 }
-function Save-BwFile([string[]]$urls, [string]$path, [hashtable]$meta = $null, [int64]$MaxBytes = 0, [int]$TimeoutSec = 300, [int]$MinWidth = 0, [double]$MinAspect = 0, [switch]$TotalDeadline) {
+function Save-BwFile([string[]]$urls, [string]$path, [hashtable]$meta = $null, [int64]$MaxBytes = 0, [int]$TimeoutSec = 300, [int]$MinWidth = 0, [double]$MinAspect = 0, [double]$MaxAspect = 0, [switch]$TotalDeadline) {
   # 试运行: 只说一声, 一张都不下。-DryRun 的意思就是"什么都不改",
   # 少了这道闸, 后台补漏 (Invoke-BwBackfill) 在试运行时照样会真去下载。
   if ($global:BWDry) { Log ('试运行: 本应下载 -> ' + (Split-Path $path -Leaf)); return $false }
   # 2026-10-09: 这次下载的结局写在这里, 给调用方分类用 ——
   #   ok / toobig(超过大小上限) / badimage(截断或坏图) / toosmall(宽度不到门槛)
   #   / aspect(宽高比不达标, 竖幅或方形) / timeout(超时) / fail(其它网络失败)
-  # 为什么必须分出来: 名画那种慢图床, "超时"和"图不合格"要做的事完全不同 ——
+  # 为什么必须分出来: 那种慢图床, "超时"和"图不合格"要做的事完全不同 ——
   # 前者要退避, 后者要接着翻下一张。老的两源不看这个字段, 行为一个字没变。
   $global:BWLastDlStatus = 'fail'
   # 先落地成 .part, 确认是张能用的图再改名进库。
@@ -3929,14 +3808,14 @@ function Save-BwFile([string[]]$urls, [string]$path, [hashtable]$meta = $null, [
   foreach ($u in $urls) {
     try {
       if ($TotalDeadline) {
-        # 新图源(NASA / 名画): 总时长硬期限, 慢图床到点就放弃(见 Save-BwUrlToFile 上面的说明)
+        # 走这条路的图源: 总时长硬期限, 慢图床到点就放弃(见 Save-BwUrlToFile 上面的说明)
         [void](Save-BwUrlToFile $u $tmp $TimeoutSec)
       } else {
         # 必应 / 聚焦 / 归档: **一行没动**, 还是老样子(它们本来就快)
         Invoke-WebRequest -Uri $u -OutFile $tmp -TimeoutSec $TimeoutSec -UseBasicParsing
       }
       if ((Get-Item $tmp -ErrorAction SilentlyContinue).Length -gt 100KB) {
-        # 2026-10-09: 可选的大小上限(新图源用)。NASA 有些条目挂着几十 MB 的原图,
+        # 2026-10-09: 可选的大小上限(给将来的图源用)。有的源条目挂着几十 MB 的原图,
         # 当壁纸没意义还白占盘; 超过上限的就地丢弃、换下一个地址(和"截断"一个处理法)。
         $tmpLen = 0
         try { $tmpLen = (Get-Item -LiteralPath $tmp -ErrorAction Stop).Length } catch { $tmpLen = 0 }
@@ -3957,7 +3836,7 @@ function Save-BwFile([string[]]$urls, [string]$path, [hashtable]$meta = $null, [
         # 2026-10-09 画质门槛(用户要求"门槛 1600 / 满屏线 2560"): 拿**真实分辨率**判,
         # 不看接口自称的尺寸。不达标的图就地丢掉 —— 不落盘、不进库、不占库容。
         # 判定放在"校验过是张完整图"之后: 截断的半张图读出来的宽度是假的, 不能拿来判门槛。
-        if (($MinWidth -gt 0) -or ($MinAspect -gt 0)) {
+        if (($MinWidth -gt 0) -or ($MinAspect -gt 0) -or ($MaxAspect -gt 0)) {
           # .part 是**临时文件名**: 同一个名字先后可能装过两张不同的图(前一次失败重下),
           # 分辨率缓存里那份不算数, 先把它抹掉再量 —— 不然门槛会拿上一张的尺寸做判断。
           try { if ($global:BWArtDimCache) { [void]$global:BWArtDimCache.Remove([string]$tmp) } } catch { }
@@ -3974,11 +3853,17 @@ function Save-BwFile([string[]]$urls, [string]$path, [hashtable]$meta = $null, [
             $global:BWLastDlStatus = 'toosmall'
             continue
           }
-          if ($MinAspect -gt 0) {
+          if (($MinAspect -gt 0) -or ($MaxAspect -gt 0)) {
             $ar = 0.0
             if ([int]$dim.H -gt 0) { $ar = [double]$dim.W / [double]$dim.H }
-            if ($ar -lt $MinAspect) {
+            if (($MinAspect -gt 0) -and ($ar -lt $MinAspect)) {
               Log ('宽高比 ' + [math]::Round($ar, 2) + ' 不到 ' + $MinAspect + '(竖幅/方形), 跳过不落盘: ' + (Split-Path $path -Leaf))
+              Remove-BwFile $tmp
+              $global:BWLastDlStatus = 'aspect'
+              continue
+            }
+            if (($MaxAspect -gt 0) -and ($ar -gt $MaxAspect)) {
+              Log ('宽高比 ' + [math]::Round($ar, 2) + ' 超过 ' + $MaxAspect + '(太宽/长卷), 跳过不落盘: ' + (Split-Path $path -Leaf))
               Remove-BwFile $tmp
               $global:BWLastDlStatus = 'aspect'
               continue
@@ -4025,7 +3910,7 @@ function Save-BwFile([string[]]$urls, [string]$path, [hashtable]$meta = $null, [
       }
       Remove-BwFile $tmp
     } catch {
-      # 超时单独认出来(名画图床实测能慢到 ~130 秒/张)。判据两条腿走路:
+      # 超时单独认出来(实测有的图床能慢到 ~130 秒/张)。判据两条腿走路:
       # 先看 WebException 的 Status, 再退回消息里的关键字(中文系统上是"操作已超时")。
       $isTo = $false
       try {
