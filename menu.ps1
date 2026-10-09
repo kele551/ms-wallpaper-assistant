@@ -2,7 +2,7 @@
 # 作者: 海风（kele551）   https://gitee.com/kele551/ms-wallpaper-assistant
 . (Join-Path $PSScriptRoot 'core.ps1')
 
-$global:BWVersion = '2.0.10'
+$global:BWVersion = '2.1.0'
 
 # 显示名(2026-10-09 合规要求: 产品名不带他人商标): 界面上就叫「桌面壁纸」。
 # **只改显示名** —— exe 文件名(微软壁纸助手.exe)、数据目录(%LOCALAPPDATA%\微软壁纸助手)、
@@ -228,9 +228,6 @@ function Set-BwBase([string]$base) {
   $c = Get-BwConfig
   $c.bing_save_dir = $bing
   $c.spotlight_save_dir = $spot
-  # 2026-10-09: 两个新图源(NASA / 名画)的库跟着同一个壁纸根走
-  Add-Member -InputObject $c NoteProperty nasa_save_dir (Join-Path $b 'NASA') -Force
-  Add-Member -InputObject $c NoteProperty met_save_dir (Join-Path $b '名画') -Force
   Save-BwConfig $c
   # 位置换了, 老队列里的文件名已经对不上新目录, 重洗一次
   $s = Get-BwState
@@ -251,7 +248,8 @@ function Show-BrowseAll {
   $s = Get-BwState
   $files = @()
   $pairs = @(@('必应', $c.bing_save_dir), @('聚焦', $c.spotlight_save_dir))
-  # 2026-10-09: 开着的新图源也列出来(NASA / 名画); 关掉的源不显示, 免得列表里混进不参与的图
+  # 2026-10-09: 开着的其它图源也列出来(目前图源表是空的, 这一段不会被走到);
+  # 关掉的源不显示, 免得列表里混进不参与的图。
   foreach ($sdef in @(Get-BwSourceDefs)) {
     if (-not (Get-BwSrcEnabled $c $sdef.Key)) { continue }
     $pairs += ,@([string]$sdef.Name, (Get-BwSrcDir $c $sdef.Key))
@@ -264,10 +262,10 @@ function Show-BrowseAll {
   if ($files.Count -eq 0) {
     Write-Host '  壁纸库现在都是空的。'
     Write-Host ('  位置: ' + $c.bing_save_dir)
-    Write-Host '  菜单 [2] 会抓聚焦 / NASA / 名画, [4] 里能补必应, 开着自动换也会自己攒起来。'
+    Write-Host '  菜单 [2] 会抓几张聚焦备用, [4] 里能补必应, 开着自动换也会自己攒起来。'
     return
   }
-  Write-Host ('  —— 壁纸库 (最近 ' + $files.Count + ' 张, [来源] 标出是必应/聚焦/NASA/名画, ★ = 已收藏, 外 = 不是程序下载的) ——')
+  Write-Host ('  —— 壁纸库 (最近 ' + $files.Count + ' 张, [来源] 标出是必应/聚焦/其它图源, ★ = 已收藏, 外 = 不是程序下载的) ——')
   Write-Host ('  所在文件夹: ' + $c.bing_save_dir)
   $outs = @{}
   foreach ($k in @(@($s.strangers) | Where-Object { $_ })) { $outs[[string]$k] = $true }
@@ -387,11 +385,6 @@ function Invoke-BwRefill {
     Write-Host ('  本次实际最多抓 ' + $allowTxt + ' 张 (单轮上限 ' + $c.fetch_round_cap + ' 张 / 今日还剩 ' + (Get-BwFetchBudget $c (Get-BwFetchStats)) + ' 张 / 每天上限 ' + $c.fetch_day_cap + ' 张)') -ForegroundColor DarkGray
   } catch {}
   $new = @(Invoke-SpotlightFetch -count $want -Quiet -Counter)
-  # 2026-10-09: 两个新图源(NASA / 名画)同属"源池", 一块儿按需补 —— 各自的单轮/单日闸门
-  # 照旧生效, 一个源失败只写一行日志(不影响聚焦下载, 更不影响换图)。
-  $srcNew = @()
-  try { $srcNew = @(Invoke-BwAllSrcFetch -count $want -Quiet -Force) } catch { $srcNew = @() }
-  $new = @(@($new) + @($srcNew))
   if ($new.Count -gt 0) {
     # 新下的图立刻排进队列, 不用干等一整轮。
     # 队列里存的是**文件名**, 而 Invoke-SpotlightFetch 返回的是完整路径 ——
@@ -405,10 +398,6 @@ function Invoke-BwRefill {
   Write-Host ('  聚焦库现在 ' + (Count-Jpg $c.spotlight_save_dir) + ' 张, 待换队列还剩 ' + (Left-Queue $s) + ' 张')
   # 源池状态: 让用户一眼看出"还有新图 / 在循环老图 / 已经抓到尽头", 别以为程序坏了
   try { Write-Host ('  源池状态: ' + (Get-BwSourcePoolStatus (Get-BwState)).Line) -ForegroundColor DarkGray } catch {}
-  # 两个新图源各有多少张、什么模式, 在这儿一并交代清楚
-  foreach ($sdef in @(Get-BwSourceDefs)) {
-    try { Write-Host ('  ' + (Get-BwSrcStatusLine $sdef.Key)) -ForegroundColor DarkGray } catch {}
-  }
 }
 
 # ---------- 补漏必应图片 (在菜单 [4] 下载必应图片 里, 不再单独占一个号) ----------
@@ -455,7 +444,7 @@ function Show-BwFavorites {
         $db = ''
         try { $db = ([string]$f.DirectoryName).TrimEnd('\') } catch {}
         if ($db -and ($db -eq $bb)) { $mark = '必应' }
-        # 2026-10-09: 新图源(NASA / 名画)的图也标出真实来源
+        # 2026-10-09: 开着的其它图源(目前表是空的)的图也标出真实来源
         foreach ($sdef in @(Get-BwSourceDefs)) {
           $sd = Get-BwSrcDir $c $sdef.Key
           if (-not $sd) { continue }
@@ -564,230 +553,6 @@ function Edit-BwCycleMinutes {
 }
 
 # ---------- 设置 ----------
-# 新图源设置页 (NASA / 名画): 一个源一屏 —— 开关 / 关键词 / 自己的库容上限 / 立刻抓几张。
-# 说明里写清授权口径: NASA 是公开素材(images.nasa.gov), 大都会博物馆只取公域作品。
-function Show-BwSourceSetting([string]$key) {
-  $def = Get-BwSrcDef $key
-  if (-not $def) { return }
-  $back = $false
-  do {
-    $c = Get-BwConfig
-    $on = '关'
-    if (Get-BwSrcEnabled $c $key) { $on = '开' }
-    $dir = Get-BwSrcDir $c $key
-    $cap = Get-BwSrcCap $c $key
-    $capTxt = '不限'
-    if ($cap -gt 0) { $capTxt = ($cap.ToString() + ' 张') }
-    $kws = @(Get-BwSrcKeywords $c $key)
-    $minW = Get-BwSrcMinWidth $c $key
-    $fullW = Get-BwSrcFullWidth $c $key
-    $toSec = Get-BwSrcTimeoutSec $c
-    $minTxt = '不限'
-    if ($minW -gt 0) { $minTxt = ('' + $minW + ' 像素') }
-    $fullTxt = '不限'
-    if ($fullW -gt 0) { $fullTxt = ('' + $fullW + ' 像素') }
-    $landOnly = Get-BwSrcLandscapeOnly $c $key
-    Clear-Host
-    Write-Host ('========== 图源: ' + $def.Name + ' ==========') -ForegroundColor Cyan
-    Write-Host ''
-    if ($key -eq 'nasa') {
-      Write-Host '  NASA 公开素材 —— images-api.nasa.gov 的图像库(多为公有领域 / NASA 版权)。'
-      Write-Host '  按关键词搜索, 每个条目挑最大的一张 jpg/png (超过 12MB 的跳过); 只在本机当壁纸用。'
-    } else {
-      Write-Host '  Met 仅公域作品 —— 大都会博物馆开放接口, 只取 isPublicDomain 为真的作品。'
-      Write-Host '  非公域的一律不看; 图只存本机当壁纸, 不做二次分发。'
-    }
-    Write-Host ''
-    Write-Host ('  现在        ' + $on + '  ·  库里 ' + @(Get-BwSrcFiles $dir).Count + ' 张  ·  上限 ' + $capTxt)
-    Write-Host ('  库目录      ' + $dir)
-    Write-Host ('  状态        ' + (Get-BwSrcStatusLine $key)) -ForegroundColor DarkGray
-    Write-Host ('  关键词      ' + ($kws -join ' / '))
-    Write-Host ''
-    # 2026-10-09 画质门槛: 两道宽度线 + 画幅 + 下载超时, 都在这儿改。
-    Write-Host '  —— 画质门槛 —— ' -ForegroundColor DarkGray
-    Write-Host ('  [w] 进库最低宽度   ' + $minTxt + '   (比它窄的图直接跳过, 不下载落盘)')
-    Write-Host ('  [f] 铺满屏幕宽度   ' + $fullTxt + '   (到了才裁剪铺满; 两条线中间的走「不放大」: 1:1 居中 + 模糊底)')
-    if ([bool]$def.LandscapeOnly) {
-      $landTxt = '关'
-      if ($landOnly) { $landTxt = '开' }
-      Write-Host ('  [l] 只收横图       ' + $landTxt + '   (开 = 宽高比 >= 1.3 才收, 竖幅/方形不要)')
-    } else {
-      Write-Host '      画幅           只收横图(宽高比 >= 1.0, 竖图跳过), 固定不可改'
-    }
-    Write-Host ('  [t] 单张下载超时   ' + $toSec + ' 秒   (超时就放弃、换下一张; 同一个源连着 ' + 2 + ' 张超时就歇 ' + $global:BWSrcSlowMinutes + ' 分钟)')
-    Write-Host ''
-    Write-Host '  抓取纪律和其它图源一样: 每轮最多 ' + $c.fetch_round_cap + ' 张、每天最多 ' + $c.fetch_day_cap + ' 张,'
-    Write-Host '  库满就不再补; 抓不到新图会自动歇一歇(每天只试一轮); 老图 ' + $c.recycle_min_days + ' 天后重新参与轮换。'
-    Write-Host ''
-    Write-Host '  [y] 开启    [n] 关闭    [k] 改关键词    [c] 改这个源的库容上限    [g] 立刻抓几张'
-    Write-Host '  [q] 返回'
-    Write-Host ''
-    $k = Normalize-BwKey (Read-Host '  要改哪一项')
-    if (($k -eq 'q') -or ($k -eq '')) {
-      $back = $true
-    } elseif (($k -eq 'y') -or ($k -eq 'n')) {
-      $wantOn = ($k -eq 'y')
-      Add-Member -InputObject $c NoteProperty $def.EnableKey $wantOn -Force
-      Save-BwConfig $c
-      if ($wantOn) {
-        Write-Host ('  好了, ' + $def.Name + ' 图源已开启: 库里没有图时会自己抓几张, 之后按需补货。') -ForegroundColor Green
-      } else {
-        Write-Host ('  好了, ' + $def.Name + ' 图源已关闭 —— 不再抓新图; 已经下好的图照样参与轮换。') -ForegroundColor Yellow
-      }
-      $nowTxt = '关'
-      if ($wantOn) { $nowTxt = '开' }
-      Log ('设置: ' + $def.Name + ' 图源 -> ' + $nowTxt)
-      Pause-Bw
-    } elseif ($k -eq 'k') {
-      Write-Host ''
-      Write-Host ('  现在是: ' + ($kws -join ', '))
-      Write-Host '  用逗号分开(中英文逗号都认), 最多 12 个、每个最长 40 字; 直接回车 = 不改。'
-      $raw = Read-Host '  新的关键词'
-      if (-not ([string]$raw).Trim()) {
-        Write-Host '  没改。'
-      } else {
-        $txt = Format-BwSrcKeywords $raw
-        if (-not $txt) {
-          Write-Host '  这一串里没有能用的关键词, 没改。' -ForegroundColor Yellow
-        } else {
-          Add-Member -InputObject $c NoteProperty $def.KwKey $txt -Force
-          Save-BwConfig $c
-          Write-Host ('  好了, 关键词改成: ' + $txt) -ForegroundColor Green
-          Log ('设置: ' + $def.Name + ' 关键词 -> ' + $txt)
-        }
-      }
-      Pause-Bw
-    } elseif ($k -eq 'c') {
-      Write-Host ''
-      Write-Host ('  这是 ' + $def.Name + ' 自己的库容上限: 到了就不再补货, 免得一个源把盘占满。')
-      Write-Host ('  能填 ' + $global:BwLimit[$def.CapKey].Min + ' ~ ' + $global:BwLimit[$def.CapKey].Max + ' 张, 0 = 不限。')
-      Write-Host ''
-      $v = Read-Host ('  最多留多少张? (现在 ' + $capTxt + ', 回车不改)')
-      $vv = Normalize-BwKey $v
-      if (-not $v) {
-        # 直接回车 = 不改
-      } elseif ($vv -match '^\d+$') {
-        $vvN = 0
-        if (-not [int]::TryParse($vv, [ref]$vvN)) { $vvN = $global:BwLimit[$def.CapKey].Max + 1 }
-        $v2 = Limit-BwNum $vvN $def.CapKey
-        if (($v2 -ne $vvN) -and ($vvN -ne 0)) {
-          Write-Host ('  ' + $vv + ' 张出界了, 按 ' + $v2 + ' 张算。') -ForegroundColor Yellow
-        }
-        Add-Member -InputObject $c NoteProperty $def.CapKey $v2 -Force
-        Save-BwConfig $c
-        if ($v2 -eq 0) { Write-Host ('  好了, ' + $def.Name + ' 不限张数。') }
-        else { Write-Host ('  好了, ' + $def.Name + ' 最多留 ' + $v2 + ' 张。') }
-        Log ('设置: ' + $def.Name + ' 库容上限 -> ' + $v2)
-      } else {
-        Write-Host '  要填一个数字 (0 = 不限), 没改。' -ForegroundColor Yellow
-      }
-      Pause-Bw
-    } elseif (($k -eq 'w') -or ($k -eq 'f')) {
-      # 2026-10-09 画质门槛: [w] = 进库最低宽度(低于它的图直接跳过), [f] = 铺满屏幕宽度。
-      $isMin = ($k -eq 'w')
-      $ck = [string]$def.MinKey
-      $curV = $minW
-      if (-not $isMin) { $ck = [string]$def.FullKey; $curV = $fullW }
-      Write-Host ''
-      if ($isMin) {
-        Write-Host ('  这是 ' + $def.Name + ' 的「进库最低宽度」: 比它窄的图**直接跳过**, 不落盘、不进库。')
-        Write-Host '  设它是为了"别把太小的画放进轮换" —— 太小的图放中间也不好看。0 = 不限(来者不拒)。'
-      } else {
-        Write-Host ('  这是 ' + $def.Name + ' 的「铺满屏幕宽度」: 图宽到了这条线, 才按「填充」裁剪铺满(最锐)。')
-        Write-Host '  卡在两条线中间的图**不放大**: 原图 1:1 居中, 四周用同一张图放大模糊铺底。'
-        Write-Host '  在任何情况下, 程序都不会把小图拉大 —— 糊就是这么来的。0 = 不限。'
-      }
-      Write-Host ''
-      Write-Host ('  能填 ' + $global:BwLimit[$ck].Min + ' ~ ' + $global:BwLimit[$ck].Max + ' 像素, 0 = 不限。')
-      Write-Host ('  本机屏幕宽 ' + (Get-BwScreenSize).W + ' 像素(合成壁纸按屏幕物理像素做)。') -ForegroundColor DarkGray
-      $curTxt = '不限'
-      if ($curV -gt 0) { $curTxt = ('' + $curV + ' 像素') }
-      $v = Read-Host ('  填多少? (现在 ' + $curTxt + ', 回车不改)')
-      $vv = Normalize-BwKey $v
-      if (-not $v) {
-        # 直接回车 = 不改
-      } elseif ($vv -match '^\d+$') {
-        $vvN = 0
-        if (-not [int]::TryParse($vv, [ref]$vvN)) { $vvN = $global:BwLimit[$ck].Max + 1 }
-        $v2 = Limit-BwNum $vvN $ck
-        if (($v2 -ne $vvN) -and ($vvN -ne 0)) {
-          Write-Host ('  ' + $vv + ' 出界了, 按 ' + $v2 + ' 算。') -ForegroundColor Yellow
-        }
-        Add-Member -InputObject $c NoteProperty $ck $v2 -Force
-        Save-BwConfig $c
-        $show = '不限'
-        if ($v2 -gt 0) { $show = ('' + $v2 + ' 像素') }
-        if ($isMin) { Write-Host ('  好了: ' + $def.Name + ' 只收宽度 >= ' + $show + ' 的图。') -ForegroundColor Green }
-        else { Write-Host ('  好了: ' + $def.Name + ' 宽度 >= ' + $show + ' 才铺满, 中间的走「不放大」。') -ForegroundColor Green }
-        Log ('设置: ' + $def.Name + ' ' + $ck + ' -> ' + $v2)
-      } else {
-        Write-Host '  要填一个数字 (0 = 不限), 没改。' -ForegroundColor Yellow
-      }
-      Pause-Bw
-    } elseif ($k -eq 'l') {
-      if (-not [bool]$def.LandscapeOnly) {
-        Write-Host '  这个源没有这一项。'
-        Start-Sleep -Milliseconds 800
-      } else {
-        $want = (-not $landOnly)
-        Add-Member -InputObject $c NoteProperty 'met_landscape_only' $want -Force
-        Save-BwConfig $c
-        if ($want) { Write-Host '  好了: 名画只收横图(宽高比 >= 1.3); 竖幅/方形的不要。' -ForegroundColor Green }
-        else { Write-Host '  好了: 名画横图竖图都收(竖幅在 16:9 屏上会以「不放大」方式居中显示)。' -ForegroundColor Green }
-        Log ('设置: 名画只收横图 -> ' + $want)
-        Pause-Bw
-      }
-    } elseif ($k -eq 't') {
-      Write-Host ''
-      Write-Host '  单张图下载最多等多久。名画图床实测能慢到 ~130 秒/张:'
-      Write-Host '  一张一张硬等下去, 一轮补货要跑几十分钟, 后面排队的源全被挡住。'
-      Write-Host '  超过这个秒数就放弃这一张(记一次失败), 换下一张; 同一个源连着 2 张超时就歇一会儿再来。'
-      Write-Host ('  能填 ' + $global:BwLimit['src_timeout_sec'].Max + ' 秒以内的整数(0 = 用默认的 20 秒)。')
-      Write-Host '  这里是**一定要有超时**的: 填 0 不是"不限", 而是回到默认的 20 秒。' -ForegroundColor DarkGray
-      Write-Host ''
-      $v = Read-Host ('  最多等多少秒? (现在 ' + $toSec + ' 秒, 回车不改)')
-      $vv = Normalize-BwKey $v
-      if (-not $v) {
-        # 不改
-      } elseif ($vv -match '^\d+$') {
-        $vvN = 0
-        if (-not [int]::TryParse($vv, [ref]$vvN)) { $vvN = $global:BwLimit['src_timeout_sec'].Max + 1 }
-        $v2 = Limit-BwNum $vvN 'src_timeout_sec'
-        if ($v2 -ne $vvN) { Write-Host ('  ' + $vv + ' 秒出界了, 按 ' + $v2 + ' 秒算。') -ForegroundColor Yellow }
-        Add-Member -InputObject $c NoteProperty 'src_timeout_sec' $v2 -Force
-        Save-BwConfig $c
-        # 真正生效的秒数走一遍读函数(0 会变成默认 20, 1~4 会抬到 5), 免得界面报的数跟实际不一样
-        $eff = Get-BwSrcTimeoutSec (Get-BwConfig)
-        if ($v2 -eq 0) { Write-Host ('  好了: 回到默认的 ' + $eff + ' 秒。') -ForegroundColor Green }
-        else { Write-Host ('  好了: 单张最多等 ' + $eff + ' 秒。') -ForegroundColor Green }
-        Log ('设置: 单张下载超时 -> ' + $v2 + ' 秒(实际按 ' + $eff + ' 秒跑)')
-      } else {
-        Write-Host '  要填一个数字(秒), 没改。' -ForegroundColor Yellow
-      }
-      Pause-Bw
-    } elseif ($k -eq 'g') {
-      Write-Host ''
-      $want = [int]$c.spotlight_per_cycle
-      if ($want -gt 50) { $want = 50 }
-      Write-Host ('  现在抓 ' + $def.Name + ' 的图(最多 ' + $want + ' 张, 还要过单轮/单日闸门)...') -ForegroundColor DarkGray
-      $got = @()
-      try { $got = @(Invoke-BwSrcFetch -key $key -count $want -Force) } catch { $got = @() }
-      Write-Host ('  这一次新增 ' + $got.Count + ' 张; ' + (Get-BwSrcStatusLine $key)) -ForegroundColor Green
-      if ($got.Count -gt 0) {
-        # 新抓的图立刻排进队列, 不用干等一整轮(队列里存文件名, 与 [2] 同一套做法)
-        $s = Get-BwState
-        $nn = @($got | ForEach-Object { Split-Path $_ -Leaf })
-        $s.queue = @(@($s.queue | Where-Object { $_ }) + $nn)
-        Save-BwStateKeepFav $s
-      }
-      Pause-Bw
-    } else {
-      Write-Host '  没看懂, 没改。'
-      Start-Sleep -Milliseconds 800
-    }
-  } while (-not $back)
-}
-
 function Show-BwSettings {
   $back = $false
   do {
@@ -834,21 +599,16 @@ function Show-BwSettings {
     $fitOn = '关'
     if (Test-BwArtFitOn $c) { $fitOn = '开' }
     Write-Host ('  [a] 小图不放大      ' + $fitOn + '  · 开 = 1:1 居中 + 同图模糊底; 关 = 拉大铺满(会糊)')
+    # 单张图下载超时: 原本在"某个图源"的设置页里, 图源摘掉之后挪到这一级(能力留着, 等合适的图源)
+    $toSecShow = 20
+    try { $toSecShow = Get-BwSrcTimeoutSec $c } catch { $toSecShow = 20 }
+    Write-Host ('  [t] 单张下载超时    ' + $toSecShow + ' 秒  · 慢图床到点就放弃、换下一张(图源用)')
     Write-Host ''
-    # 2026-10-09: 两个新图源与「必应」「聚焦」平级 —— 开关与关键词都在 [n]/[m] 里改
-    $nasaOn = '关'
-    if (Get-BwSrcEnabled $c 'nasa') { $nasaOn = '开' }
-    $metOn = '关'
-    if (Get-BwSrcEnabled $c 'met') { $metOn = '开' }
-    Write-Host ('  [n] NASA 图像库     ' + $nasaOn + '  · 库 ' + @(Get-BwSrcFiles (Get-BwSrcDir $c 'nasa')).Count + ' 张 · 关键词 ' + @(Get-BwSrcKeywords $c 'nasa').Count + ' 个  (NASA 公开素材)')
-    Write-Host ('  [m] 名画 (大都会)    ' + $metOn + '  · 库 ' + @(Get-BwSrcFiles (Get-BwSrcDir $c 'met')).Count + ' 张 · 关键词 ' + @(Get-BwSrcKeywords $c 'met').Count + ' 个  (Met 仅公域作品)')
     # 源池状态 + 三道闸门(用户要求: 菜单里能看出当前处于哪种模式, 别让人以为程序坏了)
     try {
       $poolSt = Get-BwSourcePoolStatus (Get-BwState)
       Write-Host ('  源池状态  ' + $poolSt.Line) -ForegroundColor DarkGray
       Write-Host ('  源池闸门  单轮最多 ' + $c.fetch_round_cap + ' 张 · 每天最多 ' + $c.fetch_day_cap + ' 张 · 老图间隔 ' + $c.recycle_min_days + ' 天') -ForegroundColor DarkGray
-      Write-Host ('  图源      ' + (Get-BwSrcStatusLine 'nasa')) -ForegroundColor DarkGray
-      Write-Host ('            ' + (Get-BwSrcStatusLine 'met')) -ForegroundColor DarkGray
       if ([string]$poolSt.Mode -eq 'recycle') {
         Write-Host '            未看过的不多了, 现在会把够久没出现的老图循环用起来(不会没图可换)。' -ForegroundColor DarkGray
       } elseif ([string]$poolSt.Mode -eq 'pool_end') {
@@ -908,7 +668,7 @@ function Show-BwSettings {
           Write-Host ('  现在: 必应 ' + $c.bing_save_dir)
           Write-Host ('        聚焦 ' + $c.spotlight_save_dir)
         }
-        Write-Host '  壁纸会放在这个文件夹下面的「必应」「聚焦」「NASA」「名画」几个子目录里。'
+        Write-Host '  壁纸会放在这个文件夹下面的「必应」「聚焦」几个子目录里。'
         Write-Host '  换位置不影响已经存好的图, 只是以后往新地方存。'
         Write-Host ''
         # 以前这里传的是空建议, 于是列表里没有「<-- 建议」标记, 用户只能自己猜着挑 ——
@@ -922,7 +682,7 @@ function Show-BwSettings {
           # 2026-09-22 加：那次事故里图库被建在别人的资料目录里，光改配置的话图还留在原地，
           # 用户得自己去翻文件。搬的时候只动程序自己下的图，别的文件一个字都不碰。
           $n0 = 0
-          foreach ($nm in @('必应', '聚焦', 'NASA', '名画')) {
+          foreach ($nm in @('必应', '聚焦')) {
             $d0 = Join-Path $base $nm
             if (Test-Path -LiteralPath $d0) {
               $n0 += @(Get-ChildItem -LiteralPath $d0 -File -ErrorAction SilentlyContinue | Where-Object { Test-BwImgFile $_.Name }).Count
@@ -1087,15 +847,13 @@ function Show-BwSettings {
         } elseif ($v) { Write-Host '  没看懂, 没改。' }
         Pause-Bw
       }
-      'n' { Show-BwSourceSetting 'nasa' }
-      'm' { Show-BwSourceSetting 'met' }
       'a' {
         Clear-Host
         Write-Host '========== 小图显示方式 ==========' -ForegroundColor Cyan
         Write-Host ''
         Write-Host ('  现在: ' + $fitOn)
         Write-Host ''
-        Write-Host '  说的是"图比屏幕窄"的时候怎么显示(比如名画只有 1800 像素, 屏幕 2560):'
+        Write-Host '  说的是"图比屏幕窄"的时候怎么显示(比如一张图只有 1800 像素, 屏幕 2560):'
         Write-Host '    [1] 开   不放大: 原图按 1:1 放在正中间, 四周用同一张图放大模糊铺底 (推荐)'
         Write-Host '             画面是原图本来的清晰度, 不裁掉主体, 也不留黑边。'
         Write-Host '    [2] 关   老样子: 按「填充」拉大铺满 —— 会糊, 而且小图尤其明显。'
@@ -1115,6 +873,39 @@ function Show-BwSettings {
           if ($want) { Write-Host '  好了: 小图不放大, 改成「1:1 居中 + 模糊底」。下一张换图就生效。' -ForegroundColor Green }
           else { Write-Host '  好了: 小图还是拉大铺满(会糊)。' -ForegroundColor Yellow }
           Log ('设置: 小图不放大 -> ' + $val)
+        }
+        Pause-Bw
+      }
+      't' {
+        Clear-Host
+        Write-Host '========== 单张图下载超时 ==========' -ForegroundColor Cyan
+        Write-Host ''
+        $toSec = 20
+        try { $toSec = Get-BwSrcTimeoutSec $c } catch { $toSec = 20 }
+        Write-Host '  单张图下载最多等多久。实测有的图床能慢到 ~130 秒/张:'
+        Write-Host '  一张一张硬等下去, 一轮补货要跑几十分钟, 后面排队的源全被挡住。'
+        Write-Host '  超过这个秒数就放弃这一张(记一次失败), 换下一张; 同一个源连着 2 张超时就歇一会儿再来。'
+        Write-Host ('  能填 ' + $global:BwLimit['src_timeout_sec'].Max + ' 秒以内的整数(0 = 用默认的 20 秒)。')
+        Write-Host '  这里是**一定要有超时**的: 填 0 不是"不限", 而是回到默认的 20 秒。' -ForegroundColor DarkGray
+        Write-Host ''
+        $v = Read-Host ('  最多等多少秒? (现在 ' + $toSec + ' 秒, 回车不改)')
+        $vv = Normalize-BwKey $v
+        if (-not $v) {
+          # 不改
+        } elseif ($vv -match '^\d+$') {
+          $vvN = 0
+          if (-not [int]::TryParse($vv, [ref]$vvN)) { $vvN = $global:BwLimit['src_timeout_sec'].Max + 1 }
+          $v2 = Limit-BwNum $vvN 'src_timeout_sec'
+          if ($v2 -ne $vvN) { Write-Host ('  ' + $vv + ' 秒出界了, 按 ' + $v2 + ' 秒算。') -ForegroundColor Yellow }
+          Add-Member -InputObject $c NoteProperty 'src_timeout_sec' $v2 -Force
+          Save-BwConfig $c
+          # 真正生效的秒数走一遍读函数(0 会变成默认 20, 1~4 会抬到 5), 免得界面报的数跟实际不一样
+          $eff = Get-BwSrcTimeoutSec (Get-BwConfig)
+          if ($v2 -eq 0) { Write-Host ('  好了: 回到默认的 ' + $eff + ' 秒。') -ForegroundColor Green }
+          else { Write-Host ('  好了: 单张最多等 ' + $eff + ' 秒。') -ForegroundColor Green }
+          Log ('设置: 单张下载超时 -> ' + $v2 + ' 秒(实际按 ' + $eff + ' 秒跑)')
+        } else {
+          Write-Host '  要填一个数字(秒), 没改。' -ForegroundColor Yellow
         }
         Pause-Bw
       }
@@ -1184,16 +975,9 @@ function Invoke-BwFirstRun {
   Invoke-BwUpdate
   Write-Host ('  必应库: ' + (Count-Jpg $bing) + ' 张') -ForegroundColor DarkGray
 
-  Write-Host '  正在抓几张聚焦壁纸备用...' -ForegroundColor DarkGray
+  Write-Host '  正在抓几张: 聚焦 (受单轮/单日上限约束)...' -ForegroundColor DarkGray
   $null = Invoke-SpotlightFetch -count ([int]$c.spotlight_per_cycle) -Quiet
   Write-Host ('  聚焦库: ' + (Count-Jpg $spot) + ' 张') -ForegroundColor DarkGray
-  # 2026-10-09: 两个新图源默认开着, 首次运行就各抓几张 —— 一进来就有 NASA / 名画的图参与轮换。
-  # 抓不到只是少几张图, 绝不挡安装流程(失败也只写一行日志)。
-  Write-Host '  正在抓 NASA / 名画 各几张备用...' -ForegroundColor DarkGray
-  try { $null = Invoke-BwAllSrcFetch -count ([int]$c.spotlight_per_cycle) -Quiet -Force } catch {}
-  foreach ($sdef in @(Get-BwSourceDefs)) {
-    Write-Host ('  ' + $sdef.Name + '库: ' + (Count-Jpg (Get-BwSrcDir (Get-BwConfig) $sdef.Key)) + ' 张') -ForegroundColor DarkGray
-  }
 
   $s = Get-BwState
   $s.last_bing_date = (Today-Str)

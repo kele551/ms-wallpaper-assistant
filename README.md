@@ -1,21 +1,20 @@
-# Desktop Wallpaper Assistant（桌面壁纸）
+﻿# Desktop Wallpaper Assistant（桌面壁纸）
 
-**Auto-rotating desktop wallpapers from Bing, Windows Spotlight, NASA and The Met (public domain).**
+**Auto-rotating desktop wallpapers from Bing and Windows Spotlight.**
 
 A small, free, open-source Windows utility — a single portable `.exe` — that downloads
-public wallpaper sources (the **Bing daily image**, **Windows Spotlight**, the **NASA image
-library** and **public-domain artworks from The Met**) and rotates them as your desktop
-wallpaper on a schedule. No installer, no administrator rights; all images stay on your own
-machine.
+public wallpaper sources (the **Bing daily image** and **Windows Spotlight**) and rotates
+them as your desktop wallpaper on a schedule. No installer, no administrator rights; all
+images stay on your own machine.
 
-> Not affiliated with, endorsed by, or sponsored by any image provider. "Bing", "Windows
-> Spotlight", "NASA" and "The Met" are used only to describe where the images come from.
+> Not affiliated with, endorsed by, or sponsored by any image provider. "Bing" and "Windows
+> Spotlight" are used only to describe where the images come from.
 
 > 作者 / Author: **HaiFeng (kele551)** · Gitee（主）: <https://gitee.com/kele551/ms-wallpaper-assistant> · GitHub（镜像）: <https://github.com/kele551/ms-wallpaper-assistant>
 
 ## Features
 
-- **Four sources**: Bing daily image + Windows Spotlight (4K), plus the NASA image library and public-domain Met artworks
+- **Two sources**: the Bing daily image + Windows Spotlight (both 4K)
 - **Automatic rotation** at an interval you choose (default: 30 minutes)
 - **Never repeats**: it remembers which images you have already seen, and keeps a favourites list
 - **Catches up**: if your PC was off for days, missed Bing images are backfilled automatically
@@ -88,20 +87,18 @@ MIT — see [LICENSE](LICENSE).
 
 > 作者：**海风（kele551）** · 仓库：https://gitee.com/kele551/ms-wallpaper-assistant （GitHub 同名镜像）
 
-![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Windows-blue) ![Version](https://img.shields.io/badge/version-v2.0.10-blue) ![Downloads](https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?label=downloads&color=green)
+![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Windows-blue) ![Version](https://img.shields.io/badge/version-v2.1.0-blue) ![Downloads](https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?label=downloads&color=green)
 
 **让电脑桌面壁纸自己换，你不用管。**
 
-Windows 桌面壁纸自动轮换工具。图来自四个公开图源（只下到你自己电脑上，不随程序分发）：
+Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到你自己电脑上，不随程序分发）：
 
 | 图源 | 说明 |
 |---|---|
 | **必应每日一图** | 微软必应每天换的那张，4K 原图 |
 | **Windows 聚焦** | 微软官方聚焦图库，一次能刷一批，也是 4K |
-| **NASA 图像库** | NASA 公开素材（images-api.nasa.gov），太空 / 地球 / 航天题材 |
-| **大都会博物馆名画** | The Met 开放接口，**只取公域作品**（`isPublicDomain` 为真的才下） |
 
-> 本项目与任何图源厂商无隶属关系；「必应」「Windows 聚焦」「NASA」等名称只用于描述图片来源。
+> 本项目与任何图源厂商无隶属关系；「必应」「Windows 聚焦」等名称只用于描述图片来源。
 > 图片版权归原提供方，仅供个人桌面使用，请遵守各图源的使用条款。
 
 它有几个地方跟别的壁纸软件不一样：
@@ -180,7 +177,7 @@ Windows 桌面壁纸自动轮换工具。图来自四个公开图源（只下到
   ============================================================
 
   换图  下次自动换 21:30  ·  每 30 分钟  ·  后台在跑  ·  今日必应 已切
-  图库  必应 128 张 · 聚焦 96 张 · NASA 24 张 · 名画 18 张 · 待换 12 张 · 累计下载 356 张
+  图库  必应 128 张 · 聚焦 96 张 · 待换 12 张 · 累计下载 356 张
   位置  D:\图片\壁纸
   壁纸  2026-09-22-Bing-xxxxxxx-UHD.jpg
 
@@ -245,8 +242,7 @@ Windows 桌面壁纸自动轮换工具。图来自四个公开图源（只下到
   [8] 图库上限        200 张 · 现在库里 96 张    0 = 不限，或 5 ~ 2000；超了把看过的最老的移进回收站
   [9] 重新抓取源池    清空下载记录（不动图片）   用于清空库/还原回收站后想重新收一遍图
   [0] 自动补新图      关                        关着就只在现有这些图里轮换
-  [n] NASA 图像库     开 · 库 24 张 · 关键词 10 个   NASA 公开素材；开关 / 改关键词 / 改这个源的上限
-  [m] 名画 (大都会)    开 · 库 18 张 · 关键词 8 个    Met 仅公域作品；开关 / 改关键词 / 改这个源的上限
+  [t] 单张下载超时    20 秒                     慢图床到点就放弃、换下一张（给图源用）
   [q] 返回
 ```
 
@@ -273,8 +269,8 @@ Windows 桌面壁纸自动轮换工具。图来自四个公开图源（只下到
 
 ### 图片源：授权怎么说、会不会"没图可换"？
 
-四个源**各自独立**：各自的目录、各自的去重记录、各自的容量上限（`nasa_cap` / `met_cap`，默认各 100 张，
-0 = 不限）。抓取纪律和聚焦**完全同一套**：
+程序内部是**可插拔图源**结构：每个源各自一个目录、各自的去重记录、各自的容量上限（0 = 不限），
+抓取纪律和聚焦**完全同一套**。目前接入的是上面那两个源：
 
 | 机制 | 默认值 | 说明 |
 |---|---|---|
@@ -283,17 +279,16 @@ Windows 桌面壁纸自动轮换工具。图来自四个公开图源（只下到
 | 耗尽退避 | 连续 3 轮"新增 0"后 | 改成每天只试一轮；日志每天只留一行聚合，不再每轮刷屏 |
 | 老图回收 | 间隔 ≥ 30 天 | 够久没出现的老图重新排回轮换（本地还在就直接用，零下载）；文件已经不在了才重新下 |
 
-**说清楚一件事**：任何源池都会"抓到头"（NASA 条目虽多，但程序按关键词一批批取；聚焦约 800+ 张、
-官方每天只新增几张）。所以才有上面这四道机制 —— 抓到头不会报错、也不会空转，而是**退避 + 用老图循环**，
-永远有图可换；哪天源上有了新图，下一轮就会自己恢复正常频率。
+**说清楚一件事**：任何源池都会"抓到头"（聚焦约 800+ 张、官方每天只新增几张）。所以才有上面这四道
+机制 —— 抓到头不会报错、也不会空转，而是**退避 + 用老图循环**，永远有图可换；哪天源上有了新图，
+下一轮就会自己恢复正常频率。
 
 **授权（重要）**：
 
 - 图只**下载到你自己电脑上**，不随发行版打包分发，也不上传到任何地方；
-- **NASA 图像库**是 NASA 公开素材（多为公有领域 / NASA 版权）；**大都会博物馆**只取
-  `isPublicDomain == true` 的**公域**作品，非公域的一律不看（程序逐张校验）；
+- 接入**公版库**类图源时，程序**逐张校验公版标记**，非公域的一律不看；
 - 图片版权归**原提供方**，仅供个人桌面使用，请遵守各图源的使用条款；
-- 本项目与 NASA、大都会博物馆、微软等**均无隶属关系**，名称只用于描述图片来源。
+- 本项目与各图源厂商**均无隶属关系**，名称只用于描述图片来源。
 
 `[4]` 填充方式改完**立刻应用到当前这张壁纸**，当场就能看到效果。
 
@@ -311,8 +306,6 @@ Windows 桌面壁纸自动轮换工具。图来自四个公开图源（只下到
 ```
 <图片文件夹>\壁纸\必应     必应每日一图
 <图片文件夹>\壁纸\聚焦     Windows 聚焦
-<图片文件夹>\壁纸\NASA     NASA 图像库（NASA 公开素材）
-<图片文件夹>\壁纸\名画     大都会博物馆名画（仅公域作品）
 ```
 
 如果你的「图片」在 C 盘，它会挪到别的盘去 —— 壁纸天天攒，几年下来好几个 GB，
@@ -458,7 +451,10 @@ MIT
    通过之后产物在构建流程中自动签名，用于缓解"单文件自解压 + 自动升级"被安全软件误报的问题。
    现状说明：**目前发布的 exe 没有数字签名**，所以杀软可能报毒 —— 请以发行页上的 SHA256 自行核对。
 2. **更多图源评估**：现在只有必应每日一图与 Windows 聚焦两个微软官方图源。
-   评估新图源的标准是"本地优先、失败可回退、不收集数据"，宁可不加也不塞一个会拖慢启动的源。
+   程序内部已经是可插拔图源结构（加一个源只需加一条定义 + 它的搜索/取图两个函数），
+   评估新图源的标准是"本地优先、失败可回退、不收集数据"，外加一条**出图必须适合当壁纸**
+   （接近 16:9：方形图铺满会裁掉主体，超宽长卷铺满会留两条空）——
+   2026-10-09 就因为这个原因摘掉了两个试过的图源。宁可不加也不塞一个会拖慢启动、或出的图不能看的源。
 3. **安装体验优化**：保持绿色单文件（不引入安装器），把"首次运行"再做省心一点 ——
    减少第一次双击时的等待与提示条数，让"下载 → 双击 → 有壁纸"这条路上没有需要读文档的步骤。
 

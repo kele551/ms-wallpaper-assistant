@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 一键打包: 把 launcher.py + core.ps1 + menu.ps1 + 使用说明.txt + 图标
 打成一个单文件绿色 exe。
@@ -72,12 +72,12 @@ VSVersionInfo(
         '080404b0',
         [
           StringStruct('CompanyName', 'HaiFeng (kele551)'),
-          StringStruct('FileDescription', '桌面壁纸 - 必应每日一图 + Windows 聚焦 + NASA / 大都会名画'),
+          StringStruct('FileDescription', '桌面壁纸 - 必应每日一图 + Windows 聚焦'),
           StringStruct('FileVersion', '{v}'),
           StringStruct('InternalName', 'MSWallpaperAssistant'),
           StringStruct('LegalCopyright', 'Copyright (C) 2026 HaiFeng (kele551)'),
           StringStruct('OriginalFilename', '微软壁纸助手.exe'),
-          StringStruct('ProductName', '微软壁纸助手'),
+          StringStruct('ProductName', '桌面壁纸'),
           StringStruct('ProductVersion', '{v}'),
         StringStruct('Comments', 'gitee.com/kele551/ms-wallpaper-assistant')
         ]
