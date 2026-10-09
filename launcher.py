@@ -13,7 +13,10 @@
 
 * 数据放用户目录 (%LOCALAPPDATA%\\微软壁纸助手), 程序 exe 旁边**不放任何东西** ——
   放在 Program Files 也不会在旁边生出一个数据文件夹。删掉那个目录 = 彻底卸载,
-  不写注册表、不装计划任务、不需要管理员。
+  不写自启动注册表项、不装服务与计划任务、不需要管理员。
+  (唯一的例外与对外文档一致: 设壁纸时按 Windows 标准做法调 SystemParametersInfo,
+   填充方式 WallpaperStyle / TileWallpaper 写在 HKCU\\Control Panel\\Desktop,
+   写前先比对, 值相同就不写。)
   真要带着数据一起走 (U 盘), 在数据目录里放一个空的 portable.txt 就切回"跟着 exe 走"。
 
 * 首次运行会把内嵌的 core.ps1 / menu.ps1 释放到数据目录, 并记录版本号;

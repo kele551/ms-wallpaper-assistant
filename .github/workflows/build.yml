@@ -1,0 +1,84 @@
+name: build
+
+# 这个工作流只做一件事：在干净的 Windows runner 上，用仓库里的真实构建脚本
+# 把成品打出来，并把 SHA256 打印+存档，证明"发布产物确实由本仓库源码构建"。
+# 它不发布、不上传 Release、不签名（签名步骤见 CODE_SIGNING_POLICY.md，用占位注释标出）。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows 打包 + SHA256
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          # 与本地打包环境一致：Python 3.13
+          python-version: '3.13'
+
+      - name: 安装 PyInstaller
+        # 本项目打包**只需要 pyinstaller**，主程序与打包脚本都只用标准库
+        run: python -m pip install --disable-pip-version-check "pyinstaller==6.22.3"
+
+      - name: 打包（仓库里的真实构建脚本）
+        # --release 会额外产出带版本号的 exe 与 ASCII 名 zip；脚本自己会先检查
+        # core.ps1 / menu.ps1 是 UTF-8 带 BOM，缺 BOM 直接拒绝打包。
+        run: python build-exe.py --release
+
+      - name: 整理产物 + 生成 SHA256 清单
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist-staging | Out-Null
+          Get-ChildItem -File -Filter *.exe | Copy-Item -Destination dist-staging
+          Get-ChildItem -File -Filter *.zip | Copy-Item -Destination dist-staging
+          $lines = foreach ($f in (Get-ChildItem -File dist-staging | Sort-Object Name)) {
+            $h = (Get-FileHash -Algorithm SHA256 -LiteralPath $f.FullName).Hash
+            '{0}  {1}  {2} bytes' -f $h, $f.Name, $f.Length
+          }
+          $lines | Set-Content -Encoding utf8 dist-staging\SHA256SUMS.txt
+          Write-Host '===== SHA256 ====='
+          $lines | ForEach-Object { Write-Host $_ }
+
+      - name: 版本号自证
+        shell: pwsh
+        run: |
+          $txt = Get-Content -Raw launcher.py
+          if ($txt -match "VERSION\s*=\s*'([0-9.]+)'") {
+            Write-Host ("源码 VERSION = " + $Matches[1])
+            "源码 VERSION = $($Matches[1])" | Add-Content -Encoding utf8 dist-staging\SHA256SUMS.txt
+          } else {
+            throw '在 launcher.py 里找不到 VERSION 常量'
+          }
+          $vj = Get-Content -Raw version.json | ConvertFrom-Json
+          Write-Host ("version.json = " + $vj.version)
+          "version.json = $($vj.version)" | Add-Content -Encoding utf8 dist-staging\SHA256SUMS.txt
+          $exe = Get-Item '微软壁纸助手.exe'
+          Write-Host ("exe 文件版本 = " + $exe.VersionInfo.FileVersion)
+          Write-Host ("exe 大小     = " + $exe.Length + " B")
+
+      # ── 代码签名占位 ───────────────────────────────────────────────
+      # 本项目正在申请 SignPath Foundation 提供的免费代码签名（见 CODE_SIGNING_POLICY.md）。
+      # 通过之后，签名步骤插在这里：对 dist-staging 里的 exe 签名，**然后再**算上面那份 SHA256。
+      # 现在没有签名，所以产物是未签名的 —— 请以 SHA256SUMS.txt 自行核对来源。
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: 微软壁纸助手-build-${{ github.sha }}
+          path: dist-staging/
+          if-no-files-found: error
+          retention-days: 30
