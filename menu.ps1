@@ -579,6 +579,14 @@ function Show-BwSourceSetting([string]$key) {
     $capTxt = '不限'
     if ($cap -gt 0) { $capTxt = ($cap.ToString() + ' 张') }
     $kws = @(Get-BwSrcKeywords $c $key)
+    $minW = Get-BwSrcMinWidth $c $key
+    $fullW = Get-BwSrcFullWidth $c $key
+    $toSec = Get-BwSrcTimeoutSec $c
+    $minTxt = '不限'
+    if ($minW -gt 0) { $minTxt = ('' + $minW + ' 像素') }
+    $fullTxt = '不限'
+    if ($fullW -gt 0) { $fullTxt = ('' + $fullW + ' 像素') }
+    $landOnly = Get-BwSrcLandscapeOnly $c $key
     Clear-Host
     Write-Host ('========== 图源: ' + $def.Name + ' ==========') -ForegroundColor Cyan
     Write-Host ''
@@ -594,6 +602,19 @@ function Show-BwSourceSetting([string]$key) {
     Write-Host ('  库目录      ' + $dir)
     Write-Host ('  状态        ' + (Get-BwSrcStatusLine $key)) -ForegroundColor DarkGray
     Write-Host ('  关键词      ' + ($kws -join ' / '))
+    Write-Host ''
+    # 2026-10-09 画质门槛: 两道宽度线 + 画幅 + 下载超时, 都在这儿改。
+    Write-Host '  —— 画质门槛 —— ' -ForegroundColor DarkGray
+    Write-Host ('  [w] 进库最低宽度   ' + $minTxt + '   (比它窄的图直接跳过, 不下载落盘)')
+    Write-Host ('  [f] 铺满屏幕宽度   ' + $fullTxt + '   (到了才裁剪铺满; 两条线中间的走「不放大」: 1:1 居中 + 模糊底)')
+    if ([bool]$def.LandscapeOnly) {
+      $landTxt = '关'
+      if ($landOnly) { $landTxt = '开' }
+      Write-Host ('  [l] 只收横图       ' + $landTxt + '   (开 = 宽高比 >= 1.3 才收, 竖幅/方形不要)')
+    } else {
+      Write-Host '      画幅           只收横图(宽高比 >= 1.0, 竖图跳过), 固定不可改'
+    }
+    Write-Host ('  [t] 单张下载超时   ' + $toSec + ' 秒   (超时就放弃、换下一张; 同一个源连着 ' + 2 + ' 张超时就歇 ' + $global:BWSrcSlowMinutes + ' 分钟)')
     Write-Host ''
     Write-Host '  抓取纪律和其它图源一样: 每轮最多 ' + $c.fetch_round_cap + ' 张、每天最多 ' + $c.fetch_day_cap + ' 张,'
     Write-Host '  库满就不再补; 抓不到新图会自动歇一歇(每天只试一轮); 老图 ' + $c.recycle_min_days + ' 天后重新参与轮换。'
@@ -661,6 +682,89 @@ function Show-BwSourceSetting([string]$key) {
         Write-Host '  要填一个数字 (0 = 不限), 没改。' -ForegroundColor Yellow
       }
       Pause-Bw
+    } elseif (($k -eq 'w') -or ($k -eq 'f')) {
+      # 2026-10-09 画质门槛: [w] = 进库最低宽度(低于它的图直接跳过), [f] = 铺满屏幕宽度。
+      $isMin = ($k -eq 'w')
+      $ck = [string]$def.MinKey
+      $curV = $minW
+      if (-not $isMin) { $ck = [string]$def.FullKey; $curV = $fullW }
+      Write-Host ''
+      if ($isMin) {
+        Write-Host ('  这是 ' + $def.Name + ' 的「进库最低宽度」: 比它窄的图**直接跳过**, 不落盘、不进库。')
+        Write-Host '  设它是为了"别把太小的画放进轮换" —— 太小的图放中间也不好看。0 = 不限(来者不拒)。'
+      } else {
+        Write-Host ('  这是 ' + $def.Name + ' 的「铺满屏幕宽度」: 图宽到了这条线, 才按「填充」裁剪铺满(最锐)。')
+        Write-Host '  卡在两条线中间的图**不放大**: 原图 1:1 居中, 四周用同一张图放大模糊铺底。'
+        Write-Host '  在任何情况下, 程序都不会把小图拉大 —— 糊就是这么来的。0 = 不限。'
+      }
+      Write-Host ''
+      Write-Host ('  能填 ' + $global:BwLimit[$ck].Min + ' ~ ' + $global:BwLimit[$ck].Max + ' 像素, 0 = 不限。')
+      Write-Host ('  本机屏幕宽 ' + (Get-BwScreenSize).W + ' 像素(合成壁纸按屏幕物理像素做)。') -ForegroundColor DarkGray
+      $curTxt = '不限'
+      if ($curV -gt 0) { $curTxt = ('' + $curV + ' 像素') }
+      $v = Read-Host ('  填多少? (现在 ' + $curTxt + ', 回车不改)')
+      $vv = Normalize-BwKey $v
+      if (-not $v) {
+        # 直接回车 = 不改
+      } elseif ($vv -match '^\d+$') {
+        $vvN = 0
+        if (-not [int]::TryParse($vv, [ref]$vvN)) { $vvN = $global:BwLimit[$ck].Max + 1 }
+        $v2 = Limit-BwNum $vvN $ck
+        if (($v2 -ne $vvN) -and ($vvN -ne 0)) {
+          Write-Host ('  ' + $vv + ' 出界了, 按 ' + $v2 + ' 算。') -ForegroundColor Yellow
+        }
+        Add-Member -InputObject $c NoteProperty $ck $v2 -Force
+        Save-BwConfig $c
+        $show = '不限'
+        if ($v2 -gt 0) { $show = ('' + $v2 + ' 像素') }
+        if ($isMin) { Write-Host ('  好了: ' + $def.Name + ' 只收宽度 >= ' + $show + ' 的图。') -ForegroundColor Green }
+        else { Write-Host ('  好了: ' + $def.Name + ' 宽度 >= ' + $show + ' 才铺满, 中间的走「不放大」。') -ForegroundColor Green }
+        Log ('设置: ' + $def.Name + ' ' + $ck + ' -> ' + $v2)
+      } else {
+        Write-Host '  要填一个数字 (0 = 不限), 没改。' -ForegroundColor Yellow
+      }
+      Pause-Bw
+    } elseif ($k -eq 'l') {
+      if (-not [bool]$def.LandscapeOnly) {
+        Write-Host '  这个源没有这一项。'
+        Start-Sleep -Milliseconds 800
+      } else {
+        $want = (-not $landOnly)
+        Add-Member -InputObject $c NoteProperty 'met_landscape_only' $want -Force
+        Save-BwConfig $c
+        if ($want) { Write-Host '  好了: 名画只收横图(宽高比 >= 1.3); 竖幅/方形的不要。' -ForegroundColor Green }
+        else { Write-Host '  好了: 名画横图竖图都收(竖幅在 16:9 屏上会以「不放大」方式居中显示)。' -ForegroundColor Green }
+        Log ('设置: 名画只收横图 -> ' + $want)
+        Pause-Bw
+      }
+    } elseif ($k -eq 't') {
+      Write-Host ''
+      Write-Host '  单张图下载最多等多久。名画图床实测能慢到 ~130 秒/张:'
+      Write-Host '  一张一张硬等下去, 一轮补货要跑几十分钟, 后面排队的源全被挡住。'
+      Write-Host '  超过这个秒数就放弃这一张(记一次失败), 换下一张; 同一个源连着 2 张超时就歇一会儿再来。'
+      Write-Host ('  能填 ' + $global:BwLimit['src_timeout_sec'].Max + ' 秒以内的整数(0 = 用默认的 20 秒)。')
+      Write-Host '  这里是**一定要有超时**的: 填 0 不是"不限", 而是回到默认的 20 秒。' -ForegroundColor DarkGray
+      Write-Host ''
+      $v = Read-Host ('  最多等多少秒? (现在 ' + $toSec + ' 秒, 回车不改)')
+      $vv = Normalize-BwKey $v
+      if (-not $v) {
+        # 不改
+      } elseif ($vv -match '^\d+$') {
+        $vvN = 0
+        if (-not [int]::TryParse($vv, [ref]$vvN)) { $vvN = $global:BwLimit['src_timeout_sec'].Max + 1 }
+        $v2 = Limit-BwNum $vvN 'src_timeout_sec'
+        if ($v2 -ne $vvN) { Write-Host ('  ' + $vv + ' 秒出界了, 按 ' + $v2 + ' 秒算。') -ForegroundColor Yellow }
+        Add-Member -InputObject $c NoteProperty 'src_timeout_sec' $v2 -Force
+        Save-BwConfig $c
+        # 真正生效的秒数走一遍读函数(0 会变成默认 20, 1~4 会抬到 5), 免得界面报的数跟实际不一样
+        $eff = Get-BwSrcTimeoutSec (Get-BwConfig)
+        if ($v2 -eq 0) { Write-Host ('  好了: 回到默认的 ' + $eff + ' 秒。') -ForegroundColor Green }
+        else { Write-Host ('  好了: 单张最多等 ' + $eff + ' 秒。') -ForegroundColor Green }
+        Log ('设置: 单张下载超时 -> ' + $v2 + ' 秒(实际按 ' + $eff + ' 秒跑)')
+      } else {
+        Write-Host '  要填一个数字(秒), 没改。' -ForegroundColor Yellow
+      }
+      Pause-Bw
     } elseif ($k -eq 'g') {
       Write-Host ''
       $want = [int]$c.spotlight_per_cycle
@@ -726,6 +830,10 @@ function Show-BwSettings {
     $afOn = '关'
     if ([bool]$c.auto_fetch) { $afOn = '开' }
     Write-Host ('  [0] 自动补新图      ' + $afOn + '  · 关着就只在现有这些图里轮换')
+    # 2026-10-09 用户要求: 不到屏幕宽的图**绝不放大** —— 糊的唯一来源就是拉大。
+    $fitOn = '关'
+    if (Test-BwArtFitOn $c) { $fitOn = '开' }
+    Write-Host ('  [a] 小图不放大      ' + $fitOn + '  · 开 = 1:1 居中 + 同图模糊底; 关 = 拉大铺满(会糊)')
     Write-Host ''
     # 2026-10-09: 两个新图源与「必应」「聚焦」平级 —— 开关与关键词都在 [n]/[m] 里改
     $nasaOn = '关'
@@ -981,6 +1089,35 @@ function Show-BwSettings {
       }
       'n' { Show-BwSourceSetting 'nasa' }
       'm' { Show-BwSourceSetting 'met' }
+      'a' {
+        Clear-Host
+        Write-Host '========== 小图显示方式 ==========' -ForegroundColor Cyan
+        Write-Host ''
+        Write-Host ('  现在: ' + $fitOn)
+        Write-Host ''
+        Write-Host '  说的是"图比屏幕窄"的时候怎么显示(比如名画只有 1800 像素, 屏幕 2560):'
+        Write-Host '    [1] 开   不放大: 原图按 1:1 放在正中间, 四周用同一张图放大模糊铺底 (推荐)'
+        Write-Host '             画面是原图本来的清晰度, 不裁掉主体, 也不留黑边。'
+        Write-Host '    [2] 关   老样子: 按「填充」拉大铺满 —— 会糊, 而且小图尤其明显。'
+        Write-Host ''
+        Write-Host '  比屏幕宽的图(必应/聚焦的 4K)不受影响, 一直是裁剪铺满。' -ForegroundColor DarkGray
+        Write-Host ''
+        Write-Host '  [q] 返回'
+        Write-Host ''
+        $k3 = Normalize-BwKey (Read-Host '  选哪个')
+        if (($k3 -eq '1') -or ($k3 -eq '2')) {
+          $c3 = Get-BwConfig
+          $want = ($k3 -eq '1')
+          $val = 'off'
+          if ($want) { $val = 'on' }
+          Add-Member -InputObject $c3 NoteProperty 'art_fit_mode' $val -Force
+          Save-BwConfig $c3
+          if ($want) { Write-Host '  好了: 小图不放大, 改成「1:1 居中 + 模糊底」。下一张换图就生效。' -ForegroundColor Green }
+          else { Write-Host '  好了: 小图还是拉大铺满(会糊)。' -ForegroundColor Yellow }
+          Log ('设置: 小图不放大 -> ' + $val)
+        }
+        Pause-Bw
+      }
       'q' { $back = $true }
       default { }
     }
