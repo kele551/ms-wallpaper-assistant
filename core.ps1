@@ -1059,6 +1059,14 @@ function Invoke-BwLauncherUpdate {
   $hl += 'while ($k -lt 10) { try { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction Stop; break } catch { Start-Sleep -Milliseconds 500; $k++ } }'
   $head = @(
     '$ErrorActionPreference = ''Continue'''
+    # 2026-10-09 真因修复(与狐径同一根因, 真机事故查出来的):
+    # 升级小助手是**从主程序里起的**, 会继承主程序(PyInstaller 单文件 exe)的 _PYI_* 变量;
+    # 新版本自己也是单文件 exe, 它的引导程序一看到 _PYI_PARENT_PROCESS_LEVEL 就以为
+    # "我是子进程、已经解过包了", 于是跳过解包、去找那个早已被删掉的 _MEIxxxx 临时目录,
+    # 结果 Failed to load Python DLL —— 新版永远起不来(用户看到的是"升级后程序没了")。
+    # 所以起新版本之前, 先把这些变量从环境里擦掉(脚本里擦一次 + 主程序侧再擦一次, 双保险)。
+    '$pyi = ''_PYI_PARENT_PROCESS_LEVEL'',''_PYI_APPLICATION_HOME_DIR'',''_PYI_ARCHIVE_FILE'',''_PYI_SPLASH_IPC'',''_MEIPASS'',''_MEIPASS2'''
+    'foreach ($n in $pyi) { Remove-Item -LiteralPath (''Env:'' + $n) -ErrorAction SilentlyContinue }'
     ('$exe = ' + (Q-Str $exe))
     ('$new = ' + (Q-Str $nu))
     ('$log = ' + (Q-Str $logf))
