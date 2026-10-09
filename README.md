@@ -5,7 +5,7 @@
 A small, free, open-source Windows utility — a single portable `.exe` — that downloads
 Microsoft's own wallpaper sources (the **Bing daily image** and **Windows Spotlight**, 4K)
 and rotates them as your desktop wallpaper on a schedule. No installer, no administrator
-rights, no registry writes; all images stay on your own machine.
+rights; all images stay on your own machine.
 
 > 作者 / Author: **HaiFeng (kele551)** · Gitee（主）: <https://gitee.com/kele551/ms-wallpaper-assistant> · GitHub（镜像）: <https://github.com/kele551/ms-wallpaper-assistant>
 
@@ -15,7 +15,10 @@ rights, no registry writes; all images stay on your own machine.
 - **Automatic rotation** at an interval you choose (default: 30 minutes)
 - **Never repeats**: it remembers which images you have already seen, and keeps a favourites list
 - **Catches up**: if your PC was off for days, missed Bing images are backfilled automatically
-- **Green / portable**: one `.exe`; no installer, **no administrator rights, no registry writes**
+- **Green / portable**: one `.exe`; no installer, **no administrator rights, no autostart
+  registry entry, no service, no scheduled task**. The only registry value it may write is
+  Windows' own wallpaper settings under `HKCU\Control Panel\Desktop`
+  (`WallpaperStyle` / `TileWallpaper`), and only when you change the wallpaper fit mode
 - **Quiet**: no window flash, no popups; it also skips swapping while your screen is locked
   or you are away from the computer
 - **Sleep-friendly**: it requests no wake state, changes no power settings, plays no audio,
@@ -95,7 +98,11 @@ Windows 桌面壁纸自动轮换工具。图全都来自微软官方，两个图
 它有几个地方跟别的壁纸软件不一样：
 
 - **不用安装** —— 下载一个 exe，双击就用
-- **不要管理员权限**，不写注册表，不装计划任务
+- **不要管理员权限**，不写自启动注册表项、不装服务与计划任务
+- **改写系统的只有一件事**：设壁纸走 Windows 标准做法
+  （`SystemParametersInfo(SPI_SETDESKWALLPAPER)`），其中「壁纸填充方式」写在 Windows 自己的
+  `HKCU\Control Panel\Desktop`（`WallpaperStyle` / `TileWallpaper`，与系统「个性化」是同一个位置），
+  **写前先比对，值相同就不写；不改系统代理、不改 DNS、不改 hosts**
 - **后台换图时一个窗口都不闪**，你根本感觉不到它在跑
 - **几天没开机也不漏图** —— 错过的必应壁纸会自动补齐
 - **图片都存在你自己电脑上**，不上传任何东西
@@ -110,6 +117,9 @@ Windows 桌面壁纸自动轮换工具。图全都来自微软官方，两个图
 - [壁纸存哪？能自己删吗？](#壁纸存哪能自己删吗)
 - [常见问题](#常见问题)
 - [版本迭代](#版本迭代)
+- [代码签名政策](CODE_SIGNING_POLICY.md)
+- [贡献指南](CONTRIBUTING.md)　·　[安全政策](SECURITY.md)
+- [路线图（Roadmap）](#路线图roadmap)　·　[参与贡献与治理](#参与贡献与治理)
 - [许可](#许可)
 
 ---
@@ -275,7 +285,8 @@ Windows 桌面壁纸自动轮换工具。图全都来自微软官方，两个图
 
 好不好用、哪儿别扭、还想要什么功能 —— 都欢迎说，一句两句也行：
 
-- **发邮件**：75219857 @qq.com
+- **提 Issue**（推荐）：[GitHub Issues](https://github.com/kele551/ms-wallpaper-assistant/issues)　·　[Gitee Issues](https://gitee.com/kele551/ms-wallpaper-assistant/issues)
+- 也可以直接在 [Gitee 仓库](https://gitee.com/kele551/ms-wallpaper-assistant) 留言
 
 顺手带上这几样，能省一轮来回：
 
@@ -289,16 +300,16 @@ Windows 桌面壁纸自动轮换工具。图全都来自微软官方，两个图
 
 本项目**完全从本仓库源码构建**，产物只有一个 exe，任何人可复现：
 
-`powershell
+```powershell
 pip install "pyinstaller==6.22.3"
 # 在仓库根目录执行：脚本会先检查所有 .ps1 都是 UTF-8 带 BOM，再开始打包
 python build-exe.py --release
 # 产出：微软壁纸助手.exe（单文件，内含 core.ps1 / menu.ps1 / 使用说明.txt / 图标）
-`
+```
 
 - 入口程序：launcher.py　负载：core.ps1、menu.ps1、使用说明.txt、微软壁纸助手.ico
-- 打包脚本：uild-exe.py（写入 exe 版本信息与图标）
-- 发布脚本：	ools/publish.py（生成升级源 ersion.json、Gitee + GitHub 双平台发布与下载验真）
+- 打包脚本：build-exe.py（写入 exe 版本信息与图标）
+- 发布脚本：tools/publish.py（生成升级源 version.json、Gitee + GitHub 双平台发布与下载验真）
 - 发布历史：CHANGELOG.md
 
 Releases are built from the source code in this repository; the build command is the one above.
@@ -329,7 +340,9 @@ Releases are built from the source code in this repository; the build command is
 **卸载（Uninstallation）**
 
 见《使用说明》的「卸载」一节：菜单 [S] → [6] 关闭自动换并删除桌面快捷方式，
-再删除 exe 与数据目录即可 —— 不写注册表、不改系统设置。
+再删除 exe 与数据目录即可 —— 不写自启动注册表项、不装服务与计划任务、不改系统代理/DNS/hosts。
+（「壁纸填充方式」写在 `HKCU\Control Panel\Desktop` 的那两个值属于 Windows 自己的壁纸设置，
+程序退出时不会去动它；想恢复默认，在系统「个性化 → 背景」里改一次即可。）
 
 ## 版本迭代
 
@@ -377,3 +390,29 @@ v1.5 里面各小版本都改了什么：
 ## 许可
 
 MIT
+
+## 路线图（Roadmap）
+
+按优先级从高到低，都是已经排进计划、能落到代码上的事：
+
+1. **代码签名**：README 已公开[代码签名政策](#code-signing-policy代码签名政策)（申请 SignPath 免费签名）。
+   通过之后产物在构建流程中自动签名，用于缓解"单文件自解压 + 自动升级"被安全软件误报的问题。
+   现状说明：**目前发布的 exe 没有数字签名**，所以杀软可能报毒 —— 请以发行页上的 SHA256 自行核对。
+2. **更多图源评估**：现在只有必应每日一图与 Windows 聚焦两个微软官方图源。
+   评估新图源的标准是"本地优先、失败可回退、不收集数据"，宁可不加也不塞一个会拖慢启动的源。
+3. **安装体验优化**：保持绿色单文件（不引入安装器），把"首次运行"再做省心一点 ——
+   减少第一次双击时的等待与提示条数，让"下载 → 双击 → 有壁纸"这条路上没有需要读文档的步骤。
+
+> 路线图只列真实在办的事，做完一项改一项；临时想到的、还没验证的想法不写在这里。
+
+## 参与贡献与治理
+
+| 项目 | 说明 |
+| --- | --- |
+| 维护者 | [@kele551](https://github.com/kele551)（海风），一人维护，同时担任提交者、审查者与发布批准者 |
+| 响应预期 | Issue / PR 一般 **7 天内**给第一次答复；安全类问题按 [SECURITY.md](SECURITY.md) 私下走，**3 天内**响应 |
+| 许可 | MIT（见 [LICENSE](LICENSE)）；提交贡献即表示同意按同一许可发布 |
+| 怎么参与 | 提 Issue / PR 之前先看 [CONTRIBUTING.md](CONTRIBUTING.md)：Issue 模板、PR 流程、代码风格、本地构建与自查、提交信息规范都在里面 |
+| 安全 | 漏洞请**不要**开公开 Issue，按 [SECURITY.md](SECURITY.md) 私下报告 |
+| 持续集成 | [.github/workflows/build.yml](.github/workflows/build.yml) 在 Windows runner 上真实打包并输出 SHA256（每天构建只需 `pyinstaller`，运行主程序**零第三方依赖**） |
+| 发布纪律 | 发版前必须跑发版前自检并全绿（版本一致性、成品与升级源同源、`.ps1` 的 BOM 与语法、对外文档不含私人邮箱），红一条不许发 |

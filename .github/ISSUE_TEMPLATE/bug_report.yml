@@ -1,0 +1,72 @@
+name: 🐞 报告问题（Bug report）
+description: 程序行为不对、报错、或者跟文档写的不一样
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。填之前先扫一眼这几条，能省一轮来回：
+
+        - **先看常见问题**：README 的「常见问题」一节与 `使用说明.txt` 里已经写过大部分"看着像坏了、其实是设置问题"的情况。
+        - **日志最有价值**：菜单按 `[L]` 能看到 `wallpaper.log`，把**末尾十几行**贴上来就够了（里面没有隐私信息）。
+        - **安全类问题不要发在这里**：如果你怀疑是安全漏洞，请按 [SECURITY.md](../blob/main/SECURITY.md) 私下报告。
+
+  - type: input
+    id: version
+    attributes:
+      label: 程序版本号
+      description: 菜单标题上就有（形如 `v2.0.10`）；鼠标悬停 exe 也能看到
+      placeholder: "v2.0.10"
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows 版本
+      description: 设置 → 系统 → 关于，例如「Windows 11 专业版 24H2（26100）」
+      placeholder: "Windows 11 专业版 24H2（26100）"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: 你是怎么装的
+      options:
+        - 下载官方 zip 解压后双击（绿色版）
+        - 从旧版本自动升级上来的
+        - 自己从源码构建的
+        - 其它（在下面说明）
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: 出了什么问题
+      description: 你做了什么、期望看到什么、实际看到什么。有截图更好（直接拖进来）
+      placeholder: |
+        1. 我按了 [2] 改成每轮 3 张
+        2. 期望：设置保存成功
+        3. 实际：提示出错，重开菜单发现设置没变
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: 日志末尾十几行
+      description: 菜单按 `[L]` 打开日志文件，复制最后十几行贴在这里
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 其它线索
+      description: 杀软/安全软件的提示、壁纸库所在盘、是不是刚改过设置等，都写在这里
+    validations:
+      required: false

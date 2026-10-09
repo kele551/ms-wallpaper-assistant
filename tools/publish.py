@@ -161,12 +161,12 @@ def git_commit_push(ver, files):
     run(['git', 'add'] + files)
     msg = 'release: v%s' % ver
     if run(['git', 'diff', '--cached', '--name-only']).strip():
-        run(['git', '-c', 'user.name=kele551', '-c', 'user.email=75219857@qq.com',
+        run(['git', '-c', 'user.name=kele551', '-c', 'user.email=kele551@users.noreply.github.com',
              'commit', '-m', msg])
     else:
         print('   工作区没有新改动, 跳过本次提交(只补发版)')
     if not run(['git', 'tag', '-l', 'v%s' % ver]).strip():
-        run(['git', '-c', 'user.name=kele551', '-c', 'user.email=75219857@qq.com',
+        run(['git', '-c', 'user.name=kele551', '-c', 'user.email=kele551@users.noreply.github.com',
              'tag', '-a', 'v%s' % ver, '-m', 'v%s' % ver])   # 打 tag 同样要显式带身份
         run(['git', 'push', 'origin', 'v%s' % ver])
     else:
@@ -202,7 +202,7 @@ def update_readme(ver, commit=True):
             print('⑤ README 已更新到 v%s (交给本次提交一起推)' % ver)
             return True
         run(['git', 'add', 'README.md'])
-        run(['git', '-c', 'user.name=kele551', '-c', 'user.email=75219857@qq.com',
+        run(['git', '-c', 'user.name=kele551', '-c', 'user.email=kele551@users.noreply.github.com',
              'commit', '-m', 'docs: README 指向 v%s' % ver])
         run(['git', 'push', 'origin', BRANCH])
         print('⑤ README 已更新并推送')
@@ -423,6 +423,23 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
     # README 必须在**提交之前**改好, 否则本次推送里 README 还是旧版本号 ——
     # 2026-10-05 就是这么把「点这里下载 v2.0.7」推到线上的。
     update_readme(ver, commit=False)
+
+    # ── 发版铁律：先自检、后发布（2026-10-08 用户要求「以后都这样」）──────
+    # 位置：README 已改好、version.json 已生成之后，提交推送之前 ——
+    # 这样自检校验的就是"即将推上去的那一份"。
+    # 要跳过必须显式 --skip-preflight（只给线上事故紧急回滚用）。
+    if '--skip-preflight' in sys.argv:
+        print('   ⚠ 已显式跳过发版前自检（--skip-preflight）—— 请在 logs\\ 里写明原因')
+    else:
+        pf = REPO_DIR.parent / 'tools' / 'preflight_release.py'
+        if not pf.exists():
+            sys.exit('找不到发版前自检脚本 %s —— 不许发布（铁律）' % pf)
+        print('   ── 发版前自检（必须全绿）──')
+        r = subprocess.run([PY, str(pf)], cwd=str(REPO_DIR.parent))
+        if r.returncode != 0:
+            sys.exit('❌ 发版前自检未通过，已中止发布。修好再发（或 --skip-preflight 紧急跳过）')
+        print('   ✅ 自检全绿，继续发布')
+
     git_commit_push(ver, ['CHANGELOG.md', 'README.md', 'core.ps1', 'menu.ps1',
                           'launcher.py', '使用说明.txt', 'version.json'])
     gitee_release(ver, token, assets, notes)

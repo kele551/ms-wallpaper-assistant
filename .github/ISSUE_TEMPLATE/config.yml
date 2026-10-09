@@ -1,0 +1,16 @@
+# Issue 模板选择页的配置。
+# 关掉"空白 Issue"：走模板能把版本号、系统版本、日志一次问清，省掉一两轮来回。
+blank_issues_enabled: false
+
+contact_links:
+  - name: 🔐 报告安全问题（请勿公开）
+    url: https://github.com/kele551/ms-wallpaper-assistant/blob/main/SECURITY.md
+    about: 疑似漏洞、凭据泄露、升级链路被篡改等，请按 SECURITY.md 私下报告，不要开公开 Issue。
+
+  - name: 📖 使用说明与常见问题
+    url: https://github.com/kele551/ms-wallpaper-assistant#常见问题
+    about: 双击没反应、中文乱码、杀软报毒、壁纸存哪、怎么卸载 —— 答案基本都在 README 里。
+
+  - name: 🤝 参与贡献（CONTRIBUTING）
+    url: https://github.com/kele551/ms-wallpaper-assistant/blob/main/CONTRIBUTING.md
+    about: 想提 PR 或从源码构建，先看这份：流程、代码风格、本地自查、提交信息规范。
