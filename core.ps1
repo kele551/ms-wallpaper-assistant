@@ -1,4 +1,4 @@
-﻿# 微软壁纸助手 - 核心库
+﻿# 桌面壁纸 - 核心库
 # 作者: 海风（kele551）   https://gitee.com/kele551/ms-wallpaper-assistant
 # 协作: Cindy（只在源码里留档，不出现在界面上）
 param([switch]$Update, [switch]$Cycle, [switch]$DryRun)
@@ -343,7 +343,7 @@ function Move-BwLibraryFiles([string]$fromBase, [string]$toBase) {
   if ($fb.ToUpper() -eq $tb.ToUpper()) { return 0 }
   if (-not (Test-Path -LiteralPath $fb)) { return 0 }
   $moved = 0
-  foreach ($nm in @('必应', '聚焦')) {
+  foreach ($nm in @('必应', '聚焦', 'NASA', '名画')) {
     $src = Join-Path $fb $nm
     $dst = Join-Path $tb $nm
     if (-not (Test-Path -LiteralPath $src)) { continue }
@@ -358,7 +358,7 @@ function Move-BwLibraryFiles([string]$fromBase, [string]$toBase) {
     if ($left.Count -eq 0) { try { [System.IO.Directory]::Delete($src, $false) } catch {} }
   }
   $still = 0
-  foreach ($nm in @('必应', '聚焦')) { if (Test-Path -LiteralPath (Join-Path $fb $nm)) { $still++ } }
+  foreach ($nm in @('必应', '聚焦', 'NASA', '名画')) { if (Test-Path -LiteralPath (Join-Path $fb $nm)) { $still++ } }
   if ($still -eq 0) { try { [System.IO.Directory]::Delete($fb, $false) } catch {} }
   return $moved
 }
@@ -473,6 +473,9 @@ function Get-BwDefaults {
     base      = $base
     bing      = (Join-Path $base '必应')
     spotlight = (Join-Path $base '聚焦')
+    # 2026-10-09 新增的两个图源: 各自的库目录与「必应」「聚焦」平级(同一个壁纸根下面)
+    nasa      = (Join-Path $base 'NASA')
+    met       = (Join-Path $base '名画')
     reason    = $global:BWBaseReason
   }
   return $global:BWDefaults
@@ -482,6 +485,13 @@ function Ensure-BwDirs {
   $c = Get-BwConfig
   [void](New-BwDir $c.bing_save_dir)
   [void](New-BwDir $c.spotlight_save_dir)
+  # 2026-10-09: 两个新图源(NASA / 名画)的库目录。只建"开着"的那些 ——
+  # 关掉的源不该在用户盘上留一个永远空的文件夹。
+  foreach ($def in @(Get-BwSourceDefs)) {
+    if (-not (Get-BwSrcEnabled $c $def.Key)) { continue }
+    $d = Get-BwSrcDir $c $def.Key
+    if ($d) { [void](New-BwDir $d) }
+  }
   return [bool](Test-Path -LiteralPath $c.bing_save_dir)
 }
 # 真写一个临时文件再删, 比只看目录能不能访问准。
@@ -536,6 +546,31 @@ function Get-BwConfig {
   if (-not $c.PSObject.Properties['fetch_round_cap'])  { Add-Member -InputObject $c NoteProperty fetch_round_cap 6 -Force }
   if (-not $c.PSObject.Properties['fetch_day_cap'])    { Add-Member -InputObject $c NoteProperty fetch_day_cap 20 -Force }
   if (-not $c.PSObject.Properties['recycle_min_days']) { Add-Member -InputObject $c NoteProperty recycle_min_days 30 -Force }
+  # ---- 两个新图源: NASA 图像库 / 大都会博物馆名画 (2026-10-09 用户要求) ----
+  # src_nasa / src_met: 开关, 默认**开**; nasa_keywords / met_keywords: 抓取关键词(逗号分隔);
+  # nasa_cap / met_cap: 各自独立的库容上限(默认 100, 0 = 不限)。
+  # 一律"字段不存在才补" —— 已经装好的用户手里那份 config.json **一个字节都不覆盖**,
+  # 他只是没有这几个新字段而已, 程序按上面的默认值走。
+  if (-not $c.PSObject.Properties['nasa_save_dir']) {
+    $par3 = Split-Path $c.bing_save_dir -Parent
+    if ($par3) { Add-Member -InputObject $c NoteProperty nasa_save_dir (Join-Path $par3 'NASA') -Force }
+    else { Add-Member -InputObject $c NoteProperty nasa_save_dir $d.nasa -Force }
+  }
+  if (-not $c.PSObject.Properties['met_save_dir']) {
+    $par4 = Split-Path $c.bing_save_dir -Parent
+    if ($par4) { Add-Member -InputObject $c NoteProperty met_save_dir (Join-Path $par4 '名画') -Force }
+    else { Add-Member -InputObject $c NoteProperty met_save_dir $d.met -Force }
+  }
+  if (-not $c.PSObject.Properties['src_nasa']) { Add-Member -InputObject $c NoteProperty src_nasa $true -Force }
+  if (-not $c.PSObject.Properties['src_met'])  { Add-Member -InputObject $c NoteProperty src_met $true -Force }
+  if (-not $c.PSObject.Properties['nasa_keywords']) {
+    Add-Member -InputObject $c NoteProperty nasa_keywords 'nebula,galaxy,earth,mars,saturn,astronaut,spacecraft,aurora,jupiter,sun' -Force
+  }
+  if (-not $c.PSObject.Properties['met_keywords']) {
+    Add-Member -InputObject $c NoteProperty met_keywords 'landscape painting,impressionism,van gogh,monet,japanese print,still life,seascape,portrait' -Force
+  }
+  if (-not $c.PSObject.Properties['nasa_cap']) { Add-Member -InputObject $c NoteProperty nasa_cap 100 -Force }
+  if (-not $c.PSObject.Properties['met_cap'])  { Add-Member -InputObject $c NoteProperty met_cap 100 -Force }
   # 队列里的图换完之后, 要不要自动下一批新图? 默认**关**:
   # 库里现有的图轮着用就够了, 不过程序自己跑去下载一堆, 库越攒越大。
   # 想要不断有新图就到菜单里打开它。
@@ -619,6 +654,11 @@ $global:BwLimit = @{
   fetch_round_cap     = @{ Min = 1; Max = 50;   Def = 6;   Zero = $false }
   fetch_day_cap       = @{ Min = 1; Max = 200;  Def = 20;  Zero = $false }
   recycle_min_days    = @{ Min = 1; Max = 3650; Def = 30;  Zero = $false }
+  # 新图源各自的库容上限(张)。0 = 不限; 与 lib_cap 同一个量级与口径。
+  # 独立上限而不是共用 lib_cap: 微软聚焦那种"总共 800+ 张"的池子跟 NASA(几万张)体量差太远,
+  # 共用一个数会让"库满不补"的语义在两边都别扭。
+  nasa_cap            = @{ Min = 5; Max = 2000; Def = 100; Zero = $true  }
+  met_cap             = @{ Min = 5; Max = 2000; Def = 100; Zero = $true  }
 }
 
 # 把一个值按 kind 夹回合法范围。解析不出来的(被人手改成 "abc")退成默认值。
@@ -657,10 +697,13 @@ function Repair-BwConfig([psobject]$c) {
   foreach ($k in @($global:BwLimit.Keys)) {
     if (-not $c.PSObject.Properties[$k]) { continue }
     $new = Limit-BwNum $c.PSObject.Properties[$k].Value $k
+    # 2026-10-09: 用户文件里**根本没有这个字段**时跳过 —— 那种情况是"这一版新加的配置项",
+    # Get-BwConfig 已经给它填了默认值, 不需要(也不该)借这次机会去改写用户手里的 config.json。
+    # 以前这里会把"字段不存在"当成 -1、判成"超出范围", 于是进一次设置页就顺手改了用户的文件,
+    # 还打一句"配置里有数字超出允许范围, 已夹回: nasa_cap -1 -> 100"的假警报。
+    if (-not ($raw -and $raw.PSObject.Properties[$k])) { continue }
     $oldN = -1
-    if ($raw -and $raw.PSObject.Properties[$k]) {
-      try { $oldN = [int]$raw.PSObject.Properties[$k].Value } catch { $oldN = -1 }
-    }
+    try { $oldN = [int]$raw.PSObject.Properties[$k].Value } catch { $oldN = -1 }
     if ($oldN -ne $new) {
       $c.PSObject.Properties[$k].Value = $new
       $fix += ($k + ' ' + $oldN + ' -> ' + $new)
@@ -750,7 +793,7 @@ $global:BWUpW = 22
 function Show-BwUpGradeHead([string]$from, [string]$to) {
   Write-Host ''
   Write-Host '  ============================================' -ForegroundColor Cyan
-  Write-Host '            微软壁纸助手 · 在线升级' -ForegroundColor Cyan
+  Write-Host '            桌面壁纸 · 在线升级' -ForegroundColor Cyan
   Write-Host '  ============================================' -ForegroundColor Cyan
   Write-Host ''
   # 版本迁移: 箭头沿着轨道流动, 最后变成一条实线箭头
@@ -1827,14 +1870,24 @@ function Get-BwSeenDays($s, [string]$key, [DateTime]$now) {
 # 这张**以前看过**的老图, 现在允许再排进来 / 重新下载吗?
 #   约束: 距上次看到至少 $minDays 天; 时间戳不明的用「看过」名单的位置当年龄
 #   (只在最近 20 条之外才算老); -AnyAge 用于"库整个空了"的补救(那时有图最重要)。
-function Test-BwOldImageReusable($s, [string]$key, [DateTime]$now, [int]$minDays, [switch]$AnyAge) {
+# 2026-10-09: 判定逻辑抽成"名单 + 时间戳表"的通用版本 —— 聚焦用 state.json 的
+# history/hist_at, 两个新图源用 sources.json 的 rot 表(键 -> 最近一次换到桌面的时刻),
+# 两边走的是**同一段代码**, 口径不会跑偏。外层那个 Test-BwOldImageReusable 保持原签名不变。
+function Test-BwOldKeyReusable($seenList, $seenAt, [string]$key, [DateTime]$now, [int]$minDays, [switch]$AnyAge) {
   if (-not $key) { return $false }
-  $d = Get-BwSeenDays $s $key $now
+  $d = -1
+  if ($seenAt -and $seenAt.ContainsKey([string]$key)) {
+    $t = Get-BwTime ([string]$seenAt[[string]$key])
+    if ($t) {
+      $d = [int][Math]::Floor(($now - $t).TotalDays)
+      if ($d -lt 0) { $d = 0 }
+    }
+  }
   if ($d -ge 0) {
     if ($AnyAge) { return ($d -ge 1) }
     return ($d -ge $minDays)
   }
-  $h = @(Get-BwHist $s)
+  $h = @($seenList)
   $idx = -1
   for ($i = 0; $i -lt $h.Count; $i++) { if ([string]$h[$i] -eq [string]$key) { $idx = $i; break } }
   if ($idx -ge 0) {
@@ -1844,6 +1897,9 @@ function Test-BwOldImageReusable($s, [string]$key, [DateTime]$now, [int]$minDays
   # 名单里也没有 -> 只可能在下载流水里(下过但一次都没轮到看)。库空的时候放行, 平时不放 ——
   # 流水里上千条, 不能凭位置猜年龄。
   return [bool]$AnyAge
+}
+function Test-BwOldImageReusable($s, [string]$key, [DateTime]$now, [int]$minDays, [switch]$AnyAge) {
+  return (Test-BwOldKeyReusable (Get-BwHist $s) (Get-BwHistAt $s) $key $now $minDays -AnyAge:$AnyAge)
 }
 # 未看过的还剩几张(库里不在「看过」名单里的)。
 function Get-BwFreshLeft($s) {
@@ -1951,9 +2007,611 @@ function Reset-BwSourceRecords {
   $st.day_used = 0
   $st.low_log_day = ''
   Save-BwFetchStats $st
+  # 2026-10-09: 新图源(NASA / 名画)的"下过 / 轮换过"记录也在清空范围内 ——
+  # 否则用户清完记录, 那两个源还是记着"这些图都下过", 一点反应都没有。原件同样留档。
+  try {
+    if (Test-Path -LiteralPath $global:BWSources) {
+      $bk2 = $global:BWSources + '.cleared-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+      Move-Item -LiteralPath $global:BWSources -Destination $bk2 -Force -ErrorAction Stop
+      Log ('清空下载记录: 新图源记录已留档为 ' + (Split-Path $bk2 -Leaf))
+    }
+  } catch { Log ('清空下载记录: 新图源记录留档失败(不影响图片文件) - ' + $_.Exception.Message) }
   $lib = @(Get-BwSpotlightAll).Count
   Log ('清空下载记录(重新抓取源池): 下载流水/看过名单已清空(流水留档为 ' + (Split-Path $moved -Leaf) + '), 图片文件一张没动; 库里现有 ' + $lib + ' 张')
   return ('记录已清空（流水留档 ' + (Split-Path $moved -Leaf) + '）；库里现有 ' + $lib + ' 张图一张没动，下次补货会重新从源池里抓。')
+}
+# ==================== 两个新图源: NASA 图像库 / 大都会博物馆名画 (2026-10-09 用户要求) ====================
+# 这两个源与「必应」「聚焦」**平级**: 各自的抓取函数、各自的库目录(<壁纸根>\NASA、<壁纸根>\名画)、
+# 各自的去重键与「看过」记录(sources.json)、各自的容量上限。抓取纪律则**完全复用**上面聚焦那一套:
+#   · 单轮 <= fetch_round_cap 张、单日 <= fetch_day_cap 张 —— 每个源各记一份账(换天自动归零);
+#   · 库到了该源自己的上限就不再补货(补回来也只会挤掉别的图);
+#   · 连续 3 轮"新增 0" -> 低频模式: 一天只试一轮, 日志每天一行聚合(不再每轮刷屏);
+#   · 老图 >= recycle_min_days 天没参与过轮换 -> 放回轮换(本地零网络); 文件已经不在库里的
+#     才允许"过期重下";
+#   · -DryRun: 一个请求都不发、一个字节都不写(连 sources.json 都不碰)。
+# 记账字段(day / day_used / zero_rounds / mode / next_try / low_log_day)与 fetch_stats.json
+# **同名同口径**, 所以 Get-BwFetchBudget / Get-BwFetchAllow / Test-BwFetchDue / Update-BwFetchStats
+# 这些现成的纯函数直接拿来用 —— 这就是"复用一套"而不是"另起一套"。
+#
+# 去重键(用户实测口径): NASA = nasa_id; 名画 = objectID。两者都小写化成"文件名最后一段"
+# (NASA 前缀 nasa、名画前缀 met), 于是与程序原有的 Get-BwNameKey(取最后一段当编号)天然对齐 ——
+# 队列、收藏、去重、库容统计这些既有机制对新源的图**自动生效**, 不需要另开一套。
+#
+# 授权(README / 使用说明里也写了): NASA 图像库 = NASA 公开素材(images-api.nasa.gov),
+# 多为公有领域 / NASA 版权, 仅供个人当壁纸; 大都会博物馆(Met)= **只取 isPublicDomain 为真**
+# 的公域作品, 非公域的一眼都不看。程序只在本机保存与轮换, 不做任何二次分发。
+$global:BWSources     = Join-Path $global:BWRoot 'sources.json'
+$global:BWSrcSeenMax  = 3000     # 每个源最多记多少条"下过"的键(按时刻淘汰最老的)
+$global:BWSrcRotMax   = 400      # 每个源最多记多少条"轮换过"的键
+$global:BWSrcMaxBytes = 12MB     # 单张图大小上限: 超过就跳过(NASA 有些条目挂着几十 MB 的原图)
+$global:BWSrcUa       = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+
+function Get-BwSourceDefs {
+  # 新图源的静态定义。以后要再加一个源, 只在这里加一条: 抓取闸门 / 菜单 / 心跳全自动跟上。
+  return @(
+    [PSCustomObject]@{
+      Key = 'nasa'; Name = 'NASA'; DirName = 'NASA'
+      EnableKey = 'src_nasa'; KwKey = 'nasa_keywords'; CapKey = 'nasa_cap'; DirKey = 'nasa_save_dir'
+      Doc = 'NASA 公开素材 (images-api.nasa.gov)'
+      DefaultKw = 'nebula,galaxy,earth,mars,saturn,astronaut,spacecraft,aurora,jupiter,sun'
+    }
+    [PSCustomObject]@{
+      Key = 'met'; Name = '名画'; DirName = '名画'
+      EnableKey = 'src_met'; KwKey = 'met_keywords'; CapKey = 'met_cap'; DirKey = 'met_save_dir'
+      Doc = '大都会博物馆 (Met) 公域作品 —— 只取 isPublicDomain 为真的'
+      DefaultKw = 'landscape painting,impressionism,van gogh,monet,japanese print,still life,seascape,portrait'
+    }
+  )
+}
+function Get-BwSrcDef([string]$key) {
+  if (-not $key) { return $null }
+  foreach ($d in @(Get-BwSourceDefs)) { if ([string]$d.Key -eq [string]$key) { return $d } }
+  return $null
+}
+# 源开着没有。字段不存在 = 默认**开**(用户要求默认开启; 老配置里本来就没有这两个字段,
+# 升级上来也是开的 —— 但那份 config.json 一个字节都不会被改写, 想关就在菜单 [S] 里关)。
+function Get-BwSrcEnabled([psobject]$c, [string]$key) {
+  $def = Get-BwSrcDef $key
+  if (-not $def) { return $false }
+  if (-not $c) { return $true }
+  try {
+    if (-not $c.PSObject.Properties[$def.EnableKey]) { return $true }
+    $v = $c.PSObject.Properties[$def.EnableKey].Value
+    if ($v -is [bool]) { return [bool]$v }
+    $s = ([string]$v).Trim().ToLower()
+    if (($s -eq 'off') -or ($s -eq 'false') -or ($s -eq '0') -or ($s -eq 'no') -or ($s -eq '关')) { return $false }
+    return $true
+  } catch { return $true }
+}
+function Get-BwSrcDir([psobject]$c, [string]$key) {
+  $def = Get-BwSrcDef $key
+  if (-not ($def -and $c)) { return '' }
+  try { if ($c.PSObject.Properties[$def.DirKey]) { return [string]$c.PSObject.Properties[$def.DirKey].Value } } catch {}
+  return ''
+}
+# 这个源自己的库容上限(0 = 不限)。独立上限而不是共用 lib_cap: 微软聚焦总共 800+ 张,
+# NASA 是几万张的量级, 共用一个数会让"库满不补"在两边都别扭。
+function Get-BwSrcCap([psobject]$c, [string]$key) {
+  $def = Get-BwSrcDef $key
+  if (-not $def) { return 0 }
+  $v = 100
+  try { if ($c -and $c.PSObject.Properties[$def.CapKey]) { $v = [int]$c.PSObject.Properties[$def.CapKey].Value } } catch { $v = 100 }
+  $r = $global:BwLimit[$def.CapKey]
+  if ($r) {
+    if ($v -lt 0) { $v = $r.Def }
+    elseif ($v -eq 0) { return 0 }
+    elseif ($v -lt $r.Min) { $v = $r.Min }
+    elseif ($v -gt $r.Max) { $v = $r.Max }
+  }
+  if ($v -lt 0) { $v = 100 }
+  return $v
+}
+# 关键词: 逗号(中英文都认)分隔的一行。解析与清洗都在这里, 菜单和抓取共用同一个口径:
+# 最多 12 个、每个最长 40 字、去重、去空白。
+function Format-BwSrcKeywords([string]$raw) {
+  $out = @()
+  $txt = [string]$raw
+  if (-not $txt) { return '' }
+  foreach ($x in @($txt -split '[,，;；]')) {
+    $t = ([string]$x).Trim()
+    if (-not $t) { continue }
+    if ($t.Length -gt 40) { $t = $t.Substring(0, 40) }
+    if (-not ($out -contains $t)) { $out += $t }
+    if ($out.Count -ge 12) { break }
+  }
+  return ($out -join ',')
+}
+function Get-BwSrcKeywords([psobject]$c, [string]$key) {
+  $def = Get-BwSrcDef $key
+  if (-not $def) { return @() }
+  $raw = ''
+  try { if ($c -and $c.PSObject.Properties[$def.KwKey]) { $raw = [string]$c.PSObject.Properties[$def.KwKey].Value } } catch { $raw = '' }
+  $txt = Format-BwSrcKeywords $raw
+  if (-not $txt) { $txt = Format-BwSrcKeywords ([string]$def.DefaultKw) }
+  if (-not $txt) { return @() }
+  return @($txt -split ',')
+}
+function Get-BwSrcFiles([string]$dir) {
+  if (-not $dir) { return @() }
+  if (-not (Test-Path -LiteralPath $dir)) { return @() }
+  return @(Get-ChildItem -LiteralPath $dir -File -Filter *.jpg -ErrorAction SilentlyContinue)
+}
+# ---- 每个源的记录(sources.json) ----
+# seen = { 键: 下载时刻 }            永久去重: 下过的不再下(与聚焦"下过就不再下"一个口径)
+# rot  = { 键: 最近换到桌面的时刻 }   参与过轮换的记录, 老图回收靠它算间隔
+# day/day_used/zero_rounds/mode/next_try/low_log_day: 与 fetch_stats.json 同名字同口径
+function Get-BwSrcRecs {
+  $o = $null
+  if (Test-Path -LiteralPath $global:BWSources) {
+    try { $o = Get-Content -LiteralPath $global:BWSources -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $o = $null }
+  }
+  if (-not $o) { $o = New-Object PSObject }
+  return $o
+}
+function Get-BwSrcRec($o, [string]$key) {
+  $def = Get-BwSrcDef $key
+  if (-not ($o -and $def)) { return $null }
+  $p = $o.PSObject.Properties[$key]
+  $isNew = $false
+  $r = $null
+  if ($p -and $p.Value) { $r = $p.Value } else { $r = New-Object PSObject; $isNew = $true }
+  foreach ($pair in @(
+      @('seen', @{}), @('rot', @{}), @('day', ''), @('day_used', 0), @('zero_rounds', 0),
+      @('last_try', ''), @('last_new', ''), @('next_try', ''), @('mode', 'normal'),
+      @('low_log_day', ''), @('recycled', 0), @('kw_i', 0), @('last_err', ''))) {
+    if (-not $r.PSObject.Properties[$pair[0]]) { Add-Member -InputObject $r NoteProperty $pair[0] $pair[1] -Force }
+  }
+  if ($isNew) { Add-Member -InputObject $o NoteProperty $key $r -Force }
+  return $r
+}
+# JSON 里的对象读回来是 PSCustomObject, 内存里写的是 hashtable —— 统一转成 hashtable 再动。
+function Get-BwSrcMap($v) {
+  $h = @{}
+  if (-not $v) { return $h }
+  if ($v -is [System.Collections.IDictionary]) {
+    foreach ($k in @($v.Keys)) { $h[[string]$k] = [string]$v[$k] }
+  } else {
+    try { foreach ($pp in @($v.PSObject.Properties)) { $h[[string]$pp.Name] = [string]$pp.Value } } catch {}
+  }
+  return $h
+}
+# 回写一张表 + 按上限裁剪(读不出时刻的当最老, 先淘汰)
+function Set-BwSrcMap($rec, [string]$name, $map, [int]$max) {
+  if (-not $rec) { return }
+  if (-not $map) { $map = @{} }
+  if (($max -gt 0) -and ($map.Count -gt $max)) {
+    $keys = @($map.Keys | Sort-Object -Property { $t = Get-BwTime ([string]$map[$_]); if ($t) { $t } else { [datetime]'2000-01-01' } })
+    $drop = $map.Count - $max
+    for ($i = 0; $i -lt $drop; $i++) { [void]$map.Remove([string]$keys[$i]) }
+  }
+  Add-Member -InputObject $rec NoteProperty $name $map -Force
+}
+function Save-BwSrcRecs($o) {
+  # -DryRun: 连记录都不写(与既有口径一致: 试运行不许有任何副作用)
+  if ($global:BWDry) { return }
+  if (-not $o) { return }
+  [void](Save-BwJsonAtomic $global:BWSources $o)
+}
+# 这张"以前下过"的老图, 现在允许重新下吗: 距它上次换到桌面 >= minDays 天。
+# 从没轮换过的键由调用方先按"库里还有没有文件"筛过, 到这里只剩 -AnyAge(库空了)才放行。
+function Test-BwSrcKeyReusable($rec, [string]$key, [DateTime]$now, [int]$minDays, [switch]$AnyAge) {
+  if (-not ($rec -and $key)) { return $false }
+  $rot = Get-BwSrcMap $rec.rot
+  if (-not $rot.ContainsKey([string]$key)) { return [bool]$AnyAge }
+  $t = Get-BwTime ([string]$rot[[string]$key])
+  if (-not $t) { return [bool]$AnyAge }
+  $d = [Math]::Floor(($now - $t).TotalDays)
+  if ($d -lt 0) { $d = 0 }
+  if ($AnyAge) { return ($d -ge 1) }
+  return ($d -ge $minDays)
+}
+# 老图回收(本地那条路, 零网络): 某个源"还没轮到过"的图不足 20 张时, 把 >= minDays 天
+# 没轮换过的键从 rot 里摘掉 —— 它们立刻回到队列里。文件本来就在库里, 不需要下载任何东西。
+function Update-BwSrcRotRecycle($rec, $haveKeys, [DateTime]$now, [int]$minDays, $def) {
+  if (-not $rec) { return 0 }
+  $rot = Get-BwSrcMap $rec.rot
+  $fresh = 0
+  if ($haveKeys) { foreach ($k in @($haveKeys.Keys)) { if (-not $rot.ContainsKey([string]$k)) { $fresh++ } } }
+  if ($fresh -ge $global:BWRecycleBelow) { return 0 }
+  $drop = @()
+  foreach ($k in @($rot.Keys)) {
+    $t = Get-BwTime ([string]$rot[$k])
+    if (-not $t) { $drop += $k; continue }
+    if ((($now - $t).TotalDays) -ge $minDays) { $drop += $k }
+  }
+  if ($drop.Count -eq 0) { return 0 }
+  foreach ($k in $drop) { [void]$rot.Remove([string]$k) }
+  Set-BwSrcMap $rec 'rot' $rot $global:BWSrcRotMax
+  $nm = '图源'
+  if ($def) { $nm = [string]$def.Name }
+  Log ($nm + ' 老图回收: 没轮到过的只剩 ' + $fresh + ' 张(<' + $global:BWRecycleBelow + '), 把 ' + $drop.Count + ' 张 >= ' + $minDays + ' 天没出现过的老图放回轮换(零下载)')
+  return $drop.Count
+}
+# 源池抓到尽头时的聚合日志(每天最多一行) —— 与聚焦那条 Write-BwPoolEndLine 一个口径。
+# 注意: 本函数只改传进来的记录, 落盘由调用方负责(它同时也负责整份记录的写回)。
+function Write-BwSrcPoolEndLine($def, $rec, [string]$dir, [bool]$Quiet) {
+  if (-not ($def -and $rec)) { return }
+  $today = (Get-Date).ToString('yyyy-MM-dd')
+  if ([string]$rec.low_log_day -eq $today) { return }
+  $rec.low_log_day = $today
+  $line = [string]$def.Name + ' 源池已抓到尽头（本地 ' + @(Get-BwSrcFiles $dir).Count + ' 张），等官方更新；下次尝试 ' + (Format-BwTryTime ([string]$rec.next_try))
+  Log $line
+  if (-not $Quiet) { Write-Host ('  ' + $line) -ForegroundColor DarkGray }
+}
+# ---- 文件名与去重键 ----
+# 文件名: 日期_标题(<=28字)_哈希_键.jpg。最后一段就是去重键 —— Get-BwNameKey 取的就是它,
+# 所以队列、收藏、「看过」名单、库容统计这些既有机制对新源的图自动生效。
+function Get-BwSrcKeyToken([string]$key, [string]$id) {
+  $s = ([string]$id).ToLower() -replace '[^a-z0-9]', ''
+  if ($s.Length -lt 4) { $s = $s + (Get-BwHash ([string]$id)).Substring(0, 6) }
+  $tk = ([string]$key) + $s
+  if ($tk.Length -lt 8) { $tk = $tk + (Get-BwHash ($key + '|' + $id)).Substring(0, 8) }
+  return $tk
+}
+function Get-BwSrcName([string]$key, [string]$token, [string]$title, [string]$url) {
+  $t = ([string]$title) -replace '[\\/:*?"<>|\s？：＊＜＞｜]', ''
+  if ($t.Length -gt 28) { $t = $t.Substring(0, 28) }
+  if (-not $t) { $t = 'wallpaper' }
+  return ('{0}_{1}_{2}_{3}.jpg' -f (Get-Date -Format 'yyyy-MM-dd'), $t, (Get-BwHash ($key + '|' + $url)), $token)
+}
+# ---- 源 A: NASA 图像库 ----
+# 搜索: https://images-api.nasa.gov/search?q=<kw>&media_type=image&page_size=N
+#   每条 href 指向该条目的 collection.json —— 里面有这个条目的**全部**文件 URL。
+#   挑最大的 jpg/png, 超过 12MB 的跳过; metadata.json / tif / 视频一律不算图片。
+# 实测(2026-10-09 本机): 搜索 ~1.3s; 清单 1.9s ~ 22s(波动很大, 所以超时给 30s); 下载 ~2s。
+function Get-BwNasaSearch([string]$kw) {
+  $out = @()
+  if (-not $kw) { return $out }
+  $u = 'https://images-api.nasa.gov/search?q=' + [uri]::EscapeDataString($kw) + '&media_type=image&page_size=20'
+  $j = $null
+  try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $j = Invoke-RestMethod -Uri $u -UserAgent $global:BWSrcUa -TimeoutSec 20 -UseBasicParsing
+  } catch {
+    Log ('NASA 搜索失败(' + $kw + '): ' + $_.Exception.Message) 'WARN'
+    return $out
+  }
+  try {
+    foreach ($it in @($j.collection.items)) {
+      $d = @($it.data)[0]
+      if (-not $d) { continue }
+      $id = [string]$d.nasa_id
+      $hr = [string]$it.href
+      if (-not ($id -and $hr)) { continue }
+      $out += [PSCustomObject]@{ id = $id; title = [string]$d.title; href = $hr }
+    }
+  } catch { Log ('NASA 搜索结果解析失败: ' + $_.Exception.Message) 'WARN' }
+  return @($out)
+}
+function Get-BwNasaAsset($item) {
+  # 清单 -> 挑一张能下的图(最大且 <= 12MB); 挑不到返回 $null
+  if (-not $item) { return $null }
+  $col = $null
+  try { $col = Invoke-RestMethod -Uri ([string]$item.href) -UserAgent $global:BWSrcUa -TimeoutSec 30 -UseBasicParsing }
+  catch {
+    Log ('NASA 清单取不到(' + [string]$item.id + '): ' + $_.Exception.Message) 'WARN'
+    return $null
+  }
+  $cands = @()
+  foreach ($x in @($col)) {
+    $s = [string]$x
+    if (-not $s) { continue }
+    # 非图片一律跳过: metadata.json / 原始 tif / 视频封面之外的东西
+    if ($s -notmatch '(?i)\.(jpg|jpeg|png)$') { continue }
+    $rank = 0
+    if ($s -match '(?i)~orig\.') { $rank = 3 }
+    elseif ($s -match '(?i)~large\.') { $rank = 2 }
+    elseif ($s -match '(?i)~medium\.') { $rank = 1 }
+    $cands += [PSCustomObject]@{ url = $s; rank = $rank; len = -1 }
+  }
+  if ($cands.Count -eq 0) { return $null }
+  # 先量大小: 超过 12MB 的直接不选(免得白下几十 MB); HEAD 不给长度就留 -1, 下载后再兜底
+  foreach ($cd in $cands) {
+    try {
+      $r = Invoke-WebRequest -Uri $cd.url -Method Head -UserAgent $global:BWSrcUa -TimeoutSec 12 -UseBasicParsing
+      $cd.len = [int64]$r.Headers['Content-Length']
+    } catch { $cd.len = -1 }
+  }
+  $pool = @($cands | Where-Object { -not ($_.len -gt $global:BWSrcMaxBytes) })
+  if ($pool.Count -eq 0) {
+    Log ('NASA 跳过一个条目(' + [string]$item.id + '): 图都超过 ' + [int]($global:BWSrcMaxBytes / 1MB) + ' MB')
+    return $null
+  }
+  $pick = @($pool | Sort-Object -Property @{ Expression = { $v = $_.len; if ($v -le 0) { [int64](-1) } else { $v } }; Descending = $true },
+                                       @{ Expression = { $_.rank }; Descending = $true } | Select-Object -First 1)
+  if ($pick.Count -eq 0) { return $null }
+  return [PSCustomObject]@{ url = [string]$pick[0].url; title = [string]$item.title; link = ('https://images.nasa.gov/details-' + [string]$item.id); copy = 'NASA' }
+}
+# ---- 源 B: 大都会博物馆 (Met) ----
+# 搜索**必须**走 v1.1: /public/collection/v1.1/search?q=<kw>&hasImages=true
+#   -> /public/collection/v1/objects/{objectID} 取 primaryImage。
+#   **必须 isPublicDomain == true** —— 非公域作品一眼都不看(授权红线)。
+# 实测(2026-10-09 本机): 搜索 0.9s; 对象 0.3s; 图 1.46MB / 2.2s, 真 JPEG。
+function Get-BwMetSearch([string]$kw) {
+  $out = @()
+  if (-not $kw) { return $out }
+  $u = 'https://collectionapi.metmuseum.org/public/collection/v1.1/search?q=' + [uri]::EscapeDataString($kw) + '&hasImages=true'
+  $j = $null
+  try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $j = Invoke-RestMethod -Uri $u -UserAgent $global:BWSrcUa -TimeoutSec 20 -UseBasicParsing
+  } catch {
+    Log ('名画 搜索失败(' + $kw + '): ' + $_.Exception.Message) 'WARN'
+    return $out
+  }
+  try {
+    foreach ($id in @($j.objectIDs | Select-Object -First 40)) {
+      $s = [string]$id
+      if ($s -match '^\d+$') { $out += [PSCustomObject]@{ id = $s; title = ''; href = '' } }
+    }
+  } catch { Log ('名画 搜索结果解析失败: ' + $_.Exception.Message) 'WARN' }
+  return @($out)
+}
+function Get-BwMetAsset($item) {
+  if (-not $item) { return $null }
+  $u = 'https://collectionapi.metmuseum.org/public/collection/v1/objects/' + [string]$item.id
+  $ob = $null
+  try { $ob = Invoke-RestMethod -Uri $u -UserAgent $global:BWSrcUa -TimeoutSec 20 -UseBasicParsing }
+  catch {
+    Log ('名画 对象取不到(' + [string]$item.id + '): ' + $_.Exception.Message) 'WARN'
+    return $null
+  }
+  # 授权红线: 只要公域作品
+  if (-not ([bool]$ob.isPublicDomain)) { return $null }
+  $img = [string]$ob.primaryImage
+  if (-not $img) { return $null }
+  $tt = [string]$ob.title
+  $ar = [string]$ob.artistDisplayName
+  if ($ar) { $tt = $tt + ' - ' + $ar }
+  return [PSCustomObject]@{ url = $img; title = $tt; link = [string]$ob.objectURL; copy = 'Met (Public Domain)' }
+}
+function Get-BwSrcCandidates([string]$key, [string]$kw) {
+  if ($key -eq 'nasa') { return @(Get-BwNasaSearch $kw) }
+  if ($key -eq 'met') { return @(Get-BwMetSearch $kw) }
+  return @()
+}
+function Get-BwSrcAsset([string]$key, $item) {
+  if ($key -eq 'nasa') { return (Get-BwNasaAsset $item) }
+  if ($key -eq 'met') { return (Get-BwMetAsset $item) }
+  return $null
+}
+# ---- 与既有机制的接合点 ----
+# 队列里只存文件名, 图可能在四个库里的任何一个: 按文件名挨个找。
+function Find-BwWallFile([psobject]$c, [string]$name) {
+  if (-not ($c -and $name)) { return '' }
+  $dirs = @([string]$c.spotlight_save_dir, [string]$c.bing_save_dir)
+  foreach ($def in @(Get-BwSourceDefs)) {
+    if (-not (Get-BwSrcEnabled $c $def.Key)) { continue }
+    $d = Get-BwSrcDir $c $def.Key
+    if ($d) { $dirs += $d }
+  }
+  foreach ($d in $dirs) {
+    if (-not $d) { continue }
+    $p = Join-Path $d $name
+    if (Test-Path -LiteralPath $p) { return $p }
+  }
+  return ''
+}
+# 参与轮换的图池 = 聚焦库 + 开着的新图源库。
+# (必应库不进队列: 它按"每日一图"的节奏走, 见 Invoke-BwCycle 规则 1。)
+function Get-BwRotPool {
+  $c = Get-BwConfig
+  $out = @(Get-BwSpotlightAll)
+  foreach ($def in @(Get-BwSourceDefs)) {
+    if (-not (Get-BwSrcEnabled $c $def.Key)) { continue }
+    $out += @(Get-BwSrcFiles (Get-BwSrcDir $c $def.Key))
+  }
+  return @($out)
+}
+# 一张图真的换到桌面了 -> 记进它所属源名下的 rot 表(老图回收靠它算间隔)。
+# 不是新图源的图就什么都不做; 写盘走原子写; -DryRun 一个字都不写。
+function Add-BwSrcRot([string]$path) {
+  if ($global:BWDry) { return }
+  if (-not $path) { return }
+  try {
+    $dir = ''
+    try { $dir = ([string](Split-Path $path -Parent)).TrimEnd('\') } catch { return }
+    $key = Get-BwNameKey (Split-Path $path -Leaf)
+    if (-not ($dir -and $key)) { return }
+    $c = Get-BwConfig
+    foreach ($def in @(Get-BwSourceDefs)) {
+      if (-not (Get-BwSrcEnabled $c $def.Key)) { continue }
+      $d = Get-BwSrcDir $c $def.Key
+      if (-not $d) { continue }
+      if (([string]$d).TrimEnd('\').ToLower() -ne $dir.ToLower()) { continue }
+      $all = Get-BwSrcRecs
+      $rec = Get-BwSrcRec $all $def.Key
+      $rot = Get-BwSrcMap $rec.rot
+      $rot[[string]$key] = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+      Set-BwSrcMap $rec 'rot' $rot $global:BWSrcRotMax
+      Save-BwSrcRecs $all
+      return
+    }
+  } catch { }
+}
+# 状态行(菜单 / 设置页共用): 一眼看出开着没有、库里有几张、现在处于哪种模式。
+function Get-BwSrcStatusLine([string]$key) {
+  $def = Get-BwSrcDef $key
+  if (-not $def) { return '' }
+  $c = Get-BwConfig
+  $on = '关'
+  if (Get-BwSrcEnabled $c $key) { $on = '开' }
+  $dir = Get-BwSrcDir $c $key
+  $files = @(Get-BwSrcFiles $dir)
+  $cap = Get-BwSrcCap $c $key
+  $capTxt = '不限'
+  if ($cap -gt 0) { $capTxt = ($cap.ToString() + ' 张') }
+  $rot = @{}
+  $mode = '还有新图'
+  try {
+    $rec = Get-BwSrcRec (Get-BwSrcRecs) $key
+    $rot = Get-BwSrcMap $rec.rot
+    if ([string]$rec.mode -eq 'pool_end') { $mode = '已抓到尽头' }
+  } catch {}
+  $fresh = 0
+  foreach ($f in $files) {
+    $k = Get-BwNameKey $f.Name
+    if ($k -and -not $rot.ContainsKey([string]$k)) { $fresh++ }
+  }
+  if (($mode -ne '已抓到尽头') -and ($fresh -lt $global:BWRecycleBelow)) { $mode = '老图循环' }
+  return ([string]$def.Name + ' ' + $on + ' · 库 ' + $files.Count + ' / ' + $capTxt + ' · 没轮到过 ' + $fresh + ' 张 · ' + $mode)
+}
+# ---- 单个源的抓取 ----
+# 与 Invoke-SpotlightFetch 同一套闸门与记账, 但**单源独立**: 一个源失败只写一行日志,
+# 不影响别的源、更不影响换图(失败隔离)。
+function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$Force, [switch]$IgnoreCap) {
+  # -Force     : 不受"自动补新图"开关限制(用户明确要求 / 恢复模式)
+  # -IgnoreCap : 不受这个源的库容上限限制(只有"库整个空了"的补救路径才传)
+  $out = @()
+  $def = Get-BwSrcDef $key
+  if (-not $def) { return @() }
+  # 试运行: 连搜索请求都不发, 也不写 sources.json
+  if ($global:BWDry) {
+    Log ('试运行: 本应抓取 ' + [string]$def.Name + ' 图(最多 ' + $count + ' 张), 不发请求、不下载、不写账本')
+    return @()
+  }
+  try {
+    $c = Get-BwConfig
+    if (-not (Get-BwSrcEnabled $c $key)) {
+      Log ([string]$def.Name + ' 源已关闭(设置里可开), 跳过')
+      return @()
+    }
+    $dir = Get-BwSrcDir $c $key
+    if (-not $dir) { Log ([string]$def.Name + ' 源没有配置库目录, 跳过'); return @() }
+    [void](New-BwDir $dir)
+    $now = Get-Date
+    $all = Get-BwSrcRecs
+    $rec = Get-BwSrcRec $all $key
+    # 低频模式(源池抓到尽头): 一天只放行一轮, 其余轮次不发任何请求, 日志每天一行
+    if (-not (Test-BwFetchDue $rec $now)) {
+      Write-BwSrcPoolEndLine $def $rec $dir $Quiet.IsPresent
+      Save-BwSrcRecs $all
+      return @()
+    }
+    $cap = Get-BwSrcCap $c $key
+    $have = @(Get-BwSrcFiles $dir)
+    $haveKeys = @{}
+    foreach ($f in $have) {
+      $k = Get-BwNameKey $f.Name
+      if ($k) { $haveKeys[[string]$k] = $true }
+    }
+    # 库满不补: 到了该源自己的上限就不再下载(下回来也只会挤掉别的图, 白费源池)。
+    # 只有 -IgnoreCap(库整个空了、有图最重要)才穿透这道闸; 菜单里的手动抓取不算。
+    if (($cap -gt 0) -and ($have.Count -ge $cap) -and (-not $IgnoreCap)) {
+      Log ([string]$def.Name + ' 源库已满(' + $have.Count + '/' + $cap + ' 张), 不再补货, 源池留着慢慢用')
+      return @()
+    }
+    # 与聚焦那条一样: 自动补新图关着时只在"库还是空的"这种异常情况下才自动抓
+    if (-not ($c.auto_fetch -or $Force -or ($have.Count -eq 0))) {
+      Log ([string]$def.Name + ' 源跳过: 自动补新图关着, 且库里已有 ' + $have.Count + ' 张(不动现有这些图)')
+      return @()
+    }
+    # 老图回收(零网络): 没轮到过的不足 20 张 -> 把够久没出现过的键放回轮换
+    $minDays = Get-BwRecycleMinDays $c
+    [void](Update-BwSrcRotRecycle $rec $haveKeys $now $minDays $def)
+    # 单轮 / 单日闸门(与聚焦共用同一组配置与同一段函数)
+    $allow = Get-BwFetchAllow $c $rec $count
+    if ($allow -le 0) {
+      $capTxt = '20'
+      try { $capTxt = [string][int]$c.fetch_day_cap } catch {}
+      Log ([string]$def.Name + ' 抓取: 今天的额度已经用完(' + [int]$rec.day_used + '/' + $capTxt + ' 张), 这一轮不下载(源池留着慢慢用)')
+      if (-not $Quiet) { Write-Host ('  ' + [string]$def.Name + ' 今天已经抓过 ' + [int]$rec.day_used + ' 张了(每日上限 ' + $capTxt + ' 张), 源池留着慢慢用。') -ForegroundColor DarkGray }
+      return @()
+    }
+    if ($allow -lt $count) {
+      Log ([string]$def.Name + ' 抓取: 按上限把这一轮从 ' + $count + ' 张收到 ' + $allow + ' 张')
+      if (-not $Quiet) { Write-Host ('  ' + [string]$def.Name + ' 按上限收成 ' + $allow + ' 张') -ForegroundColor DarkGray }
+    }
+    $count = $allow
+    $kws = @(Get-BwSrcKeywords $c $key)
+    if ($kws.Count -eq 0) { Log ([string]$def.Name + ' 没有可用关键词, 跳过'); return @() }
+    $ran = $true
+    $ok = 0; $skip = 0; $fail = 0; $tries = 0; $reuse = 0
+    $seenMap = Get-BwSrcMap $rec.seen
+    $ki = 0
+    try { $ki = [int]$rec.kw_i } catch { $ki = 0 }
+    if ($ki -lt 0) { $ki = 0 }
+    # 一轮最多用掉"每个关键词一批候选": 候选翻完就换下一个关键词, 全翻完就收工 ——
+    # 不会在一个词上空转, 也不会把同一个搜索请求打十几遍。
+    $cands = @()
+    $usedKw = 0
+    $maxTries = [Math]::Max($count * 6, 24)
+    while (($ok -lt $count) -and ($tries -lt $maxTries) -and ($usedKw -le $kws.Count)) {
+      if ($cands.Count -eq 0) {
+        if ($usedKw -ge $kws.Count) { break }
+        $kw = [string]$kws[($ki + $usedKw) % $kws.Count]
+        $cands = @(Get-BwSrcCandidates $key $kw)
+        $usedKw++
+        if ($cands.Count -eq 0) {
+          $fail++
+          if (-not $Quiet) { Write-Host ('  ' + [string]$def.Name + ' 「' + $kw + '」没拿到候选') -ForegroundColor DarkGray }
+          Start-Sleep -Milliseconds 400
+          continue
+        }
+      }
+      $cd = $cands[0]
+      $cands = @($cands | Select-Object -Skip 1)
+      $tries++
+      $token = Get-BwSrcKeyToken $key ([string]$cd.id)
+      if (-not $token) { continue }
+      if ($haveKeys.ContainsKey([string]$token)) { $skip++; Start-Sleep -Milliseconds 300; continue }
+      $isReuse = $false
+      if ($seenMap.ContainsKey([string]$token)) {
+        # 以前下过(永久去重)。只有"够久没出现过、而且本地文件已经不在"才允许过期重下。
+        if (Test-BwSrcKeyReusable $rec $token $now $minDays -AnyAge:($have.Count -eq 0)) { $isReuse = $true }
+        else { $skip++; Start-Sleep -Milliseconds 300; continue }
+      }
+      $asset = Get-BwSrcAsset $key $cd
+      if (-not ($asset -and $asset.url)) { $fail++; Start-Sleep -Milliseconds 400; continue }
+      $path = Join-Path $dir (Get-BwSrcName $key $token ([string]$asset.title) ([string]$asset.url))
+      $m = @{ date=(Get-Date -Format 'yyyy-MM-dd'); title=[string]$asset.title; copyright=[string]$asset.copy;
+              source_type=[string]$def.Name; source_url=[string]$asset.url; source_link=[string]$asset.link }
+      if (Save-BwFile @([string]$asset.url) $path $m $global:BWSrcMaxBytes) {
+        $ok++
+        if ($isReuse) { $reuse++ }
+        $out += $path
+        $seenMap[[string]$token] = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+        $haveKeys[[string]$token] = $true
+        if (-not $Quiet) { Write-Host ('    OK  [' + [string]$def.Name + '] ' + (Split-Path $path -Leaf)) }
+      } else { $fail++ }
+      Start-Sleep -Milliseconds 400
+    }
+    $rec.kw_i = (($ki + $usedKw) % $kws.Count)
+    Set-BwSrcMap $rec 'seen' $seenMap $global:BWSrcSeenMax
+    # 记账走聚焦那套纯函数: 单日额度 / 空轮计数 / 低频模式切换
+    Update-BwFetchStats $rec $ok $skip $fail $tries $ran $now | Out-Null
+    Save-BwSrcRecs $all
+    $extra = ''
+    if ($reuse -gt 0) { $extra = ', 回收老图 ' + $reuse + ' 张' }
+    if (($ok -eq 0) -and ($skip -eq 0) -and ($tries -eq 0)) {
+      Log ([string]$def.Name + ' 抓取: 一个候选都没拿到(网络或接口异常, 不影响别的源)') 'WARN'
+    } elseif ([string]$rec.mode -eq 'pool_end') {
+      if ([string]$rec.low_log_day -eq $now.ToString('yyyy-MM-dd')) {
+        Log ([string]$def.Name + ' 抓取(低频模式): 新增' + $ok + ' 跳过' + $skip + ' 失败' + $fail + $extra + '；下次尝试 ' + (Format-BwTryTime ([string]$rec.next_try)))
+      } else {
+        Write-BwSrcPoolEndLine $def $rec $dir $Quiet.IsPresent
+        Save-BwSrcRecs $all
+      }
+    } else {
+      Log ([string]$def.Name + ' 抓取: 新增' + $ok + ' 跳过' + $skip + ' 失败' + $fail + $extra)
+    }
+    if (-not $Quiet) { Write-Host ('  完成 [' + [string]$def.Name + ']: 新增 ' + $ok + ', 已存在 ' + $skip + ', 失败 ' + $fail + $extra) }
+    return @($out)
+  } catch {
+    # 失败隔离: 单个源出任何问题(网络 / 解析 / 写盘)都只写一行日志
+    Log ([string]$def.Name + ' 源抓取异常(不影响其它源与换图): ' + $_.Exception.Message) 'WARN'
+    return @($out)
+  }
+}
+# 逐源抓取: 两个源各自独立, 谁失败都不影响谁。
+function Invoke-BwAllSrcFetch([int]$count, [switch]$Quiet, [switch]$Force, [switch]$IgnoreCap) {
+  $out = @()
+  if ($count -le 0) { return $out }
+  foreach ($def in @(Get-BwSourceDefs)) {
+    try { $out += @(Invoke-BwSrcFetch -key $def.Key -count $count -Quiet:$Quiet -Force:$Force -IgnoreCap:$IgnoreCap) }
+    catch { Log ([string]$def.Name + ' 图源异常(不影响其它源与换图): ' + $_.Exception.Message) 'WARN' }
+  }
+  return @($out)
 }
 # 把库里的图洗一次牌。
 # 注意: 光"洗牌"只能保证**一轮之内**不重复 —— 队列发完再洗一轮时, 库里所有图
@@ -1968,10 +2626,12 @@ function Get-BwFreshQueue($s) {
     foreach ($f in @(Get-BwFavFiles $s)) { $names += [string]$f.Name }
     if ($names.Count -eq 0) {
       Log '只看收藏: 收藏里没有能用的图, 这一轮先从整个库里挑'
-      foreach ($f in @(Get-BwSpotlightAll)) { $names += [string]$f.Name }
+      foreach ($f in @(Get-BwRotPool)) { $names += [string]$f.Name }
     }
   } else {
-    foreach ($f in @(Get-BwSpotlightAll)) { $names += [string]$f.Name }
+    # 2026-10-09: 轮换图池 = 聚焦库 + 开着的新图源库(NASA / 名画) —— 新源的图与聚焦图
+    # **同一个队列**轮换(用户要求"参与正常轮换")。队列里只存文件名, 取图时四个库挨个找。
+    foreach ($f in @(Get-BwRotPool)) { $names += [string]$f.Name }
   }
   if ($names.Count -eq 0) { return @() }
   $allNames = @($names)
@@ -1982,6 +2642,26 @@ function Get-BwFreshQueue($s) {
   $oldPart = @()
   $seen = @{}
   foreach ($h in @(Get-BwHist $s)) { if ($h) { $seen[[string]$h] = $true } }
+  # 2026-10-09: 新图源各有自己的「轮换过」表(sources.json 的 rot), 作用与「看过」名单一样。
+  # 顺手做一次老图回收: 某个源没轮到过的不足 20 张时, 把 >= recycle_min_days 天没出现过的
+  # 键从 rot 里摘掉 —— 它们立刻回到这一轮的队列里(文件本来就在库里, 零下载)。
+  foreach ($sdef in @(Get-BwSourceDefs)) {
+    if (-not (Get-BwSrcEnabled $c $sdef.Key)) { continue }
+    try {
+      $sall = Get-BwSrcRecs
+      $srec = Get-BwSrcRec $sall $sdef.Key
+      $sdir = Get-BwSrcDir $c $sdef.Key
+      $shave = @{}
+      foreach ($sf in @(Get-BwSrcFiles $sdir)) {
+        $sk = Get-BwNameKey $sf.Name
+        if ($sk) { $shave[[string]$sk] = $true }
+      }
+      if ((Update-BwSrcRotRecycle $srec $shave (Get-Date) (Get-BwRecycleMinDays $c) $sdef) -gt 0) {
+        Save-BwSrcRecs $sall
+      }
+      foreach ($sk2 in @((Get-BwSrcMap $srec.rot).Keys)) { $seen[[string]$sk2] = $true }
+    } catch {}
+  }
   if ($seen.Count -gt 0) {
     $fresh = @($names | Where-Object { -not $seen.ContainsKey((Get-BwNameKey $_)) })
     # 2026-10-09 (源池保护): 未看过的快见底了(< 20 张), 先把「已看过」文件夹里还在本地的
@@ -2088,8 +2768,9 @@ function Get-BwFavFiles($s) {
   foreach ($n in (Get-BwFav $s)) { $want[$n] = $true }
   if ($want.Count -eq 0) { return @() }
   $out = @()
-  foreach ($f in @(Get-BwSpotlightAll)) { if ($want.ContainsKey([string]$f.Name)) { $out += $f } }
-  foreach ($f in @(Get-BwBingAll))      { if ($want.ContainsKey([string]$f.Name)) { $out += $f } }
+  # 2026-10-09: 轮换图池(聚焦 + 开着的新图源)都算"收藏里还能用的图"
+  foreach ($f in @(Get-BwRotPool)) { if ($want.ContainsKey([string]$f.Name)) { $out += $f } }
+  foreach ($f in @(Get-BwBingAll)) { if ($want.ContainsKey([string]$f.Name)) { $out += $f } }
   return @($out)
 }
 # 队列里存的是文件名, 而图随时可能被用户自己删掉或挪到别处 —— 这是完全正常的操作,
@@ -2102,7 +2783,9 @@ function Sync-BwQueue($s) {
   $dir = $c.spotlight_save_dir
   if (-not (Test-Path -LiteralPath $dir)) { return 0 }
   $live = @{}
-  foreach ($f in @(Get-BwSpotlightAll)) { $live[[string]$f.Name] = $true }
+  # 2026-10-09: "还在库里"要把新图源的库也算上 —— 否则队列里那些 NASA / 名画 的图
+  # 每一轮都会被当成"已经被删掉"剔出去, 白抓一场。
+  foreach ($f in @(Get-BwRotPool)) { $live[[string]$f.Name] = $true }
   # 开了「只看收藏」时队列里会混进必应库的图, 把它们也算作"还在",
   # 否则这些图会在每次取图前被当成"已被删掉"剔得一干二净。
   if ([bool]$c.fav_only) { foreach ($f in @(Get-BwBingAll)) { $live[[string]$f.Name] = $true } }
@@ -2140,6 +2823,9 @@ function Invoke-BwSpotBackfill([int]$count, [switch]$Force) {
     if ($c.auto_fetch -or $Force -or ($libN -eq 0)) {
       $one = @(Invoke-SpotlightFetch -count $count -Quiet)
     }
+    # 2026-10-09: 两个新图源走同一条"按需补货"通道 —— 各自库满即停、单轮/单日闸门照旧,
+    # 一个源失败只写一行日志, 不影响聚焦库、也不影响换图。
+    [void](Invoke-BwAllSrcFetch -count $count -Quiet -Force:$Force -IgnoreCap:$Force)
     # 不管下到几张, 都重洗一次队列, 让新图进轮换
     $s = Get-BwState
     if ($s) {
@@ -2182,10 +2868,10 @@ function Get-BwNextWall($s) {
     while ($q.Count -gt 0) {
       $name = [string]$q[0]
       $q = @($q | Select-Object -Skip 1)
-      $p = Join-Path $c.spotlight_save_dir $name
-      # 收藏里可能有必应库的图, 聚焦目录里找不到就再去必应目录找一次
-      if (-not (Test-Path -LiteralPath $p)) { $p = Join-Path $c.bing_save_dir $name }
-      if (Test-Path -LiteralPath $p) {
+      # 队列里只有文件名, 而图可能在四个库里的任何一个(聚焦 / 必应 / NASA / 名画) ——
+      # 挨个找一遍, 都没找到才当"这张被删了"。
+      $p = Find-BwWallFile $c $name
+      if ($p) {
         # 最后一道闸: 不管前面哪里漏了, 设上桌面之前必须再验一遍 ——
         # 截断的图进了队列/库的话, 在这里隔离掉、换下一张。
         if (-not (Test-BwImageOk $p)) { [void](Move-BwBadImage $p); continue }
@@ -2250,6 +2936,9 @@ function Invoke-BwSwap($s, [DateTime]$now, [string]$why) {
   $s.shown = [int]$s.shown + 1
   $s.last_swap = $now.ToString('yyyy-MM-dd HH:mm:ss')
   Add-BwHist $s $f.Name
+  # 2026-10-09: 这张要是新图源(NASA / 名画)的图, 顺手记进它自己的「轮换过」表 ——
+  # 老图回收(>= recycle_min_days 天再排回来)靠这个时间。
+  Add-BwSrcRot $f.FullName
   Log ($why + ' -> ' + $f.Name + ' (ok=' + $ok + '; 队列还剩 ' + @($s.queue | Where-Object { $_ }).Count + ' 张)')
   # 库超上限就顺手淘汰看过的最老的(移进回收站, 能还原)
   [void](Trim-BwLibrary $s)
@@ -2286,6 +2975,7 @@ function Set-BwWallManual($s, [string]$path, [string]$why) {
   $s.shown = [int]$s.shown + 1
   $s.last_swap = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
   Add-BwHist $s (Split-Path $path -Leaf)
+  Add-BwSrcRot $path
   Log ($why + ' -> ' + (Split-Path $path -Leaf) + ' (ok=' + $ok + ')')
   Save-BwState $s
   return $ok
@@ -2433,7 +3123,7 @@ function Get-BwHash([string]$s) {
 # 插在 SOI/APP0 后面的注释段, 不重新编码、不动像素, 文件只变大几百字节,
 # 画质和体积都不受影响, 尾部 FF D9 也依然是 FF D9 (坏图校验不受干扰)。
 function Get-BwMetaPayload($info) {
-  $o = [ordered]@{ app = '微软壁纸助手'; date = ''; title = ''; copyright = ''; source_type = ''; source_url = ''; source_link = '' }
+  $o = [ordered]@{ app = '桌面壁纸'; date = ''; title = ''; copyright = ''; source_type = ''; source_url = ''; source_link = '' }
   if ($info) {
     foreach ($k in @('date', 'title', 'copyright', 'source_type', 'source_url', 'source_link')) {
       if ($info.ContainsKey($k)) { $o[$k] = [string]$info[$k] }
@@ -2457,7 +3147,7 @@ function Read-BwImageMeta([string]$path) {
         $n = $len - 2
         if ($n -gt 2 -and ($i + 4 + $n) -le $b.Length) {
           $s = [System.Text.Encoding]::UTF8.GetString($b, $i + 4, $n)
-          if ($s.StartsWith('{') -and $s.Contains('微软壁纸助手')) {
+    if ($s.StartsWith('{') -and (($s.Contains('桌面壁纸')) -or ($s.Contains('微软壁纸助手')))) {
             $o = $s | ConvertFrom-Json
             return @{
               date        = [string]$o.date
@@ -2625,7 +3315,7 @@ function Sweep-BwBadImages {
   return $n
 }
 
-function Save-BwFile([string[]]$urls, [string]$path, [hashtable]$meta = $null) {
+function Save-BwFile([string[]]$urls, [string]$path, [hashtable]$meta = $null, [int64]$MaxBytes = 0) {
   # 试运行: 只说一声, 一张都不下。-DryRun 的意思就是"什么都不改",
   # 少了这道闸, 后台补漏 (Invoke-BwBackfill) 在试运行时照样会真去下载。
   if ($global:BWDry) { Log ('试运行: 本应下载 -> ' + (Split-Path $path -Leaf)); return $false }
@@ -2638,6 +3328,15 @@ function Save-BwFile([string[]]$urls, [string]$path, [hashtable]$meta = $null) {
     try {
       Invoke-WebRequest -Uri $u -OutFile $tmp -TimeoutSec 300 -UseBasicParsing
       if ((Get-Item $tmp -ErrorAction SilentlyContinue).Length -gt 100KB) {
+        # 2026-10-09: 可选的大小上限(新图源用)。NASA 有些条目挂着几十 MB 的原图,
+        # 当壁纸没意义还白占盘; 超过上限的就地丢弃、换下一个地址(和"截断"一个处理法)。
+        $tmpLen = 0
+        try { $tmpLen = (Get-Item -LiteralPath $tmp -ErrorAction Stop).Length } catch { $tmpLen = 0 }
+        if (($MaxBytes -gt 0) -and ($tmpLen -gt $MaxBytes)) {
+          Log ('下载的图超过大小上限(' + [math]::Round($tmpLen / 1MB, 2) + ' MB > ' + [math]::Round($MaxBytes / 1MB, 0) + ' MB), 已丢弃: ' + (Split-Path $path -Leaf))
+          Remove-BwFile $tmp
+          continue
+        }
         if (-not (Test-BwImageOk $tmp)) {
           # 大小够了但校验不过 = 截断/坏图。以前只查"能不能打开",
           # 截断的 JPEG 照样能打开, 半张灰图就上了桌面 (2026-09-21 羽扇豆)。
@@ -3108,7 +3807,16 @@ function Write-BwHeartbeat {
     # 源池状态进心跳: 翻日志就知道现在处于三种模式的哪一种(用户要求"别让人以为程序坏了")
     $poolLine = ''
     try { $poolLine = (Get-BwSourcePoolStatus $s).Line } catch { $poolLine = '' }
-    Log ('心跳: 聚焦库 ' + $lib + ' 张 / 必应库 ' + $b + ' 张 / 队列剩 ' + $q +
+    # 2026-10-09: 两个新图源各有多少张也进心跳 —— 用户要求"翻日志能看出各源各有多少张"。
+    # 关掉的源也照实报 0, 免得日志里时有时无、看不懂。
+    $srcTxt = ''
+    try {
+      foreach ($sdef in @(Get-BwSourceDefs)) {
+        $sdir = Get-BwSrcDir $c $sdef.Key
+        $srcTxt += ' / ' + $sdef.Name + '库 ' + @(Get-BwSrcFiles $sdir).Count + ' 张'
+      }
+    } catch { $srcTxt = '' }
+    Log ('心跳: 聚焦库 ' + $lib + ' 张 / 必应库 ' + $b + ' 张' + $srcTxt + ' / 队列剩 ' + $q +
          ' 张 / 看过 ' + $hist + ' 条 / 累计换 ' + $s.shown + ' 次 / 上次 ' +
          $s.last_swap + ' / 下次 ' + $next + ' / 源池: ' + $poolLine)
   } catch {}

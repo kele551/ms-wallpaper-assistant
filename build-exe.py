@@ -72,7 +72,7 @@ VSVersionInfo(
         '080404b0',
         [
           StringStruct('CompanyName', 'HaiFeng (kele551)'),
-          StringStruct('FileDescription', '微软壁纸助手 - 必应每日一图 + Windows 聚焦'),
+          StringStruct('FileDescription', '桌面壁纸 - 必应每日一图 + Windows 聚焦 + NASA / 大都会名画'),
           StringStruct('FileVersion', '{v}'),
           StringStruct('InternalName', 'MSWallpaperAssistant'),
           StringStruct('LegalCopyright', 'Copyright (C) 2026 HaiFeng (kele551)'),
