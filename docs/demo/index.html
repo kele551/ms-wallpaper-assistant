@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>微软壁纸助手 · 演示视频</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px 16px 48px; font: 16px/1.7 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+         background: #f6f7f9; color: #1b1f24; }
+  @media (prefers-color-scheme: dark) { body { background:#14171a; color:#e6e8eb; } .card { background:#1c2024 !important; } }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  .sub { color: #6b7280; font-size: 14px; margin-bottom: 18px; }
+  .card { background:#fff; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  video { width: 100%; height: auto; border-radius: 8px; background:#000; display:block; }
+  .meta { margin-top: 14px; font-size: 14px; color:#6b7280; }
+  a { color: #2563eb; }
+  ul { padding-left: 20px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>微软壁纸助手 · 演示视频</h1>
+  <div class="sub">必应每日一图 + Windows 聚焦图库，自动换桌面 —— 不打扰、休眠友好、升级可回滚</div>
+
+  <div class="card">
+    <video controls preload="metadata" playsinline>
+      <source src="MSWallpaperAssistant-demo-v2.0.10.mp4" type="video/mp4">
+      你的浏览器不支持内嵌播放，请直接下载：<a href="MSWallpaperAssistant-demo-v2.0.10.mp4">MSWallpaperAssistant-demo-v2.0.10.mp4</a>
+    </video>
+    <div class="meta">
+      时长 2 分 05 秒　·　文件大小 6.5 MB　·　格式 MP4（H.264），手机与电脑浏览器均可直接播放
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <b>关于本项目</b>
+    <ul>
+      <li>双图源：必应每日一图 + Windows 聚焦图库（4K、带中文标题）</li>
+      <li>离开电脑、锁屏时不换图；对休眠友好，默认 30 分钟一换</li>
+      <li>聚焦图库默认上限 100 张，超出自动清理最旧的 6 张</li>
+      <li>绿色单文件，免安装；自动升级带 SHA256 校验，失败可回退</li>
+    </ul>
+    <div class="meta">代码仓库：<a href="https://github.com/kele551/ms-wallpaper-assistant">https://github.com/kele551/ms-wallpaper-assistant</a>　·　许可：MIT License　·　作者：海风（kele551）</div>
+  </div>
+</div>
+</body>
+</html>
