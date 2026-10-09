@@ -55,6 +55,11 @@ PS_EXE = os.path.join(
     r'System32\WindowsPowerShell\v1.0\powershell.exe')
 
 K32 = ctypes.windll.kernel32
+# GetTickCount 是 32 位、开机满 49.7 天回绕一次。ctypes 默认按 c_int 解释返回值,
+# 超过 2^31(约 24.85 天)就变成负数 —— 减出负值再被 max(0, ...) 夹成 0, 于是"永远判人在",
+# 空闲检测(人不在就不换图)整个静默失效(审查 C1)。这里先声明成无符号, 再用
+# ticks_diff_ms 按 2^32 取模算差值, 双保险。
+K32.GetTickCount.restype = ctypes.c_uint32
 
 
 # ---------------------------------------------------------------- 路径
@@ -134,18 +139,33 @@ class _LASTINPUTINFO(ctypes.Structure):
     _fields_ = [('cbSize', ctypes.c_uint), ('dwTime', ctypes.c_uint)]
 
 
+TICK_MASK = 0xFFFFFFFF
+
+
+def ticks_diff_ms(now_tick, then_tick):
+    """两个 32 位 tick 计数之间过了多少毫秒 —— 回绕安全（纯函数，好测）。
+
+    GetTickCount 和 GetLastInputInfo.dwTime 都是 32 位、每 49.7 天回绕一次。
+    直接相减的话, 开机满 24.85 天(2^31 毫秒)之后 ctypes 会给出负数, 被 max(0, ...)
+    夹成 0 —— 于是"永远判人在", 空闲检测静默失效(审查 C1)。
+    按 2^32 取模得到的才是真实差值(只要两次采样间隔远小于 49.7 天, 实际就是几十秒)。
+    """
+    return (int(now_tick) - int(then_tick)) & TICK_MASK
+
+
 def idle_seconds():
     """距上次键鼠输入过了多少秒。取不到就返回 0（= 当作人在，宁可正常换图）。
 
     注意: GetLastInputInfo 在 **user32.dll**, 不在 kernel32 ——
     2026-10-07 一开始调错了 DLL, 取不到值退化成 0, 等于这个功能没生效（单测抓出来的）。
+    注意 2: 差值走 ticks_diff_ms（回绕安全），不要图省事直接相减 —— 那是 C1 那个坑。
     """
     try:
         li = _LASTINPUTINFO()
         li.cbSize = ctypes.sizeof(li)
         if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(li)):
             return 0.0
-        return max(0.0, (K32.GetTickCount() - li.dwTime) / 1000.0)
+        return ticks_diff_ms(K32.GetTickCount(), li.dwTime) / 1000.0
     except Exception:
         return 0.0
 
@@ -165,20 +185,51 @@ def should_skip_swap(idle, threshold=None):
 DESKTOP_SWITCHDESKTOP = 0x0100
 
 
+LOCK_PROBE_FAILS = 3      # 连续几次拿不到输入桌面, 就认定"这个会话判断不了锁屏"
+_lock_fail = 0            # 连续失败次数（守护进程长跑时才有意义）
+_lock_degraded = False    # 是否已经降级成"当作没锁屏"（给日志用）
+
+
+def _open_input_desktop():
+    """单独拎出来是为了能单测：测试里把它换掉就能模拟 API 一直失败。"""
+    return ctypes.windll.user32.OpenInputDesktop(0, False, DESKTOP_SWITCHDESKTOP)
+
+
 def session_locked():
     """当前会话是不是锁屏了（锁屏 = 肯定没人在看）。
 
-    锁屏时 OpenInputDesktop 打不开（进不去当前输入桌面），拿不到句柄就当作锁屏。
-    判断不出来（API 不可用）时返回 False = 当作人在，宁可正常换图。
+    锁屏时 OpenInputDesktop 打不开（进不去当前输入桌面）-> 拿不到句柄。
+    但拿不到句柄还有另一种可能: 这个会话根本判断不了锁屏(非交互会话、权限受限、远程/服务场景)。
+    原来是"拿不到句柄一律当锁屏", 于是那种环境下程序**永远不换壁纸**, 用户看到的就是
+    "这软件坏了", 日志里却只有一行"屏幕已锁"(审查 C2)。
+    现在: 连续 LOCK_PROBE_FAILS 次拿不到就降级成"当作没锁屏", 并只记一次 WARN ——
+    宁可多换几张图, 也不要无声停摆。"人不在就不换图"由空闲检测独立兜底:
+    真锁屏走了人, 空闲 10 分钟后照样安静下来, 休眠友好的效果不受影响。
     """
+    global _lock_fail, _lock_degraded
+    h = 0
     try:
-        h = ctypes.windll.user32.OpenInputDesktop(0, False, DESKTOP_SWITCHDESKTOP)
-        if not h:
-            return True
-        ctypes.windll.user32.CloseDesktop(h)
-        return False
+        h = _open_input_desktop()
     except Exception:
+        h = 0
+    if h:
+        try:
+            ctypes.windll.user32.CloseDesktop(h)
+        except Exception:
+            pass
+        _lock_fail = 0
+        _lock_degraded = False
         return False
+    _lock_fail += 1
+    if _lock_fail <= LOCK_PROBE_FAILS:
+        return True
+    _lock_degraded = True
+    return False
+
+
+def lock_check_degraded():
+    """锁屏判定是不是已经降级（守护进程据此写一行 WARN，只写一次）。"""
+    return _lock_degraded
 
 
 def stay_quiet(idle, locked):
@@ -520,6 +571,28 @@ def read_last_swap(d):
         return None
 
 
+SLEEP_SLICE_S = 1.0     # 分片睡的粒度：停止信号最迟 1 秒内被看到（审查 H-12）
+
+
+def sleep_watching_stop(stop_file, seconds, sleep=time.sleep, isfile=os.path.isfile):
+    """分片睡最多 seconds 秒；期间一发现停止信号就立刻返回 True。
+
+    原来这里一睡就是 AWAY_RECHECK_S(300 秒), 而 daemon.stop 只有睡醒才看 ——
+    于是 --stop 最坏要 5 分钟才生效(审查 H-12): 菜单里按 [B] 关掉自动换, 界面立刻说
+    "已关闭"、后台其实还在换; 部署流程 "--stop -> 等进程消失 -> 覆盖 exe" 在锁屏时会踩空。
+    现在按 1 秒粒度分片, 停止信号最迟 1 秒内被看到。
+    sleep / isfile 可注入, 便于单测（不真睡、不碰真文件）。
+    """
+    t0 = time.time()
+    while True:
+        if isfile(stop_file):
+            return True
+        left = seconds - (time.time() - t0)
+        if left <= 0:
+            return False
+        sleep(min(SLEEP_SLICE_S, left))
+
+
 # ---------------------------------------------------------------- 各模式
 def mode_menu(d):
     if not ensure_console():
@@ -555,6 +628,7 @@ def mode_daemon(d):
     prev = read_last_swap(d)
     hold_until = 0.0     # 这轮没换成图时的兜底: 至少等到这个时刻, 免得空转
     away_logged = False  # "用户离开"这条日志只写一次, 免得刷屏
+    lock_warned = False  # "锁屏判定不可用"也只写一次
     while True:
         if os.path.isfile(stop_file):
             try:
@@ -569,7 +643,12 @@ def mode_daemon(d):
             # 换过图了 (自己换的、菜单里手动换的、重启换的都算) -> 从这一刻重新计时
             hold_until = 0.0
             prev = ls
-        target = 0.0 if ls is None else max(ls.timestamp() + gap * 60, hold_until)
+        # 注意 hold_until 必须参与, 不能写成 `0.0 if ls is None else ...`:
+        # 全新安装(或 state.json 刚被重置)时 last_swap 是空的, 而这时若"人不在",
+        # 每轮都会 due -> 安静 -> hold_until = now+300 -> 回到这里又被算成 0.0 ->
+        # 又是一轮 due …… 中间一次 sleep 都没有, 就是 100% CPU 空转一整夜。
+        base = 0.0 if ls is None else (ls.timestamp() + gap * 60)
+        target = max(base, hold_until)
 
         # 分片睡到目标时刻。**人不在/锁屏时就睡大觉**（5 分钟一次），
         # 人在时才用 CHECK_S（30 秒）保持灵敏 —— 既少打扰系统，退出/改设置又不迟钝。
@@ -580,8 +659,9 @@ def mode_daemon(d):
                 due = True
                 break
             step = AWAY_RECHECK_S if stay_quiet(idle_seconds(), session_locked()) else CHECK_S
-            time.sleep(min(step, left))
-            if os.path.isfile(stop_file):
+            # 分片睡: 停止信号每一片都看(1 秒粒度); state.json / config.json 的重读
+            # 仍按原来的节拍(30 秒 / 5 分钟)发生, 不会整夜每秒去读盘。
+            if sleep_watching_stop(stop_file, min(step, left)):
                 try:
                     os.remove(stop_file)
                 except Exception:
@@ -607,6 +687,11 @@ def mode_daemon(d):
         # 别在系统准备休眠的节骨眼上插一脚。人一回来（或解锁）立刻补上。
         idle = idle_seconds()
         locked = session_locked()
+        if lock_check_degraded() and not lock_warned:
+            _note(d, '锁屏判定不可用（OpenInputDesktop 连续 %d 次取不到句柄），已降级为'
+                     '"当作没锁屏"，不再因此停摆；"人不在就不换图"仍由空闲检测兜底'
+                     % LOCK_PROBE_FAILS)
+            lock_warned = True
         if stay_quiet(idle, locked):
             if not away_logged:
                 if locked:
