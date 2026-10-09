@@ -1719,9 +1719,10 @@ function Get-BwTime([string]$t) {
 #      四周用**同一张图放大 + 模糊**铺底 —— 比黑边自然, 比拉伸清楚;
 #   ③ 真比屏幕还小的图(正常不会进库, 门槛挡着)也走 ②, 绝不拉大。
 # 合成用 PowerShell + .NET System.Drawing 直接画, 不需要任何第三方库;
-# 结果落成一张 PNG **缓存**在数据目录的「合成」下, 同一张图再次轮到直接命中, 不重算。
-$global:BWArtFitVer      = 1      # 合成算法版本: 改了画法就 +1, 缓存键跟着变(旧缓存自动失效)
-# 合成结果是一张 2560x1440 的 PNG, 一张约 5.9MB(中间那块原图是锐的, PNG 压不动它)。
+# 结果落成一张 **JPEG**(质量 95) **缓存**在数据目录的「合成」下, 同一张图再次轮到直接命中, 不重算。
+$global:BWArtFitVer      = 2      # 合成算法版本: 改了画法/格式就 +1, 缓存键跟着变(旧缓存自动失效)
+$global:BWArtFitQuality  = 95     # JPEG 质量(用户 2026-10-09 定: 合成图存 JPEG 省盘; 95 肉眼无损)
+# 合成结果是一张 2560x1440 的 JPEG(质量 95), 一张约 1MB(用户 2026-10-09 定, 省盘且肉眼无损)。
 # 所以缓存既不许多、也不许胖: 张数封顶 + 总字节封顶(实测 5.9MB/张, 48MB 约 8 张)。
 # 比屏幕窄的图才会用到合成, 平时命中几张就够轮换, 不会一直重算。
 $global:BWArtFitCacheMax = 12     # 合成结果最多留几张(超出按最老淘汰)
@@ -1802,7 +1803,7 @@ function Get-BwArtFitPath([string]$path, [int]$w, [int]$h) {
     $stamp = ([string]$fi.Length + '_' + [string]$fi.LastWriteTimeUtc.Ticks)
   } catch { $stamp = '' }
   $key = (Get-BwHash ($path + '|' + $stamp)) + '_' + $w + 'x' + $h + '_' + $len + 'b_v' + $global:BWArtFitVer
-  return (Join-Path (Join-Path $global:BWRoot '合成') ($key + '.png'))
+  return (Join-Path (Join-Path $global:BWRoot '合成') ($key + '.jpg'))
 }
 # 小图上的盒式模糊(就地改)。用 C# 干这段是为了速度: 纯 PowerShell 逐像素要几秒,
 # 编译一次之后只要几毫秒。**编译不出来就跳过**(前面的缩放本身已经糊了, 只是没那么绵)。
@@ -1869,7 +1870,7 @@ function New-BwArtFitImage([string]$src, [string]$dst, [int]$W, [int]$H) {
   Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
   $im = $null; $bmp = $null; $g = $null; $small = $null; $gs = $null
   # 临时文件名带本进程号: 后台守护和菜单有可能同时要给同一张图做合成,
-  # 共用同一个 .tmp 的话, 一边搬走另一边还在写, 落地的 PNG 就可能是半张。
+  # 共用同一个 .tmp 的话, 一边搬走另一边还在写, 落地的图就可能是半张。
   $tmp = $dst + '.' + $PID + '.tmp'
   try {
     [void](New-BwDir (Split-Path $dst -Parent))
@@ -1920,8 +1921,21 @@ function New-BwArtFitImage([string]$src, [string]$dst, [int]$W, [int]$H) {
     }
     $g.DrawImage($im, (New-Object System.Drawing.Rectangle($x, $y, $dw2, $dh2)))
     $g.Dispose(); $g = $null
-    # 先写 .tmp 再原子换名: 半张 PNG 被当成壁纸会直接花屏
-    $bmp.Save($tmp, [System.Drawing.Imaging.ImageFormat]::Png)
+    # 先写 .tmp 再原子换名: 半张图被当成壁纸会直接花屏
+    # 2026-10-09 用户定: 合成图存 JPEG(质量 95) —— 一张约 1MB, 比 PNG 省 4~5 倍盘;
+    # 中间那块是 1:1 照搬后再过一次 q95 编码, 肉眼与原图无差别。
+    $encJpg = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() |
+                Where-Object { $_.MimeType -eq 'image/jpeg' } | Select-Object -First 1
+    if ($encJpg) {
+      $ep = New-Object System.Drawing.Imaging.EncoderParameters -ArgumentList 1
+      $ep.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter `
+                       -ArgumentList ([System.Drawing.Imaging.Encoder]::Quality), ([int64]$global:BWArtFitQuality)
+      $bmp.Save($tmp, $encJpg, $ep)
+      $ep.Dispose()
+    } else {
+      # 取不到 JPEG 编码器就退回 PNG(保证功能不中断)
+      $bmp.Save($tmp, [System.Drawing.Imaging.ImageFormat]::Png)
+    }
     if (Test-Path -LiteralPath $dst) { Remove-BwFile $dst }
     Move-Item -LiteralPath $tmp -Destination $dst -Force -ErrorAction Stop
     return $true
