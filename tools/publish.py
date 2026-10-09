@@ -197,7 +197,11 @@ def update_readme(ver, commit=True):
     new = re.sub(r'比如 `v[0-9.]+`', '比如 `v%s`' % ver, new)
     new = re.sub(r'例如 v[0-9.]+', '例如 v%s' % ver, new)
     if new != txt:
-        f.write_text(new, encoding='utf-8')
+        # 2026-10-09 (审查 C11): 必须带 newline=''。
+        # Windows 上 text 模式会把 '\n' 翻成 '\r\n', 而本仓库的 README.md 是 LF ——
+        # 结果下一次发版会把 README **整份**改成 CRLF, 产生"整个文件都变了"的假 diff
+        # (本工作区明令禁止)。上面 111 行读的时候就是 newline=''。
+        f.write_text(new, encoding='utf-8', newline='')
         if not commit:
             print('⑤ README 已更新到 v%s (交给本次提交一起推)' % ver)
             return True

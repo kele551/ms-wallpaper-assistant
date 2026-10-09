@@ -524,8 +524,18 @@ function Get-BwConfig {
   if (-not $c.PSObject.Properties['desktop_shortcut']) { Add-Member -InputObject $c NoteProperty desktop_shortcut 'on' -Force }
   # 图库上限: 聚焦库最多留多少张。超了就把**已经看过**的最老的几张移进回收站。
   # 没看过的一律不动 —— 那是等着换的, 删了就得重新下载。
-  # 0 = 不限(老样子, 只增不减)。默认 100 张(约 200 MB)。
-  if (-not $c.PSObject.Properties['lib_cap']) { Add-Member -InputObject $c NoteProperty lib_cap 100 -Force }
+  # 0 = 不限(老样子, 只增不减)。
+  # 2026-10-09 用户要求: 默认从 100 上调到 200。理由 —— 聚焦源池总共就 800+ 张、官方每天
+  # 只新增有限几张, 库越大、同样的图轮到第二次的间隔就越长(库 200 张 + 30 分钟一轮 ≈ 4 天才
+  # 轮一遍)。**只改新装的默认值**: 已经有 config.json 的用户保持他自己那份, 不覆盖。
+  if (-not $c.PSObject.Properties['lib_cap']) { Add-Member -InputObject $c NoteProperty lib_cap 200 -Force }
+  # ---- 聚焦源池的三道闸 (2026-10-09 用户要求: 别把 800+ 张的源池一次抽干) ----
+  # fetch_round_cap : 单轮最多抓几张(硬上限; 想一次抓更多也不给, 源池要慢慢放)
+  # fetch_day_cap   : 每天最多抓几张(跨菜单/后台/向导统一算, 换天归零)
+  # recycle_min_days: 老图回收的最小间隔(同一张图至少这么多天不再出现)
+  if (-not $c.PSObject.Properties['fetch_round_cap'])  { Add-Member -InputObject $c NoteProperty fetch_round_cap 6 -Force }
+  if (-not $c.PSObject.Properties['fetch_day_cap'])    { Add-Member -InputObject $c NoteProperty fetch_day_cap 20 -Force }
+  if (-not $c.PSObject.Properties['recycle_min_days']) { Add-Member -InputObject $c NoteProperty recycle_min_days 30 -Force }
   # 队列里的图换完之后, 要不要自动下一批新图? 默认**关**:
   # 库里现有的图轮着用就够了, 不过程序自己跑去下载一堆, 库越攒越大。
   # 想要不断有新图就到菜单里打开它。
@@ -540,12 +550,53 @@ function Get-BwConfig {
   }
   return $c
 }
+# ---- 原子写: 状态文件一律"先写临时文件 -> 校验 -> 再原子替换" (2026-10-09 审查 H-7) ----
+# 为什么必须这样: state.json / config.json 原来是 [IO.File]::WriteAllText 直接盖原文件。
+# 写到一半被强杀(升级小助手的兜底强杀)、断电、磁盘写满, 原文件就只剩半截 JSON ——
+# 下次读解析失败, Get-BwState 把版本当 0 直接重置: 收藏夹、队列、看过名单、换图进度
+# 一声不吭全没了。改成原子写之后, 最坏情况是"这一次没写进去", 旧文件一个字节都没被动过。
+# 返回 $true = 真的换成新的了; $false = 保持原样(原因已写进日志, 旧文件仍在)。
+function Save-BwTextAtomic([string]$path, [string]$text) {
+  $tmp = $path + '.tmp'
+  try {
+    [System.IO.File]::WriteAllText($tmp, $text, (New-Object System.Text.UTF8Encoding($false)))
+    # 写完先读回来比一遍再替换: 磁盘满/配额到顶会写出一个 0 字节的"成功"文件,
+    # 不校验的话照样会把坏文件替换过去 —— 那就白原子了。
+    $back = [System.IO.File]::ReadAllText($tmp, [System.Text.Encoding]::UTF8)
+    if ($back -ne $text) { throw ('临时文件校验不一致 (写入 ' + $text.Length + ' 字符, 读回 ' + $back.Length + ' 字符)') }
+    if (Test-Path -LiteralPath $path) {
+      # File.Replace = 同一卷内的原子替换 (原文件的属性与 ACL 也保留)。
+      # !! 第三个参数必须写 [NullString]::Value, **不能写 $null**: PowerShell 会把 $null
+      # 当空字符串传下去, .NET 直接抛"路径的形式不合法", 于是每一次写都以失败告终、
+      # 旧文件被原样保留 —— 表面看"原子写真安全", 实际是"配置/进度根本存不下去"。
+      # (2026-10-09 自测抓出来的: config.json 里的 update_url 死活存不进去。)
+      [System.IO.File]::Replace($tmp, $path, [NullString]::Value)
+    } else {
+      [System.IO.File]::Move($tmp, $path)
+    }
+    # 最后再读回来核一遍: 落盘的字节必须跟我们写的一模一样。
+    # 少了这一步, 上面任何一环静默失败都会变成"用户改了设置、程序却当没听见"。
+    $again = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8)
+    if ($again -ne $text) { throw ('替换后读回的内容不一致 (写入 ' + $text.Length + ' 字符, 读回 ' + $again.Length + ' 字符)') }
+    return $true
+  } catch {
+    Log ('写文件失败, 已保留原文件: ' + (Split-Path $path -Leaf) + ' - ' + $_.Exception.Message) 'WARN'
+    try { if (Test-Path -LiteralPath $tmp) { [System.IO.File]::Delete($tmp) } } catch {}
+    return $false
+  }
+}
+function Save-BwJsonAtomic([string]$path, $obj) {
+  return (Save-BwTextAtomic $path ($obj | ConvertTo-Json -Depth 5))
+}
+
 function Save-BwConfig([psobject]$c) {
   # 保存前自动备份 config.json.bak (防止用户手改出错后无法回滚)
   if (Test-Path -LiteralPath $global:CfgPath) {
     try { Copy-Item -LiteralPath $global:CfgPath -Destination ($global:CfgPath + '.bak') -Force -ErrorAction SilentlyContinue } catch {}
   }
-  [System.IO.File]::WriteAllText($global:CfgPath, ($c | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))
+  # 2026-10-09 (审查 H-7): 改原子写 —— 配置写坏会让程序悄悄退回默认保存位置,
+  # 用户看到的是"壁纸怎么突然换地方存了"。
+  [void](Save-BwJsonAtomic $global:CfgPath $c)
 }
 
 # ---- 数值护栏 ----
@@ -562,7 +613,12 @@ $global:BwLimit = @{
   # 一轮补几张聚焦图。太多了会让一轮补图跑很久, 像卡死。
   spotlight_per_cycle = @{ Min = 1; Max = 50;   Def = 6;   Zero = $false }
   # 图库上限(张)。0 = 不限; 上限卡在 2000, 再多就不是壁纸库而是冷备份了。
-  lib_cap             = @{ Min = 5; Max = 2000; Def = 100; Zero = $true  }
+  # Def 同步成 200(新装默认值), 手改成读不出来的值时也退到这个数。
+  lib_cap             = @{ Min = 5; Max = 2000; Def = 200; Zero = $true  }
+  # 聚焦源池保护(2026-10-09): 单轮上限 / 单日上限 / 老图回收间隔。都允许用户手改, 但有范围。
+  fetch_round_cap     = @{ Min = 1; Max = 50;   Def = 6;   Zero = $false }
+  fetch_day_cap       = @{ Min = 1; Max = 200;  Def = 20;  Zero = $false }
+  recycle_min_days    = @{ Min = 1; Max = 3650; Def = 30;  Zero = $false }
 }
 
 # 把一个值按 kind 夹回合法范围。解析不出来的(被人手改成 "abc")退成默认值。
@@ -794,7 +850,9 @@ function Get-BwUpdateInfo {
       if (-not $j.version) { continue }
       $j | Add-Member -NotePropertyName checked_ft -NotePropertyValue ((Get-Date).ToFileTime()) -Force
       $j | Add-Member -NotePropertyName source -NotePropertyValue $u -Force
-      $j | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $global:BWUpdateFile -Encoding UTF8
+      # 2026-10-09 (审查 H-7): 缓存也走原子写 —— 它被写坏只是白查一次,
+      # 但既然有现成的原子写, 就没必要留一个"半截 JSON"在数据目录里。
+      [void](Save-BwJsonAtomic $global:BWUpdateFile $j)
       return $j
     } catch { continue }
   }
@@ -823,6 +881,16 @@ function Get-BwExePath {
 }
 function Invoke-BwLauncherUpdate {
   param([switch]$Quiet, [object]$Info, [switch]$NoStart, [switch]$Animated, [switch]$ReopenMenu)
+  # 2026-10-09 (审查 H-8): 试运行闸门放在最前面 —— 连"联网查一次升级源"都不做。
+  # 原来这条路径上一个 DryRun 判断都没有: 谁跑一次 -DryRun, 只要升级源上有新版本,
+  # 就真的会把本机 exe 换掉。要显示的版本号只从本地缓存读, 所以这里零联网、零写入。
+  if ($global:BWDry) {
+    $dv = ''
+    try { if (-not $Info) { $Info = Get-BwUpdateInfo -Offline }; if ($Info -and $Info.version) { $dv = ' v' + [string]$Info.version } } catch {}
+    Log ('试运行: 本应下载主程序' + $dv + '并自动覆盖替换 (不下载、不写 .new、不放小助手、不重启)')
+    if (-not $Quiet) { Write-Host ('  试运行: 本来会下载并覆盖主程序' + $dv + ', 本次什么都不做。') -ForegroundColor DarkGray }
+    return $false
+  }
   if (-not $Info) { $Info = Get-BwUpdateInfo -Force }
   if (-not $Info) { return $false }
   $url = ''; $want = ''
@@ -830,6 +898,22 @@ function Invoke-BwLauncherUpdate {
   if (-not $url) {
     Log '升级: 需要新主程序, 但升级信息里没给下载地址'
     if (-not $Quiet) { Write-Host '  升级信息里没有主程序下载地址, 先不升。' -ForegroundColor Yellow }
+    return $false
+  }
+  # 2026-10-09 (审查 H-9): 校验改 fail-closed。原来是 `if ($want -and ($got -ne $want))` ——
+  # 升级源里没有 sha256 就整段短路, 等于"不校验、直接安装"。可校验可回滚的自动升级是
+  # 这套东西的核心卖点, 少一个字段(有人手改 version.json / 将来换生成脚本漏写)就静默
+  # 失效, 不能接受: 缺 sha256、缺尺寸一律拒绝, 连下载都不下。
+  $wsize = 0
+  try { if ($Info.PSObject.Properties['launcher']) { $wsize = [int64]$Info.launcher.size } } catch { $wsize = 0 }
+  if (-not $want) {
+    Log '升级失败: 升级源里没有主程序 sha256, 按 fail-closed 拒绝替换(保持旧版)'
+    if (-not $Quiet) { Write-Host '  升级源缺少 sha256, 拒绝替换(保持旧版)。' -ForegroundColor Red }
+    return $false
+  }
+  if ($wsize -le 0) {
+    Log '升级失败: 升级源里没有主程序大小(size), 按 fail-closed 拒绝替换(保持旧版)'
+    if (-not $Quiet) { Write-Host '  升级源缺少 size, 拒绝替换(保持旧版)。' -ForegroundColor Red }
     return $false
   }
   $exe = Get-BwExePath
@@ -860,9 +944,18 @@ function Invoke-BwLauncherUpdate {
     try { Remove-Item -LiteralPath $lockf -Force -ErrorAction SilentlyContinue } catch {}
     return $false
   }
+  # 大小: 升级源写的字节数 vs 实际下到的字节数对不上 -> 拒绝(最外圈的一道防线)
+  if ($wsize -ne $bytes.Length) {
+    Log ('升级失败: 主程序大小不符 (升级源写 ' + $wsize + ' 字节, 实际下到 ' + $bytes.Length + ' 字节), 保持旧版')
+    if (-not $Quiet) { Write-Host '  主程序大小不符, 已放弃(保持旧版)。' -ForegroundColor Red }
+    try { Remove-Item -LiteralPath $lockf -Force -ErrorAction SilentlyContinue } catch {}
+    return $false
+  }
   $got = Get-BwSha256Hex $bytes
-  if ($want -and ($got -ne $want)) {
-    Log ('升级失败: 主程序校验不过 (期望 ' + $want.Substring(0,16) + ', 实际 ' + $got.Substring(0,16) + '), 保持旧版')
+  if ($got -ne $want) {
+    # 原来这里的 $want.Substring(0,16) 没有长度保护: 升级源里写个短哈希就会抛
+    # ArgumentOutOfRangeException(脚本侧 983 行早就有 [Math]::Min, 这里补上)。
+    Log ('升级失败: 主程序校验不过 (期望 ' + $want.Substring(0,[Math]::Min(16,$want.Length)) + ', 实际 ' + $got.Substring(0,16) + '), 保持旧版')
     if (-not $Quiet) { Write-Host '  主程序校验不过, 已放弃(保持旧版)。' -ForegroundColor Red }
     try { Remove-Item -LiteralPath $lockf -Force -ErrorAction SilentlyContinue } catch {}
     return $false
@@ -884,10 +977,24 @@ function Invoke-BwLauncherUpdate {
   $hl += 'W ''开始自动覆盖主程序'''
   $hl += 'Start-Sleep -Seconds 2'
   $hl += 'try { & $exe --stop | Out-Null } catch { W (''调 --stop 出错: '' + $_.Exception.Message) }'
-  $hl += '$nm = [System.IO.Path]::GetFileNameWithoutExtension($exe)'
+  # 2026-10-09 (审查 H-6): 兜底强杀原来有两条风险:
+  #   ① 按**进程名**一网打尽 —— 同名但装在别处的 exe 会被一起杀掉;
+  #   ② 60 秒到点就杀, 而守护进程(以及它拉起的 powershell 子进程)可能正卡在补漏里写
+  #      state.json —— 一刀下去就是半截 JSON, 下次读判定"版本 0"静默重置,
+  #      用户的收藏夹/队列/换图进度全没了。
+  # 现在: 只认"路径就是本 exe"的进程; 到点先再发一次停止信号 + 20 秒宽限(够它把这一轮
+  # 的写盘收尾), 宽限后还在才兜底强杀。真被强杀也丢不了数据 —— 状态文件已经是
+  # "临时文件 + 原子替换"(state.json.tmp 可恢复、坏文件留档、日志报 ERROR)。
+  $hl += 'function Alive { $r = @(); foreach ($p in @(Get-Process -ErrorAction SilentlyContinue)) { $pth = $null; try { $pth = $p.Path } catch {}; if ($pth -and ($pth -eq $exe)) { $r += $p } }; return $r }'
   $hl += '$n = 0'
-  $hl += 'while ($n -lt 60) { if (@(Get-Process -Name $nm -ErrorAction SilentlyContinue).Count -eq 0) { break }; Start-Sleep -Seconds 1; $n++ }'
-  $hl += 'if (@(Get-Process -Name $nm -ErrorAction SilentlyContinue).Count -gt 0) { W (''--stop 等了 '' + $n + '' 秒还没退, 兜底结束进程''); try { Get-Process -Name $nm -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue } catch {}; Start-Sleep -Seconds 3 }'
+  $hl += 'while ($n -lt 60) { if (@(Alive).Count -eq 0) { break }; Start-Sleep -Seconds 1; $n++ }'
+  $hl += 'if (@(Alive).Count -gt 0) {'
+  $hl += '  W (''--stop 等了 '' + $n + '' 秒还没退; 再发一次停止信号并给 20 秒收尾(它可能正在写换图进度)'');'
+  $hl += '  try { & $exe --stop | Out-Null } catch {}'
+  $hl += '  $m = 0'
+  $hl += '  while ($m -lt 20) { if (@(Alive).Count -eq 0) { break }; Start-Sleep -Seconds 1; $m++ }'
+  $hl += '}'
+  $hl += 'if (@(Alive).Count -gt 0) { W (''宽限结束仍未退出, 兜底结束(只杀路径 = 本 exe 的进程)''); try { @(Alive) | Stop-Process -Force -ErrorAction SilentlyContinue } catch {}; Start-Sleep -Seconds 3 }'
   $hl += 'W (''旧进程已退出(等了 '' + $n + '' 秒)'')'
   # 2026-10-05 修: 覆盖必须**真的换成功**才算数。
   # 原来写的是 `Move-Item ...; W '已覆盖主程序'`, 而脚本头部是 ErrorActionPreference=Continue,
@@ -940,6 +1047,16 @@ function Invoke-BwLauncherUpdate {
 }
 function Invoke-BwScriptUpdate {
   param([switch]$Quiet, [switch]$Force, [switch]$Animated, [switch]$ReopenMenu)
+  # 2026-10-09 (审查 H-8): 试运行 = 什么都不做。升级要先联网, 之后写 core.ps1 / menu.ps1、
+  # 写 .version, 必要时还会转去覆盖主程序 —— 这些在 -DryRun 下一律不许发生。
+  # 想显示"本来会升到哪个版本", 只读本地那份缓存(不联网、不写缓存)。
+  if ($global:BWDry) {
+    $dv = ''
+    try { $di = Get-BwUpdateInfo -Offline; if ($di -and $di.version) { $dv = ' v' + [string]$di.version } } catch {}
+    Log ('试运行: 本应检查并自动升级脚本' + $dv + ' (不联网下载、不替换文件、不写版本号、不放小助手)')
+    if (-not $Quiet) { Write-Host ('  试运行: 本来会升级到' + $dv + ', 本次什么都不做。') -ForegroundColor DarkGray }
+    return $false
+  }
   $info = Get-BwUpdateInfo -Force:$Force
   if (-not $info) {
     if (-not $Quiet) { Write-Host '  连不上升级源(或还没发布升级信息), 稍后再试。' -ForegroundColor Yellow }
@@ -974,12 +1091,19 @@ if ($Animated) { Show-BwUpGradeStep 1 3 '连接升级源' $true ('升级源: ' +
     if (-not $node) { continue }
     $url = [string]$node.url
     if (-not $url) { $url = 'https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/' + $nm }
-
+    # 2026-10-09 (审查 H-9): fail-closed —— 先确认"该有的校验信息"齐全, 再下载。
+    # 原来是 $want 为空就整段短路 = 不校验直接装, 升级源少一个字段就静默降级成
+    # "无校验安装", 而且用户端既没提示也没日志。
+    $want = ([string]$node.sha256).ToUpper().Trim()
+    if (-not $want) {
+      Log ('升级失败: 升级源里 ' + $nm + ' 没有 sha256, 按 fail-closed 拒绝升级(保持旧版)')
+      if (-not $Quiet) { Write-Host ('  升级源缺少 ' + $nm + ' 的 sha256, 拒绝升级(保持旧版)') -ForegroundColor Red }
+      return $false
+    }
     $bytes = if ($Animated) { Get-BwBytesAnimated $url 60 ('下载 ' + $nm) 2 3 } else { Get-BwBytes $url }
     if (-not $bytes) { Log ('升级失败: 下载 ' + $nm + ' 没成功, 保持旧版'); if (-not $Quiet) { Write-Host ('  下载 ' + $nm + ' 失败, 保持旧版') -ForegroundColor Yellow }; return $false }
-    $want = ([string]$node.sha256).ToUpper().Trim()
     $got = Get-BwSha256Hex $bytes
-    if ($want -and ($got -ne $want)) {
+    if ($got -ne $want) {
       Log ('升级失败: ' + $nm + ' 校验不过 (期望 ' + $want.Substring(0,[Math]::Min(16,$want.Length)) + ', 实际 ' + $got.Substring(0,16) + '), 保持旧版')
       if (-not $Quiet) { Write-Host ('  ' + $nm + ' 校验不过, 已放弃(保持旧版)') -ForegroundColor Red }
       return $false
@@ -1014,19 +1138,91 @@ if ($Animated) { Show-BwUpGradeStep 1 3 '连接升级源' $true ('升级源: ' +
 # ---- 自动轮换进度 (state.json): 每次运行是独立进程, 靠这个文件把节奏串起来 ----
 # 只记三件事: 今天切过必应没有 / 上次换壁纸是什么时候 / 上次开机时间。
 # 聚焦的"不重复"靠 queue —— 把库里所有图洗一次牌按顺序发, 发完再下载 6 张重洗一轮。
+# ---- 读 JSON 文件: 分清"文件不在"和"文件坏了" (2026-10-09 审查 H-6) ----
+# 返回一个对象: Ok(能不能用) / Missing(文件在不在) / Value(读到的对象) / Why(坏在哪)。
+# 为什么要专门写这个: 原来 state.json 一律 ConvertFrom-Json + try{}catch{}, 读失败
+# 与"文件不存在"在后面的逻辑里长得一模一样 —— 于是被截断的 state.json 会被当成
+# "老版本结构"静默重置, 用户只会发现自己的收藏夹不见了。
+function Read-BwJsonState([string]$path) {
+  if (-not (Test-Path -LiteralPath $path)) {
+    return [PSCustomObject]@{ Ok = $false; Missing = $true; Value = $null; Why = '文件不存在' }
+  }
+  $raw = ''
+  try { $raw = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8) }
+  catch { return [PSCustomObject]@{ Ok = $false; Missing = $false; Value = $null; Why = ('读不出来: ' + $_.Exception.Message) } }
+  $t = $raw.Trim()
+  if (-not $t) { return [PSCustomObject]@{ Ok = $false; Missing = $false; Value = $null; Why = '文件是空的(0 字节或只有空白)' } }
+  # 尾部校验: 完整的 JSON 对象一定以 } 收尾。写盘写到一半被强杀, 最常见的样子就是
+  # "连收尾括号都没有" —— 这一条比"能不能解析"更早、更准地认出截断。
+  if (-not $t.EndsWith('}')) {
+    return [PSCustomObject]@{ Ok = $false; Missing = $false; Value = $null; Why = ('内容不完整: 结尾没有右花括号, 像是写到一半被中断 (共 ' + $raw.Length + ' 字符)') }
+  }
+  try { $v = $raw | ConvertFrom-Json }
+  catch { return [PSCustomObject]@{ Ok = $false; Missing = $false; Value = $null; Why = ('JSON 解析失败: ' + $_.Exception.Message) } }
+  return [PSCustomObject]@{ Ok = $true; Missing = $false; Value = $v; Why = '' }
+}
+# 状态文件坏了之后的处理: 救 -> 留档 -> 出声(日志写 ERROR + 菜单提示一次)。
+# 返回救回来的对象; 救不回来返回 $null(调用方按"新装"处理, 但用户已被明确告知)。
+function Repair-BwDamagedState([string]$why) {
+  $note = '换图进度文件(state.json)读不出来: ' + $why
+  $tmp = $global:BWState + '.tmp'
+  # 留档名要保证唯一: 同一秒里损坏两次(测试里就是这么撞上的)时, 重名会让
+  # File.Move 直接失败 —— 那就等于"证据留不下来", 跟静默重置一样糟。
+  $baseKeep = $global:BWState + '.corrupt-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+  $keep = $baseKeep
+  $kn = 1
+  while (Test-Path -LiteralPath $keep) { $kn++; $keep = $baseKeep + '-' + $kn }
+  $obj = $null
+  # 1) 先看原子写留下的临时文件: 写入被打断时, 完整的新内容往往就在它里面
+  if (Test-Path -LiteralPath $tmp) {
+    $r = Read-BwJsonState $tmp
+    if ($r.Ok) { $obj = $r.Value }
+  }
+  # 2) 坏文件改名留档, 不删 —— 里面可能还有能手工认出来的收藏名单
+  try {
+    [System.IO.File]::Move($global:BWState, $keep)
+    $note += '; 损坏的原文件已留档: ' + (Split-Path $keep -Leaf)
+  } catch {
+    $note += '; 损坏的原文件改名失败(' + $_.Exception.Message + '), 仍在原处'
+  }
+  # 3) 临时文件里那份完整内容顶上 —— 它就是"上次没来得及替换的那一份"
+  if ($obj) {
+    try {
+      [System.IO.File]::Move($tmp, $global:BWState)
+      $note += '; 已用未完成的临时文件里的完整内容恢复(收藏与进度都还在)'
+    } catch {
+      $obj = $null
+      $note += '; 临时文件放回原位失败(' + $_.Exception.Message + ')'
+    }
+  }
+  if (-not $obj) { $note += '; 队列/看过名单无法恢复, 收藏名单请从留档文件里手工找回' }
+  Log $note 'ERROR'
+  # 4) 留一个标记, 菜单下次进来提示一次(提示完自己删掉, 不刷屏)
+  try { [System.IO.File]::WriteAllText((Join-Path $global:BWRoot 'state.corrupt.flag'), $note, (New-Object System.Text.UTF8Encoding($false))) } catch {}
+  return $obj
+}
 function Get-BwState {
   $existed = Test-Path -LiteralPath $global:BWState
   $s = $null
+  $damaged = $false
+  $why = ''
   if ($existed) {
-    try { $s = Get-Content $global:BWState -Raw -Encoding UTF8 | ConvertFrom-Json } catch {}
+    $r = Read-BwJsonState $global:BWState
+    if ($r.Ok) { $s = $r.Value } else { $damaged = $true; $why = [string]$r.Why }
   }
   $ver = 0
   $needImport = $false
   $needDl = $false
+  if ($damaged) {
+    # 2026-10-09 (审查 H-6): 文件在、但内容读不出来 = 被写坏了, 不是"老版本结构"。
+    # 先尽量救(原子写留下的 .tmp 里往往就是完整的新内容), 救不回来就留档 + ERROR + 菜单提示一次。
+    $s = Repair-BwDamagedState $why
+    $existed = $false   # 上面已经明确处理过, 不要再按"老结构"多报一次"已重置"
+  }
   if ($s) { try { $ver = [int]$s.schema } catch { $ver = 0 } }
   if ($ver -lt 3) {
     # 3 以前的结构不一样, 没法迁, 重置
-    if ($existed) { Log ('节奏进度文件版本 ' + $ver + ' -> 5, 结构变了, 已重置 (下一次运行会重新切一次必应当日图)') }
+    if ($existed) { Log ('节奏进度文件版本 ' + $ver + ' -> 8, 结构太老迁不动, 已重置 (下一次运行会重新切一次必应当日图)') }
     $s = New-Object PSObject
   } elseif ($ver -eq 3) {
     # 3 -> 4 只是多了两个字段, 原有的换图进度全部保留
@@ -1044,6 +1240,11 @@ function Get-BwState {
     # 6 -> 7 多了「累计下载张数」(菜单首页要显示), 进度/队列/收藏/看过名单一律保留
     Log '节奏进度文件 6 -> 7: 新增累计下载张数 (菜单首页显示, 只增不减)'
     $needDl = $true
+  } elseif ($ver -eq 7) {
+    # 7 -> 8 多了「每张图最近一次换到桌面的时刻」(hist_at)。老图回收要靠它算
+    # "这张图多少天没出现了", 所以必须留时间; 换图进度、队列、收藏、看过名单一律保留。
+    # 老数据没有时间戳的那部分, 回收判定会退回按「看过」名单的位置当年龄。
+    Log '节奏进度文件 7 -> 8: 新增每张图最近换图时间(给老图回收算间隔用), 进度/队列/收藏一律保留'
   }
   # bing_high_date : 必应补漏的水位线, 只往前不后退 (详见 Get-BwHighDate)
   # favorites      : 收藏的图片文件名, 只记名字 (和 queue 一个口径); 图被删掉也
@@ -1058,10 +1259,11 @@ function Get-BwState {
   # strangers      : 库里"不是本程序下载的图"的图片编号 (见 Update-BwStrangers)。
   #                  只做记号, 图原地不动; 自动轮换时跳过它们。
   $def = [ordered]@{
-    schema = 7; last_bing_date = ''; last_swap = ''; last_boot = ''
+    schema = 8; last_bing_date = ''; last_swap = ''; last_boot = ''
     queue = @(); refills = 0; shown = 0; last_wall = ''
     bing_high_date = ''; favorites = @(); history = @()
     dl_total = 0; dl_filled = 0; strangers = @()
+    hist_at = @{}
   }
   foreach ($k in $def.Keys) {
     $p = $s.PSObject.Properties[$k]
@@ -1069,7 +1271,7 @@ function Get-BwState {
   }
   # schema 要**强制**写成当前版本: 上面那个循环只在"字段缺失或为空"时才补,
   # 而 schema 永远是 3 (有值), 于是升完级还是 3, 每次进来都要再"升级"一遍。
-  Add-Member -InputObject $s NoteProperty schema 7 -Force
+  Add-Member -InputObject $s NoteProperty schema 8 -Force
   # 这时候 history 字段已经补齐了, 回填才安全
   if ($needImport) {
     $n = Import-BwHistFromLog $s
@@ -1095,7 +1297,9 @@ function Get-BwState {
       # dl_total 只是显示缓存(真账在流水文件里), 落盘前按流水同步一次 —— 和
       # Save-BwState 的做法一致, 免得文件里写着 0、界面却显示真实张数。
       try { $s.dl_total = Get-BwDlTotal $s } catch {}
-      [System.IO.File]::WriteAllText($global:BWState, ($s | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding($false)))
+      # 2026-10-09 (审查 H-7): 原子写。这一份写盘发生在"老版本升上来"的迁移里,
+      # 写坏了一样会被当成"结构不对"重置 —— 迁移期恰恰最不该丢数据。
+      [void](Save-BwJsonAtomic $global:BWState $s)
     }
   }
   return $s
@@ -1354,10 +1558,22 @@ function Add-BwHist($s, [string]$name) {
   $k = Get-BwNameKey $name
   if (-not $k) { return }
   $h = @(Get-BwHist $s)
-  if ($h -contains $k) { return }
-  $h = @(@($h) + @($k))
-  if ($h.Count -gt 400) { $h = @($h | Select-Object -Last 400) }
-  $s.history = $h
+  if (-not ($h -contains $k)) {
+    $h = @(@($h) + @($k))
+    if ($h.Count -gt 400) { $h = @($h | Select-Object -Last 400) }
+    $s.history = $h
+  }
+  # 2026-10-09: 顺手记下"这张图是什么时候换到桌面的"。老图回收(间隔 >= recycle_min_days 天)
+  # 全靠它; 名单本身只有名字, 没有时间。重复看到同一张时更新这个时间(等于把它的间隔重新计时)。
+  $at = Get-BwHistAt $s
+  $at[[string]$k] = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+  # 名单裁到 400 条, 时间戳表跟着裁 —— 不然 state.json 会越攒越大
+  $keep = @{}
+  foreach ($x in $h) {
+    $kk = [string]$x
+    if ($at.ContainsKey($kk)) { $keep[$kk] = $at[$kk] }
+  }
+  Set-BwHistAt $s $keep
 }
 function Save-BwState($s) {
   $s.queue = @($s.queue | Where-Object { $_ })
@@ -1365,7 +1581,9 @@ function Save-BwState($s) {
   # 这样菜单进程哪怕握着旧快照整份覆盖, 带出去的也是当前真值,
   # 不会再把后台刚 +1 的数打回去 (v1.6.2 丢计数就是这个路子)。
   try { $s.dl_total = Get-BwDlTotal $s } catch {}
-  [System.IO.File]::WriteAllText($global:BWState, ($s | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding($false)))
+  # 2026-10-09 (审查 H-7): 原子写。这里是换图进度、队列、收藏名单唯一的总出口,
+  # 一次半截写就是"用户收藏夹被清空"那种投诉的来源。
+  [void](Save-BwJsonAtomic $global:BWState $s)
 }
 # 后台巡检 / 补漏写回 state 时必须走这里, 不能直接 Save-BwState 整份覆盖。
 #
@@ -1399,6 +1617,21 @@ function Save-BwStateKeepFav($s) {
     $u = @(@($sh) + @($dh | Where-Object { $sh -notcontains $_ })) | Select-Object -Unique
     $s.history = @($u | Select-Object -Last 400)
   }
+  # 每张图的最近换图时间: 两边的并集, 同一张取**更近**的那个(更近 = 间隔更保守)
+  $da = Get-BwHistAt $disk
+  $sa = Get-BwHistAt $s
+  foreach ($k in @($da.Keys)) {
+    if (-not $sa.ContainsKey($k)) { $sa[$k] = $da[$k]; continue }
+    $t1 = Get-BwTime ([string]$sa[$k])
+    $t2 = Get-BwTime ([string]$da[$k])
+    if ($t2 -and ((-not $t1) -or ($t2 -gt $t1))) { $sa[$k] = $da[$k] }
+  }
+  $keepAt = @{}
+  foreach ($x in @($s.history)) {
+    $kk = [string]$x
+    if ($sa.ContainsKey($kk)) { $keepAt[$kk] = $sa[$kk] }
+  }
+  Set-BwHistAt $s $keepAt
   Save-BwState $s
 }
 function Get-BwTime([string]$t) {
@@ -1428,6 +1661,300 @@ function Get-BwSpotlightWant {
   if ($c.spotlight_per_cycle) { return [int]$c.spotlight_per_cycle }
   return 6
 }
+# ==================== 聚焦源池: 预算 / 退避 / 老图回收 (2026-10-09, 用户要求) ====================
+# 背景(用户反馈的真问题): 微软聚焦的源池总共 800+ 张, 官方每天只新增有限几张; 而程序的
+# 去重是**永久**的(「看过」名单 + dl_ledger.log 下载流水)。几百张被一次抽干之后, 它就再也
+# 拿不到"新图"了 —— 用户视角就是"这软件没图可换了"。三条对策:
+#   ① 抓取预算 : 单轮 <= fetch_round_cap 张、单日 <= fetch_day_cap 张; 库满了就不再补
+#                (只在库低于阈值时补), 让 800+ 张成为"储备", 按消耗速度慢慢放;
+#   ② 耗尽退避 : 连续 3 轮"新增 0" -> 低频模式, 每 24 小时只在官方更新时间点(早 8 点)附近
+#                试一轮; 哪一轮新增 >0 就立刻恢复正常频率;
+#   ③ 老图回收 : 未看过的剩量不足 20 张时, 允许把"至少 recycle_min_days 天没出现过"的老图
+#                重新排进轮换 —— 本地还在(「已看过」文件夹)就直接移回库(零网络开销), 不在就
+#                重新下载(流水账给这类"过期重下"放行, 但仍然拦住近期看过的)。
+# 这样永久运行也不会枯竭: 新图优先, 老图按间隔循环, 官方每天新增的照样插队。
+# 节流账本落在 fetch_stats.json, 独立于 state.json —— 它记的是"抓取节奏", 不该被换图进度覆盖。
+$global:BWFetchStats = Join-Path $global:BWRoot 'fetch_stats.json'
+$global:BWRecycleBelow = 20      # 未看过的剩量低于这个数, 就允许回收老图
+$global:BWZeroRoundsToLow = 3    # 连续几轮"新增 0"进入低频模式
+
+function Get-BwFetchStats {
+  $o = $null
+  if (Test-Path -LiteralPath $global:BWFetchStats) {
+    try { $o = Get-Content -LiteralPath $global:BWFetchStats -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $o = $null }
+  }
+  if (-not $o) { $o = New-Object PSObject }
+  if (-not $o.PSObject.Properties['day'])          { Add-Member -InputObject $o NoteProperty day '' -Force }
+  if (-not $o.PSObject.Properties['day_used'])     { Add-Member -InputObject $o NoteProperty day_used 0 -Force }
+  if (-not $o.PSObject.Properties['zero_rounds'])  { Add-Member -InputObject $o NoteProperty zero_rounds 0 -Force }
+  if (-not $o.PSObject.Properties['last_try'])     { Add-Member -InputObject $o NoteProperty last_try '' -Force }
+  if (-not $o.PSObject.Properties['last_new'])     { Add-Member -InputObject $o NoteProperty last_new '' -Force }
+  if (-not $o.PSObject.Properties['next_try'])     { Add-Member -InputObject $o NoteProperty next_try '' -Force }
+  if (-not $o.PSObject.Properties['mode'])         { Add-Member -InputObject $o NoteProperty mode 'normal' -Force }
+  if (-not $o.PSObject.Properties['low_log_day'])  { Add-Member -InputObject $o NoteProperty low_log_day '' -Force }
+  if (-not $o.PSObject.Properties['recycled'])     { Add-Member -InputObject $o NoteProperty recycled 0 -Force }
+  return $o
+}
+function Save-BwFetchStats($o) {
+  # 试运行: 连节流账本都不写 (与 H-8 的口径一致: -DryRun 不许有任何副作用)
+  if ($global:BWDry) { return }
+  [void](Save-BwJsonAtomic $global:BWFetchStats $o)
+}
+function Get-BwRecycleMinDays($c) {
+  $v = 30
+  try { if ($c -and $c.PSObject.Properties['recycle_min_days']) { $v = [int]$c.recycle_min_days } } catch { $v = 30 }
+  $r = $global:BwLimit['recycle_min_days']
+  if ($r) {
+    if ($v -lt $r.Min) { $v = $r.Min }
+    if ($v -gt $r.Max) { $v = $r.Max }
+  }
+  if ($v -lt 1) { $v = 30 }
+  return $v
+}
+# 今天还能抓几张(单日额度, 换天自动归零)。
+function Get-BwFetchBudget([psobject]$c, $st) {
+  $dayCap = 20
+  try { if ($c -and $c.PSObject.Properties['fetch_day_cap']) { $dayCap = [int]$c.fetch_day_cap } } catch { $dayCap = 20 }
+  if ($dayCap -le 0) { $dayCap = 20 }
+  $used = 0
+  if ($st -and ([string]$st.day -eq (Get-Date).ToString('yyyy-MM-dd'))) {
+    try { $used = [int]$st.day_used } catch { $used = 0 }
+  }
+  return [Math]::Max(0, $dayCap - $used)
+}
+# 这一轮实际允许抓几张 = min(想抓的张数, 单轮上限, 剩余单日额度)。
+function Get-BwFetchAllow([psobject]$c, $st, [int]$want, [switch]$IgnoreDailyCap) {
+  $roundCap = 6
+  try { if ($c -and $c.PSObject.Properties['fetch_round_cap']) { $roundCap = [int]$c.fetch_round_cap } } catch { $roundCap = 6 }
+  if ($roundCap -le 0) { $roundCap = 6 }
+  $dayLeft = 999999
+  if (-not $IgnoreDailyCap) { $dayLeft = Get-BwFetchBudget $c $st }
+  $n = [Math]::Min([Math]::Min($want, $roundCap), $dayLeft)
+  if ($n -lt 0) { $n = 0 }
+  return $n
+}
+# 低频模式下"下一次值得试"的时刻: 下一个早 8 点(官方一般上午更新), 且至少 6 小时之后、
+# 最多 24 小时之后 —— 用户要求"每 24 小时只在官方更新时间点附近试一轮(或至少间隔 >=6 小时)"。
+function Get-BwNextTryTime([DateTime]$now) {
+  $t = $now.Date.AddHours(8)
+  while ($t -le $now.AddHours(6)) { $t = $t.AddDays(1) }
+  if ((($t) - $now).TotalHours -gt 24) { $t = $now.AddHours(24) }
+  return $t
+}
+function Test-BwFetchDue($st, [DateTime]$now) {
+  if (-not $st) { return $true }
+  if ([string]$st.mode -ne 'pool_end') { return $true }
+  $nx = Get-BwTime ([string]$st.next_try)
+  if (-not $nx) { return $true }
+  return ($now -ge $nx)
+}
+function Format-BwTryTime([string]$t) {
+  $d = Get-BwTime $t
+  if ($d) { return $d.ToString('yyyy-MM-dd HH:mm') }
+  return '稍后'
+}
+# 一轮抓取结束后记账。**纯函数**(只改传进来的 $st, 不碰磁盘), 所以好测。
+#   $ran = 这一轮真的跑了吗(被预算或低频模式拦下的不算, 不能记成"空轮")
+# 空轮的判定: 跑过、而且"见到了图但全被去重跳过"才算 —— 那是源池到头的信号;
+# 一次都没拿到图(断网)不算, 不能因为网络抖动就把池子判成抓干了。
+function Update-BwFetchStats($st, [int]$ok, [int]$skip, [int]$fail, [int]$tries, [bool]$ran, [DateTime]$now) {
+  if (-not $st) { return $st }
+  if (-not $ran) { return $st }
+  $st.last_try = $now.ToString('yyyy-MM-dd HH:mm:ss')
+  $today = $now.ToString('yyyy-MM-dd')
+  if ([string]$st.day -ne $today) { $st.day = $today; $st.day_used = 0 }
+  $st.day_used = [int]$st.day_used + [int]$ok
+  if ($ok -gt 0) {
+    # 有新图 -> 立刻退出低频模式, 回到正常频率
+    $st.last_new = $st.last_try
+    $st.zero_rounds = 0
+    $st.mode = 'normal'
+    $st.next_try = ''
+    return $st
+  }
+  if ($skip -gt 0) {
+    $st.zero_rounds = [int]$st.zero_rounds + 1
+    if ([int]$st.zero_rounds -ge $global:BWZeroRoundsToLow) {
+      if ([string]$st.mode -ne 'pool_end') {
+        $st.mode = 'pool_end'
+        $st.next_try = (Get-BwNextTryTime $now).ToString('yyyy-MM-dd HH:mm:ss')
+      }
+    }
+  }
+  return $st
+}
+# 源池抓到尽头时的聚合日志(每天最多一行)。用户要求: 进低频后别再每轮写"新增0 跳过N"。
+function Write-BwPoolEndLine($st, [bool]$Quiet) {
+  $today = (Get-Date).ToString('yyyy-MM-dd')
+  if ([string]$st.low_log_day -eq $today) { return }
+  $st.low_log_day = $today
+  Save-BwFetchStats $st
+  $line = '聚焦源池已抓到尽头（本地区 ' + @(Get-BwSpotlightAll).Count + ' 张），等官方更新；下次尝试 ' + (Format-BwTryTime ([string]$st.next_try))
+  Log $line
+  if (-not $Quiet) { Write-Host ('  ' + $line) -ForegroundColor DarkGray }
+}
+# ---- 「看过」的时间戳: 老图回收要靠它判断"多少天没出现了" ----
+# state.json 里 history 只有名字、没有时间; 这里另存一份 名字 -> 最后一次换到桌面的时刻。
+# 老版本升上来时这份是空的, 那时按 history 的位置当年龄(见 Test-BwOldImageReusable)。
+function Get-BwHistAt($s) {
+  $h = @{}
+  if (-not $s) { return $h }
+  $p = $s.PSObject.Properties['hist_at']
+  if (-not $p -or -not $p.Value) { return $h }
+  $v = $p.Value
+  if ($v -is [System.Collections.IDictionary]) {
+    foreach ($k in @($v.Keys)) { $h[[string]$k] = [string]$v[$k] }
+  } else {
+    foreach ($pp in @($v.PSObject.Properties)) { $h[[string]$pp.Name] = [string]$pp.Value }
+  }
+  return $h
+}
+function Set-BwHistAt($s, $map) {
+  if (-not $s) { return }
+  Add-Member -InputObject $s NoteProperty hist_at $map -Force
+}
+# 距这张图上次被换到桌面过了几天; -1 = 不知道(没在名单里 / 没有时间戳)
+function Get-BwSeenDays($s, [string]$key, [DateTime]$now) {
+  if (-not $key) { return -1 }
+  $at = Get-BwHistAt $s
+  if (-not $at.ContainsKey([string]$key)) { return -1 }
+  $t = Get-BwTime ([string]$at[[string]$key])
+  if (-not $t) { return -1 }
+  $d = [Math]::Floor(($now - $t).TotalDays)
+  if ($d -lt 0) { return 0 }
+  return [int]$d
+}
+# 这张**以前看过**的老图, 现在允许再排进来 / 重新下载吗?
+#   约束: 距上次看到至少 $minDays 天; 时间戳不明的用「看过」名单的位置当年龄
+#   (只在最近 20 条之外才算老); -AnyAge 用于"库整个空了"的补救(那时有图最重要)。
+function Test-BwOldImageReusable($s, [string]$key, [DateTime]$now, [int]$minDays, [switch]$AnyAge) {
+  if (-not $key) { return $false }
+  $d = Get-BwSeenDays $s $key $now
+  if ($d -ge 0) {
+    if ($AnyAge) { return ($d -ge 1) }
+    return ($d -ge $minDays)
+  }
+  $h = @(Get-BwHist $s)
+  $idx = -1
+  for ($i = 0; $i -lt $h.Count; $i++) { if ([string]$h[$i] -eq [string]$key) { $idx = $i; break } }
+  if ($idx -ge 0) {
+    if ($AnyAge) { return $true }
+    return ($idx -lt ([Math]::Max(0, $h.Count - 20)))
+  }
+  # 名单里也没有 -> 只可能在下载流水里(下过但一次都没轮到看)。库空的时候放行, 平时不放 ——
+  # 流水里上千条, 不能凭位置猜年龄。
+  return [bool]$AnyAge
+}
+# 未看过的还剩几张(库里不在「看过」名单里的)。
+function Get-BwFreshLeft($s) {
+  $seen = @{}
+  foreach ($h in @(Get-BwHist $s)) { if ($h) { $seen[[string]$h] = $true } }
+  $n = 0
+  foreach ($f in @(Get-BwSpotlightAll)) {
+    $k = Get-BwNameKey $f.Name
+    if ($k -and -not $seen.ContainsKey($k)) { $n++ }
+  }
+  return $n
+}
+# 「已看过」文件夹(库上限淘汰时的兜底去处)在哪。系统回收站那部分程序不去翻 ——
+# 那要动 Shell COM 的本地化动词, 容易出岔子; 那部分交给"过期重下"兜底。
+function Get-BwSeenFolder {
+  $c = Get-BwConfig
+  $par = Split-Path ([string]$c.spotlight_save_dir) -Parent
+  if (-not $par) { return '' }
+  return (Join-Path $par '已看过')
+}
+# 老图回收(本地那条路): 把「已看过」文件夹里够久没出现的老图**直接移回库**, 零网络开销。
+# 返回移回来的完整路径数组。不动别人放进去的文件 —— 只认够老的那些(规则见上)。
+function Restore-BwRecycledFiles($s, [int]$max, [switch]$AnyAge) {
+  $out = @()
+  if ($max -le 0) { return $out }
+  $d = Get-BwSeenFolder
+  if (-not $d -or -not (Test-Path -LiteralPath $d)) { return $out }
+  $c = Get-BwConfig
+  $now = Get-Date
+  $minDays = Get-BwRecycleMinDays $c
+  $dir = [string]$c.spotlight_save_dir
+  foreach ($f in @(Get-ChildItem -LiteralPath $d -File -Filter *.jpg -ErrorAction SilentlyContinue)) {
+    if ($out.Count -ge $max) { break }
+    $k = Get-BwNameKey $f.Name
+    if (-not $k) { continue }
+    if (-not (Test-BwOldImageReusable $s $k $now $minDays -AnyAge:$AnyAge)) { continue }
+    $dst = Join-Path $dir $f.Name
+    if (Test-Path -LiteralPath $dst) { continue }
+    if ($global:BWDry) { Log ('试运行: 本应把「已看过」里的老图移回库 -> ' + $f.Name); continue }
+    try {
+      Move-Item -LiteralPath $f.FullName -Destination $dst -ErrorAction Stop
+      $out += $dst
+    } catch { Log ('老图回收: 移回库失败 ' + $f.Name + ' - ' + $_.Exception.Message) }
+  }
+  if ($out.Count -gt 0) { Log ('老图回收(本地): 从「已看过」移回库里 ' + $out.Count + ' 张 (零下载)') }
+  return @($out)
+}
+# 源池状态(菜单/心跳共用): 三种模式让用户一眼看明白, 别以为程序坏了。
+#   还有新图 / 进入老图循环 / 源池已抓到尽头
+function Get-BwSourcePoolStatus($s) {
+  $c = Get-BwConfig
+  $st = Get-BwFetchStats
+  $lib = @(Get-BwSpotlightAll).Count
+  $fresh = Get-BwFreshLeft $s
+  $minDays = Get-BwRecycleMinDays $c
+  $mode = 'new'
+  $line = ''
+  if ([string]$st.mode -eq 'pool_end') {
+    $mode = 'pool_end'
+    $line = '源池已抓到尽头（本地区 ' + $lib + ' 张 / 未看过 ' + $fresh + ' 张），等官方更新'
+    $nx = Get-BwTime ([string]$st.next_try)
+    if ($nx) { $line += '；下次尝试 ' + $nx.ToString('MM-dd HH:mm') }
+  } elseif ($fresh -lt $global:BWRecycleBelow) {
+    $mode = 'recycle'
+    $oldest = 0
+    $now = Get-Date
+    foreach ($f in @(Get-BwSpotlightAll)) {
+      $d = Get-BwSeenDays $s (Get-BwNameKey $f.Name) $now
+      if ($d -gt $oldest) { $oldest = $d }
+    }
+    $line = '进入老图循环（未看过只剩 ' + $fresh + ' 张'
+    if ($oldest -gt 0) { $line += '；最早 ' + $oldest + ' 天前看过' }
+    $line += '；间隔 ≥' + $minDays + ' 天）'
+  } else {
+    $line = '还有新图（未看过 ' + $fresh + ' 张）'
+  }
+  return [PSCustomObject]@{ Mode = $mode; Line = $line; Lib = $lib; Fresh = $fresh; ZeroRounds = [int]$st.zero_rounds; NextTry = [string]$st.next_try }
+}
+# 清空"下过哪些图"的记录(下载流水 + 看过名单 + 时间戳 + 节流账本), 让源池重新可抓。
+# 用户 2026-10-09 要求: 默认不执行、执行前二次确认(菜单负责问); **只清记录, 不动图片文件**。
+# 用在"我把库清空了/从回收站还原了, 想重新收一遍图"这种场景。
+function Reset-BwSourceRecords {
+  if ($global:BWDry) { Log '试运行: 本应清空下载记录(重新抓取源池), 本次不执行'; return '' }
+  $moved = ''
+  if (Test-Path -LiteralPath $global:BWDlLedger) {
+    $moved = $global:BWDlLedger + '.cleared-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+    try {
+      Move-Item -LiteralPath $global:BWDlLedger -Destination $moved -Force -ErrorAction Stop
+    } catch {
+      Log ('清空下载记录: 流水账改名失败 - ' + $_.Exception.Message)
+      return ''
+    }
+  }
+  $s = Get-BwState
+  if ($s) {
+    $s.history = @()
+    Set-BwHistAt $s @{}
+    # 这里**故意**用整份写: 目的就是把记录清干净, 不能走 KeepFav(它会跟磁盘上的旧名单取并集)
+    Save-BwState $s
+  }
+  $st = Get-BwFetchStats
+  $st.zero_rounds = 0
+  $st.mode = 'normal'
+  $st.next_try = ''
+  $st.day_used = 0
+  $st.low_log_day = ''
+  Save-BwFetchStats $st
+  $lib = @(Get-BwSpotlightAll).Count
+  Log ('清空下载记录(重新抓取源池): 下载流水/看过名单已清空(流水留档为 ' + (Split-Path $moved -Leaf) + '), 图片文件一张没动; 库里现有 ' + $lib + ' 张')
+  return ('记录已清空（流水留档 ' + (Split-Path $moved -Leaf) + '）；库里现有 ' + $lib + ' 张图一张没动，下次补货会重新从源池里抓。')
+}
 # 把库里的图洗一次牌。
 # 注意: 光"洗牌"只能保证**一轮之内**不重复 —— 队列发完再洗一轮时, 库里所有图
 # (包括上一轮全看过的)都会被重新洗进来, 客户就会又看到昨天那张。
@@ -1450,18 +1977,53 @@ function Get-BwFreshQueue($s) {
   $allNames = @($names)
 
   # 挑掉看过的
+  $recycleMode = $false     # 这一轮是不是"老图循环"
+  $freshPart = @()
+  $oldPart = @()
   $seen = @{}
   foreach ($h in @(Get-BwHist $s)) { if ($h) { $seen[[string]$h] = $true } }
   if ($seen.Count -gt 0) {
     $fresh = @($names | Where-Object { -not $seen.ContainsKey((Get-BwNameKey $_)) })
-    if ($fresh.Count -gt 0) {
+    # 2026-10-09 (源池保护): 未看过的快见底了(< 20 张), 先把「已看过」文件夹里还在本地的
+    # 老图移回库(零网络开销), 再重新分一次组 —— 移回来的图就算"已经在库里"了。
+    if ($fresh.Count -lt $global:BWRecycleBelow) {
+      $back = @(Restore-BwRecycledFiles $s ($global:BWRecycleBelow - $fresh.Count))
+      if ($back.Count -gt 0) {
+        foreach ($p in $back) { $names += (Split-Path $p -Leaf) }
+        $allNames = @($names)
+        $fresh = @($names | Where-Object { -not $seen.ContainsKey((Get-BwNameKey $_)) })
+      }
+    }
+    if ($fresh.Count -ge $global:BWRecycleBelow) {
       Log ('重洗队列: 库里 ' + $names.Count + ' 张, 看过 ' + ($names.Count - $fresh.Count) + ' 张 -> 这一轮只排没看过的 ' + $fresh.Count + ' 张')
       $names = $fresh
     } else {
-      # 库里全都看过: 历史清零重来一轮。但留最近 20 条,
-      # 免得刚看完那张翻个身又排到队首。
-      $s.history = @(@(Get-BwHist $s) | Select-Object -Last 20)
-      Log ('重洗队列: 库里 ' + $names.Count + ' 张全都看过 -> 历史清零重来(留最近 20 条防连着重复)')
+      # 未看过的不足 20 张 -> 进入"老图循环": 够久没出现过(>= recycle_min_days 天)的老图
+      # 也排进来, 排在没看过的后面。官方每天新增的仍然插队, 所以不会一直吃老图。
+      $now2 = Get-Date
+      $minDays2 = Get-BwRecycleMinDays (Get-BwConfig)
+      $oldPart = @($names | Where-Object {
+        $kk = Get-BwNameKey $_
+        $seen.ContainsKey($kk) -and (Test-BwOldImageReusable $s $kk $now2 $minDays2)
+      })
+      if ($oldPart.Count -gt 0) {
+        $recycleMode = $true
+        $freshPart = @($fresh)
+        $oldest = 0
+        foreach ($o in $oldPart) {
+          $dd = Get-BwSeenDays $s (Get-BwNameKey $o) $now2
+          if ($dd -gt $oldest) { $oldest = $dd }
+        }
+        Log ('重洗队列: 未看过的只剩 ' + $fresh.Count + ' 张(<' + $global:BWRecycleBelow + ') -> 进入老图循环, 回收 ' + $oldPart.Count + ' 张老图(最早 ' + $oldest + ' 天前看过, 间隔 >=' + $minDays2 + ' 天)')
+      } elseif ($fresh.Count -eq 0) {
+        # 库里的图全都看过、而且一张都还没到回收间隔: 退回老办法 —— 历史清零重来一轮,
+        # 但留最近 20 条, 免得刚看完那张翻个身又排到队首。
+        $s.history = @(@(Get-BwHist $s) | Select-Object -Last 20)
+        Log ('重洗队列: 库里 ' + $names.Count + ' 张全都看过且还没到回收间隔 -> 历史清零重来(留最近 20 条防连着重复)')
+      } else {
+        Log ('重洗队列: 未看过的只剩 ' + $fresh.Count + ' 张(不到 ' + $global:BWRecycleBelow + ' 张), 但还没有够 ' + $minDays2 + ' 天的老图可回收 -> 这一轮只排这 ' + $fresh.Count + ' 张')
+        $names = $fresh
+      }
     }
   }
   # 再挑掉"做了记号的外来图" —— 程序只换自己下过的图。
@@ -1478,6 +2040,10 @@ function Get-BwFreshQueue($s) {
       $names = $allNames
       Log '重洗队列: 库里全是做了记号的外来图, 这一轮照常用它们换 (总得有图可换)'
     }
+  }
+  # 老图循环: 新图洗牌排在前面(先把没看过的看完), 回收的老图洗牌跟在后面
+  if ($recycleMode) {
+    return @(@($freshPart | Sort-Object { Get-Random }) + @($oldPart | Sort-Object { Get-Random }))
   }
   return @($names | Sort-Object { Get-Random })
 }
@@ -1556,10 +2122,22 @@ function Sync-BwQueue($s) {
 function Invoke-BwSpotBackfill([int]$count, [switch]$Force) {
   try {
     if ($count -le 0) { return }
+    # 试运行: 后台补货什么都不做 —— 它要联网下载, 还要重洗队列并落盘(H-8 的口径:
+    # -DryRun 不许有任何副作用)。原来这道闸只加在 Start-BwBackfill 上, 直接调用本函数
+    # (后台子进程就是直接调的)照样会干活。
+    if ($global:BWDry) { Log ('试运行: 本应后台补货 ' + $count + ' 张聚焦壁纸, 不下载、不重洗队列'); return }
     $c = Get-BwConfig
+    # 2026-10-09 用户要求"只在库低于阈值时补货": 阈值就是库上限 —— 库已经满了还去下载,
+    # 下回来立刻又被 Trim-BwLibrary 淘汰, 纯属白白消耗源池(而且源池总共才 800+ 张)。
+    $cap = Get-BwLibCap
+    $libN = @(Get-BwSpotlightAll).Count
+    if (($cap -gt 0) -and ($libN -ge $cap) -and (-not $Force)) {
+      Log ('后台补货跳过: 库里已有 ' + $libN + ' 张 (达到上限 ' + $cap + ' 张), 不再下载, 源池留着慢慢用')
+      return
+    }
     # -Force = 恢复模式: 库被清空过, 前台先下 1 张之后库就不空了,
     # 光靠"库是空的"这个判断后台就再也不肯下(实测只补回 1 张), 所以显式穿透开关。
-    if ($c.auto_fetch -or $Force -or (@(Get-BwSpotlightAll).Count -eq 0)) {
+    if ($c.auto_fetch -or $Force -or ($libN -eq 0)) {
       $one = @(Invoke-SpotlightFetch -count $count -Quiet)
     }
     # 不管下到几张, 都重洗一次队列, 让新图进轮换
@@ -1622,12 +2200,23 @@ function Get-BwNextWall($s) {
     # 总不能让用户手动按 [3] 才有图可换。
     $libCount = @(Get-BwSpotlightAll).Count
     $recover = ($libCount -eq 0)
+    if ($recover) {
+      # 2026-10-09: 库整个空了的时候, 先把「已看过」文件夹里还在本地的老图移回来(零网络开销,
+      # 比下载快得多), 移回来就不用再下载了 —— 这也是"老图回收"最省事的那条路。
+      $backN = @(Restore-BwRecycledFiles $s 6 -AnyAge).Count
+      if ($backN -gt 0) {
+        $libCount = @(Get-BwSpotlightAll).Count
+        $recover = ($libCount -eq 0)
+        Log ('库是空的: 已从「已看过」移回 ' + $backN + ' 张老图, 库里现在 ' + $libCount + ' 张')
+      }
+    }
     if (($c.auto_fetch -or $recover) -and ($round -eq 1)) {
       $want = Get-BwSpotlightWant
       if ($recover) { Log ('聚焦库是空的, 自动补救 (不等用户手动), 先下 1 张立刻换, 其余后台补') }
       else { Log ('队列已空 (库中现有 ' + $libCount + ' 张), 先下 1 张立刻换, 其余后台补') }
       $one = @()
-      if (-not $global:BWDry) { $one = @(Invoke-SpotlightFetch -count 1 -Quiet) }
+      # 库是空的: 这时候"有图"比"省着用"重要, 不受当日额度限制(单轮上限照旧生效)
+      if (-not $global:BWDry) { $one = @(Invoke-SpotlightFetch -count 1 -Quiet -IgnoreDailyCap:$recover) }
       if ($one.Count -gt 0) {
         $newName = Split-Path $one[0] -Leaf
         $newKey = Get-BwNameKey $newName
@@ -2056,8 +2645,26 @@ function Save-BwFile([string[]]$urls, [string]$path, [hashtable]$meta = $null) {
           Remove-BwFile $tmp
           continue
         }
+        # 2026-10-09 (审查 H-10): 落地这一步必须**确认真的落地了**才算成功。
+        # Move-Item 在 ErrorActionPreference=Continue 下失败只是非终止错误, catch 抓不到,
+        # 于是"移动失败"照样被记成"下载成功"、还会写进下载流水 —— 而流水同时就是
+        # 「已下过清单」(Get-BwDlKeys), 这一张从此**永远不再下**。同一类坑在升级路径
+        # 2026-10-05 已经修过(见上面小助手那段), 这里补上。
+        $wantBytes = 0
+        try { $wantBytes = (Get-Item -LiteralPath $tmp -ErrorAction Stop).Length } catch { $wantBytes = 0 }
         Remove-BwFile $path
-        Move-Item -LiteralPath $tmp -Destination $path -Force
+        $moved = $false
+        try { Move-Item -LiteralPath $tmp -Destination $path -Force -ErrorAction Stop; $moved = $true }
+        catch { Log ('下载落地失败(文件可能正被占用): ' + (Split-Path $path -Leaf) + ' - ' + $_.Exception.Message) }
+        $fi = $null
+        if ($moved) { try { $fi = Get-Item -LiteralPath $path -ErrorAction Stop } catch { $fi = $null } }
+        if ((-not $fi) -or ($fi.Length -le 0) -or (($wantBytes -gt 0) -and ($fi.Length -ne $wantBytes))) {
+          # 没落地 / 落地了但字节数对不上 -> 这一张按失败处理: 不记流水、不报成功,
+          # 换下一个候选地址再试(这里 continue, 与上面的截断分支一致)。
+          Log ('下载落地校验不过(文件不在或不完整), 按失败处理: ' + (Split-Path $path -Leaf))
+          Remove-BwFile $tmp
+          continue
+        }
         Log ('下载成功: ' + (Split-Path $path -Leaf) + ' (' + (Get-BwImageDim $path) + ')')
         # 元数据(标题/版权/来源)写进图片自己的注释段, 图库里不另外生成文件
         if ($meta) { [void](Write-BwImageMeta $path $meta) }
@@ -2310,13 +2917,19 @@ function Wait-BwFlow([int]$ms, [int]$ok, [ref]$frame) {
   }
 }
 
-function Invoke-SpotlightFetch([int]$count, [switch]$SetWall, [switch]$Quiet, [switch]$Counter) {
+function Invoke-SpotlightFetch([int]$count, [switch]$SetWall, [switch]$Quiet, [switch]$Counter, [switch]$IgnoreDailyCap) {
   # $Counter: 菜单 [2] 手动下载时开 —— 每下成一张就在同一行把数字加一,
   # 并用「虚线增长 + 游标流动」的动效显示进度 (Show-BwDashedCounter / Wait-BwFlow),
   # 不然联网这几秒屏幕上一点动静都没有, 像卡住了。
   # 后台自动补图不开: 它跑在没人的时候, 也不需要有人看。
   # 聚焦接口每次请求几乎都返回一张不同的图(实测 40 次 / 39 张唯一), 因此可批量刷。
   # 返回本次新增的文件全名数组, 调用方可以立刻把它们排进轮换队列。
+  #
+  # 2026-10-09 (用户要求: 别把 800+ 张的源池一次抽干) —— 抓取一律在这里收口, 三道闸:
+  #   · 单轮上限 fetch_round_cap、单日上限 fetch_day_cap: 不管谁调、要多少, 都按闸门收;
+  #   · 低频模式(源池抓到尽头)期间一天只放行一轮, 恢复靠"某轮新增 >0";
+  #   · 老图循环模式下放行"过期重下"(>= recycle_min_days 天没出现过), 但拦住近期看过的。
+  # -IgnoreDailyCap: 库整个被清空时的补救专用(那时候"有图"比"省着用"重要)。
   $c = Get-BwConfig
   $dir = $c.spotlight_save_dir
   [void](New-BwDir $dir)
@@ -2324,6 +2937,42 @@ function Invoke-SpotlightFetch([int]$count, [switch]$SetWall, [switch]$Quiet, [s
   $newFiles = @()
   $frame = 0   # 游标流动用的动画帧计数 (仅 -Counter 时用到)
   $tries = 0
+  $reuse = 0   # 这一轮"回收老图"重下了几张
+  $ran = $false
+  $now = Get-Date
+  if ($global:BWDry) {
+    # 试运行: 连请求都不发 (H-8 的口径: -DryRun 不许有任何副作用, 联网请求也算)
+    Log ('试运行: 本应抓取聚焦图(最多 ' + $count + ' 张), 不发请求、不下载、不写账本')
+    return @()
+  }
+  $st = Get-BwFetchStats
+  $s0 = Get-BwState
+  if (-not (Test-BwFetchDue $st $now)) {
+    # 低频模式: 源池抓到尽头了, 今天已经试过 -> 只留一行聚合日志, 不再每轮刷"新增0 跳过N"
+    Write-BwPoolEndLine $st $Quiet.IsPresent
+    return @()
+  }
+  $minDays = Get-BwRecycleMinDays $c
+  $libNow = @(Get-BwSpotlightAll).Count
+  $freshLeft = Get-BwFreshLeft $s0
+  # 老图循环: 未看过的快见底(或上一轮已经出现过空轮)时才开 —— 平时新图优先
+  $recycle = [bool](([int]$st.zero_rounds -gt 0) -or ($freshLeft -lt $global:BWRecycleBelow))
+  $anyAge = ($libNow -eq 0)      # 库空了: 有图最重要, 老图门槛放宽
+  $allow = Get-BwFetchAllow $c $st $count -IgnoreDailyCap:$IgnoreDailyCap
+  if ($allow -le 0) {
+    $capTxt = '20'
+    try { $capTxt = [string][int]$c.fetch_day_cap } catch {}
+    Log ('聚焦抓取: 今天的额度已经用完 (' + [int]$st.day_used + '/' + $capTxt + ' 张), 这一轮不下载(源池留着慢慢用)')
+    if (-not $Quiet) { Write-Host ('  今天已经抓过 ' + [int]$st.day_used + ' 张了(每日上限 ' + $capTxt + ' 张), 源池留着慢慢用, 明天再抓。') -ForegroundColor DarkGray }
+    return @()
+  }
+  if ($allow -lt $count) {
+    $left = Get-BwFetchBudget $c $st
+    Log ('聚焦抓取: 按上限把这一轮从 ' + $count + ' 张收到 ' + $allow + ' 张 (单轮上限 ' + [int]$c.fetch_round_cap + ' 张 / 今日还剩 ' + $left + ' 张)')
+    if (-not $Quiet) { Write-Host ('  按上限收成 ' + $allow + ' 张 (单轮上限 ' + [int]$c.fetch_round_cap + ' 张 / 今日还剩 ' + $left + ' 张)') -ForegroundColor DarkGray }
+  }
+  $count = $allow
+  $ran = $true
   $maxTries = [Math]::Max($count * 5, 20)
   # 循环只看**真的新增了几张**。以前把"已存在"也算进配额, 于是库一大(几十张),
   # 连着抽到的全是库里已有的图, 配额被"已存在"耗尽 -> 一张新图都不下,
@@ -2331,7 +2980,7 @@ function Invoke-SpotlightFetch([int]$count, [switch]$SetWall, [switch]$Quiet, [s
   # 另: 「看过」名单也拦一道 —— 客户把库里的图备份到网盘(本地删掉)之后,
   # 本地查不到, 光靠文件去重会把同一张图再下一遍。
   $seen = @{}
-  foreach ($h in @(Get-BwHist (Get-BwState))) { if ($h) { $seen[[string]$h] = $true } }
+  foreach ($h in @(Get-BwHist $s0)) { if ($h) { $seen[[string]$h] = $true } }
   # 也认下载流水账(dl_ledger.log)里的编号: 库被清空/回收站清走过、或「看过」名单
   # 超 400 淘汰掉的图, 光靠文件和历史拦不住, 会被同一张图反复下。流水账是
   # “下过哪些图”的永久记录 —— 认过就不再下, 哪怕本地文件已经没了。
@@ -2339,14 +2988,20 @@ function Invoke-SpotlightFetch([int]$count, [switch]$SetWall, [switch]$Quiet, [s
   if ($Counter) { $frame = 0; Show-BwDashedCounter 0 $frame }
   while (($ok -lt $count) -and ($tries -lt $maxTries)) {
     $tries++
+    $isReuse = $false
     $it = Get-SpotlightOne
     if (-not $it) { if ($Counter) { Wait-BwFlow 800 $ok ([ref]$frame) } else { Start-Sleep -Milliseconds 800 }; continue }
-    # 下过的图绝不再下(流水账/看过名单都认) —— 库清空也不该让它重下,
-    # 宁可这一轮少下几张、等微软出新的, 也不能把旧图当新的重复下。
+    # 下过的图不再下(流水账/看过名单都认)。**例外**(2026-10-09 老图回收):
+    # 老图循环模式下, 至少 recycle_min_days 天没出现过的老图允许"回收重下" ——
+    # 这是源池被官方新增枯竭之后"永久运行也有图可换"的兜底; 近期看过的照样拦住。
     if ($it.slug -and $seen.ContainsKey([string]$it.slug)) {
-      $skip++
-      if ($Counter) { Wait-BwFlow 400 $ok ([ref]$frame) } else { Start-Sleep -Milliseconds 400 }
-      continue
+      if ($recycle -and (Test-BwOldImageReusable $s0 $it.slug $now $minDays -AnyAge:$anyAge)) {
+        $isReuse = $true
+      } else {
+        $skip++
+        if ($Counter) { Wait-BwFlow 400 $ok ([ref]$frame) } else { Start-Sleep -Milliseconds 400 }
+        continue
+      }
     }
     if (Test-SpotlightDup $dir $it) {
       $skip++
@@ -2358,7 +3013,9 @@ function Invoke-SpotlightFetch([int]$count, [switch]$SetWall, [switch]$Quiet, [s
     $m = @{ date=(Get-Date -Format 'yyyy-MM-dd'); title=$it.title; copyright=$it.copyright; source_type='聚焦'; source_url=$it.url; source_link='' }
     if (Save-BwFile @($it.url) $path $m) {
       $ok++
+      if ($isReuse) { $reuse++ }
       $newFiles += $path
+      if ($it.slug) { $seen[[string]$it.slug] = $true }   # 同一轮里别把同一张抓第二次
       if (-not $first) { $first = $path }
       if (-not $Quiet) { Write-Host ('    OK  ' + (Split-Path $path -Leaf)) }
       elseif ($Counter) { Show-BwDashedCounter $ok $frame }
@@ -2370,8 +3027,22 @@ function Invoke-SpotlightFetch([int]$count, [switch]$SetWall, [switch]$Quiet, [s
     if ($ok -eq 0) { Show-BwDashedCounter 0 $frame }
     Write-Host ''
   }
-  Write-Host ("  完成: 新增 $ok, 已存在 $skip, 失败 $fail")
-  Log ("聚焦抓取: 新增$ok 跳过$skip 失败$fail")
+  # 记账: 单日额度用掉多少 / 这一轮算不算空轮 / 要不要进(或退出)低频模式
+  Update-BwFetchStats $st $ok $skip $fail $tries $ran $now | Out-Null
+  Save-BwFetchStats $st
+  $extra = ''
+  if ($reuse -gt 0) { $extra = ', 回收老图 ' + $reuse + ' 张' }
+  Write-Host ("  完成: 新增 $ok, 已存在 $skip, 失败 $fail" + $extra)
+  if ([string]$st.mode -eq 'pool_end') {
+    # 抓到尽头了: 写聚合一行(每天最多一行), 不再每轮刷"新增0 跳过N"
+    if ([string]$st.low_log_day -eq $now.ToString('yyyy-MM-dd')) {
+      Log ('聚焦抓取(低频模式): 新增' + $ok + ' 跳过' + $skip + ' 失败' + $fail + $extra + '；下次尝试 ' + (Format-BwTryTime ([string]$st.next_try)))
+    } else {
+      Write-BwPoolEndLine $st $Quiet.IsPresent
+    }
+  } else {
+    Log ("聚焦抓取: 新增$ok 跳过$skip 失败$fail" + $extra)
+  }
   if ($SetWall -and $first) {
     $r = Set-BwDesktopWallpaper $first
     Write-Host ("  已设为壁纸 (ok=$r): " + (Split-Path $first -Leaf))
@@ -2434,9 +3105,12 @@ function Write-BwHeartbeat {
     $last = Get-BwTime $s.last_swap
     $next = '--:--'
     if ($last) { $next = $last.AddMinutes((Get-BwCycleMinutes $c)).ToString('MM-dd HH:mm') }
+    # 源池状态进心跳: 翻日志就知道现在处于三种模式的哪一种(用户要求"别让人以为程序坏了")
+    $poolLine = ''
+    try { $poolLine = (Get-BwSourcePoolStatus $s).Line } catch { $poolLine = '' }
     Log ('心跳: 聚焦库 ' + $lib + ' 张 / 必应库 ' + $b + ' 张 / 队列剩 ' + $q +
          ' 张 / 看过 ' + $hist + ' 条 / 累计换 ' + $s.shown + ' 次 / 上次 ' +
-         $s.last_swap + ' / 下次 ' + $next)
+         $s.last_swap + ' / 下次 ' + $next + ' / 源池: ' + $poolLine)
   } catch {}
 }
 
@@ -2514,7 +3188,10 @@ function Invoke-BwCycle {
             # 而 15 分钟后要不要重试恰恰是看这个字段 —— 当天就再也不会重试了,
             # 上面那句"15 分钟后再试"的日志其实是假的。
             Log '必应当日壁纸下载失败, 15 分钟后再试'
-            Save-BwState $s
+            # 2026-10-09 (审查 H-11): 这里以前是全份覆盖写。$s 是 40 多行前读的快照,
+            # 中间还跑过 Invoke-BwBackfill(可能几分钟), 用户这期间按 [F] 收藏的图
+            # 会被无声抹掉。同函数下面的规则 2/3 早就是 KeepFav, 这一条漏改。
+            Save-BwStateKeepFav $s
             return
           }
           $ok = Set-BwWall $path

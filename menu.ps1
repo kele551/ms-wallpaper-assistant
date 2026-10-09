@@ -349,7 +349,22 @@ function Invoke-BwRefill {
   $c = Get-BwConfig
   $null = Ensure-BwDirs
   $s = Get-BwState
+  # 2026-10-09 (用户要求): 手动批量入口也要有上限和提醒 —— 微软聚焦源池总共就 800+ 张,
+  # 官方每天只新增有限几张。一把抓几百张等于把池子抽干, 之后很久都没有新图可换
+  # (去重是永久的: 下过就不再下)。所以这里加单次硬上限 50 张, 并说清楚为什么。
   $want = [int]$c.spotlight_per_cycle
+  if ($want -gt 50) {
+    Write-Host '  一次最多 50 张, 这次按 50 张抓。' -ForegroundColor Yellow
+    $want = 50
+  }
+  Write-Host '  提醒: 聚焦源池总共约 800+ 张, 官方每天只新增几张; 抓过的不会再抓, 抽干就没新图了。' -ForegroundColor DarkGray
+  Write-Host '  建议交给后台按需补货 (设置 [0] 自动补新图), 不要一口气抓太多。' -ForegroundColor DarkGray
+  # 把这一轮**实际**会被抓几张算出来给用户看: 单轮上限、单日剩余额度两道闸都在这里生效
+  $allowTxt = 0
+  try {
+    $allowTxt = Get-BwFetchAllow $c (Get-BwFetchStats) $want
+    Write-Host ('  本次实际最多抓 ' + $allowTxt + ' 张 (单轮上限 ' + $c.fetch_round_cap + ' 张 / 今日还剩 ' + (Get-BwFetchBudget $c (Get-BwFetchStats)) + ' 张 / 每天上限 ' + $c.fetch_day_cap + ' 张)') -ForegroundColor DarkGray
+  } catch {}
   $new = @(Invoke-SpotlightFetch -count $want -Quiet -Counter)
   if ($new.Count -gt 0) {
     # 新下的图立刻排进队列, 不用干等一整轮。
@@ -362,6 +377,8 @@ function Invoke-BwRefill {
     Save-BwStateKeepFav $s
   }
   Write-Host ('  聚焦库现在 ' + (Count-Jpg $c.spotlight_save_dir) + ' 张, 待换队列还剩 ' + (Left-Queue $s) + ' 张')
+  # 源池状态: 让用户一眼看出"还有新图 / 在循环老图 / 已经抓到尽头", 别以为程序坏了
+  try { Write-Host ('  源池状态: ' + (Get-BwSourcePoolStatus (Get-BwState)).Line) -ForegroundColor DarkGray } catch {}
 }
 
 # ---------- 补漏必应图片 (在菜单 [4] 下载必应图片 里, 不再单独占一个号) ----------
@@ -549,9 +566,22 @@ function Show-BwSettings {
     if ($cap -gt 0) { $capTxt = ($cap.ToString() + ' 张') }
     $libN = @(Get-ChildItem -LiteralPath ([string]$c.spotlight_save_dir) -File -Filter *.jpg -ErrorAction SilentlyContinue).Count
     Write-Host ('  [8] 图库上限        ' + $capTxt + ' · 现在库里 ' + $libN + ' 张')
+    Write-Host '  [9] 重新抓取源池    清空下载记录 (不动图片文件)'
     $afOn = '关'
     if ([bool]$c.auto_fetch) { $afOn = '开' }
     Write-Host ('  [0] 自动补新图      ' + $afOn + '  · 关着就只在现有这些图里轮换')
+    Write-Host ''
+    # 源池状态 + 三道闸门(用户要求: 菜单里能看出当前处于哪种模式, 别让人以为程序坏了)
+    try {
+      $poolSt = Get-BwSourcePoolStatus (Get-BwState)
+      Write-Host ('  源池状态  ' + $poolSt.Line) -ForegroundColor DarkGray
+      Write-Host ('  源池闸门  单轮最多 ' + $c.fetch_round_cap + ' 张 · 每天最多 ' + $c.fetch_day_cap + ' 张 · 老图间隔 ' + $c.recycle_min_days + ' 天') -ForegroundColor DarkGray
+      if ([string]$poolSt.Mode -eq 'recycle') {
+        Write-Host '            未看过的不多了, 现在会把够久没出现的老图循环用起来(不会没图可换)。' -ForegroundColor DarkGray
+      } elseif ([string]$poolSt.Mode -eq 'pool_end') {
+        Write-Host '            源池已经抓到头, 每天只试一轮; 官方出新图后会自动继续。' -ForegroundColor DarkGray
+      }
+    } catch {}
     Write-Host ''
     Write-Host '  [q] 返回'
     Write-Host ''
@@ -568,13 +598,23 @@ function Show-BwSettings {
         Write-Host '    一次抓太多, 一轮补图要跑很久, 看着跟卡死一样;'
         Write-Host '    而且微软就那么多新图, 抓一大把反而容易撞上已经下过的, 白等。'
         Write-Host ''
+        Write-Host ('  实际每轮最多抓 ' + $c.fetch_round_cap + ' 张、每天最多抓 ' + $c.fetch_day_cap + ' 张(源池保护; 见 [9] 那一段说明)。') -ForegroundColor DarkGray
+        Write-Host ''
         $n = Read-Host ('  一次抓几张? (现在 ' + $c.spotlight_per_cycle + ', 默认 6, 回车不改)')
         $nn = Normalize-BwKey $n
         if (-not $n) {
           # 直接回车 = 不改
         } elseif ($nn -match '^\d+$') {
-          $v = Limit-BwNum ([int]$nn) 'spotlight_per_cycle'
-          if ($v -ne [int]$nn) {
+          # 2026-10-09 (审查 C3): 不能直接 [int]$nn —— 填 11 位以上数字(如 99999999999)时
+          # Int32 转换本身抛异常, 整句赋值被中止, $v 留着上一次留在作用域里的值(首次是 $null),
+          # 接着把脏值写进 config.json: 读回时静默回落成默认值, 用户改的设置无声失效,
+          # 屏幕上还会打一句英文转换错误 + 一句"好了, 一次抓 N 张"的假成功。
+          # 照上面 [1] 换图间隔那处(497-498)的写法: TryParse 失败就按"比上限还大"处理,
+          # 交给 Limit-BwNum 夹回上限, 界面上明确说一句。
+          $nnN = 0
+          if (-not [int]::TryParse($nn, [ref]$nnN)) { $nnN = $global:BwLimit.spotlight_per_cycle.Max + 1 }
+          $v = Limit-BwNum $nnN 'spotlight_per_cycle'
+          if ($v -ne $nnN) {
             Write-Host ('  ' + $nn + ' 张出界了, 按 ' + $v + ' 张算。') -ForegroundColor Yellow
           }
           $c.spotlight_per_cycle = $v
@@ -711,13 +751,22 @@ function Show-BwSettings {
         Write-Host ('  不填 0 的话能填 ' + $global:BwLimit.lib_cap.Min + ' ~ ' + $global:BwLimit.lib_cap.Max + ' 张: 少于 ' + $global:BwLimit.lib_cap.Min + ' 张等于刚补进来就删掉,')
         Write-Host ('  超过 ' + $global:BwLimit.lib_cap.Max + ' 张那是冷备份不是壁纸库了(4K 图一千张就好几个 GB)。')
         Write-Host ''
+        Write-Host '  库越大, 同一张图轮回来得越慢: 200 张 + 30 分钟一轮 ≈ 4 天才轮一遍。' -ForegroundColor DarkGray
+        Write-Host '  微软聚焦源池总共约 800+ 张, 官方每天只新增几张 —— 省着用才撑得久, 所以' -ForegroundColor DarkGray
+        Write-Host '  新装的默认值已经上调到 200 张(已有配置不会被改, 你想调就在这儿填)。' -ForegroundColor DarkGray
+        Write-Host ''
         $v = Read-Host ('  最多留多少张? (现在 ' + $capTxt + ', 回车不改)')
         $vv = Normalize-BwKey $v
         if (-not $v) {
           # 直接回车 = 不改
         } elseif ($vv -match '^\d+$') {
-          $v2 = Limit-BwNum ([int]$vv) 'lib_cap'
-          if (($v2 -ne [int]$vv) -and ([int]$vv -ne 0)) {
+          # 2026-10-09 (审查 C3): 同 [2], 但后果更狠 —— [int] 转换抛异常 -> 整句中止 ->
+          # $v2 留成 $null -> 写进 config.json 后被 Limit-BwNum 当成 0, 而 0 = 不限:
+          # 用户想设个上限, 结果把图库上限整个关掉了, 界面还报"好了, 不限张数"。
+          $vvN = 0
+          if (-not [int]::TryParse($vv, [ref]$vvN)) { $vvN = $global:BwLimit.lib_cap.Max + 1 }
+          $v2 = Limit-BwNum $vvN 'lib_cap'
+          if (($v2 -ne $vvN) -and ($vvN -ne 0)) {
             Write-Host ('  ' + $vv + ' 张出界了, 按 ' + $v2 + ' 张算。') -ForegroundColor Yellow
           }
           $c.lib_cap = $v2
@@ -726,6 +775,25 @@ function Show-BwSettings {
           else { Write-Host ('  好了, 最多留 ' + $v2 + ' 张, 超了就把看过的最老的移进回收站。') }
           Log ('设置: 图库上限 -> ' + $v2)
         } else { Write-Host '  要填一个数字 (0 = 不限), 没改。' -ForegroundColor Yellow }
+        Pause-Bw
+      }
+      '9' {
+        Write-Host ''
+        Write-Host '  用途: 源池里的图"下过一次就永不再下"(去重是永久的)。要是你把库清空了、' -ForegroundColor Gray
+        Write-Host '  或者从回收站里把老图还原回来了, 想让程序重新从源池收一遍, 就清一次记录。' -ForegroundColor Gray
+        Write-Host ''
+        Write-Host '  只清: 下载流水(dl_ledger.log, 会留档一份) + 「看过」名单 + 抓取节流账本。'
+        Write-Host '  不动: 图片文件、收藏夹、换图进度、设置 —— 一个字都不改。' -ForegroundColor Yellow
+        Write-Host ('  代价: 之后可能重复下到以前看过的图(库里现有 ' + $libN + ' 张)。') -ForegroundColor DarkGray
+        Write-Host ''
+        $yn9 = Normalize-BwKey (Read-Host '  真要清空吗? 输入 yes 才执行 (直接回车 = 不清)')
+        if ($yn9 -eq 'yes') {
+          $msg9 = Reset-BwSourceRecords
+          if ($msg9) { Write-Host ('  ' + $msg9) -ForegroundColor Green }
+          else { Write-Host '  没有清理(可能本来就没有记录, 或文件被占用)。' -ForegroundColor Yellow }
+        } else {
+          Write-Host '  没清, 什么都没变。'
+        }
         Pause-Bw
       }
       '0' {
@@ -1215,6 +1283,23 @@ try {
   }
 } catch {}
 
+# 状态文件上次被写坏过? 在这儿提示一次(提示完把标记删掉, 不刷屏)。
+# 2026-10-09 (审查 H-6): 以前 state.json 读坏了是**静默重置**的, 用户只看到收藏夹没了,
+# 既不知道发生了什么, 也不知道能去哪儿找。现在: 坏文件留档 + 日志写 ERROR + 这里说清楚。
+$badFlag = Join-Path $global:BWRoot 'state.corrupt.flag'
+if (Test-Path -LiteralPath $badFlag) {
+  try {
+    $badMsg = [string](Get-Content -LiteralPath $badFlag -Raw -Encoding UTF8)
+    Write-Host ''
+    Write-Host '  [!] 上次的换图进度文件(state.json)是坏的, 已经这样处理过: ' -ForegroundColor Yellow
+    Write-Host ('      ' + $badMsg.Trim()) -ForegroundColor Yellow
+    Write-Host '      数据目录里 ".corrupt-" 开头的那个文件是当时的现场留档。' -ForegroundColor DarkGray
+    Write-Host ''
+    Start-Sleep -Seconds 6
+    Remove-Item -LiteralPath $badFlag -Force -ErrorAction SilentlyContinue
+  } catch {}
+}
+
 do {
   $c0 = Get-BwConfig
   $s0 = Get-BwState
@@ -1261,6 +1346,8 @@ do {
   if ($running) { $swap2 = $next }
   Write-Host ('  换图  下次自动换 ' + $swap2 + '  ·  每 ' + (Get-BwCycleMinutes $c0) + ' 分钟  ·  ' + $runTxt + '  ·  今日必应 ' + $bingDone) -ForegroundColor Gray
   Write-Host ('  图库  必应 ' + $bingN + ' 张 · 聚焦 ' + $spotN + ' 张 · 待换 ' + (Left-Queue $s0) + ' 张 · 累计下载 ' + (Get-BwDlTotal $s0) + ' 张') -ForegroundColor Gray
+  # 源池状态(2026-10-09): 还有新图 / 进入老图循环 / 已抓到尽头 —— 用户视角最关心的那件事
+  try { Write-Host ('  源池  ' + (Get-BwSourcePoolStatus $s0).Line) -ForegroundColor DarkGray } catch {}
   $base0 = Get-BwBaseOf $c0
   if ($base0) { Write-Host ('  位置  ' + $base0) -ForegroundColor DarkGray }
   else {
