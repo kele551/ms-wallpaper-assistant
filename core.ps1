@@ -874,25 +874,45 @@ function Get-BwUpdateInfo {
   } elseif ($Offline) { return $null }
   $urls = @()
   $cfgUrl = ''
-  try { if ($global:BWDefaults) { $cfgUrl = '' } } catch {}
-  try { $cfgUrl = [string](Get-BwConfig).update_url } catch {}
-  if ($cfgUrl) { $urls += $cfgUrl } else { $urls += $global:BWUpdateUrls }
+  # 2026-10-10 (复核 P3): 这里原来是**二选一** —— 配了 update_url 就只用它(内置源连试都不试),
+  # 读不出来或字段为空就一声不吭退回内置源。于是: 自建镜像不通时, 明明能用的官方地址
+  # 根本不在候选里, 直接放弃; 反过来, 自己配的地址为什么没生效, 日志里一个字都没有。
+  # 现在: 两边**一起进候选**, 按顺序挨个试; 读配置失败/字段为空都写日志, 成功了写清用的是哪个。
+  $cfgHasKey = $false
+  try {
+    $cfg = Get-BwConfig
+    if ($cfg -and $cfg.PSObject.Properties['update_url']) {
+      $cfgHasKey = $true
+      $cfgUrl = ([string]$cfg.update_url).Trim()
+    }
+  } catch {
+    Log ('升级源: 读配置里的 update_url 失败, 这次只按内置升级源试: ' + $_.Exception.Message) 'WARN'
+  }
+  if ($cfgUrl) { $urls += $cfgUrl }
+  elseif ($cfgHasKey) { Log '升级源: 配置里的 update_url 是空的, 这次只按内置升级源试' 'WARN' }
+  foreach ($bu in @($global:BWUpdateUrls)) {
+    if ($bu -and ($urls -notcontains $bu)) { $urls += $bu }
+  }
+  if ($urls.Count -eq 0) { Log '升级源: 候选地址是空的, 这次没法检查更新' 'WARN'; return $null }
+  if ($cfgUrl) { Log ('升级源: 自定义地址与内置地址一起试(共 ' + $urls.Count + ' 个): ' + ($urls -join ' | ')) }
   foreach ($u in $urls) {
     $raw = ''
     if ($u -match '^(https?)://') { $raw = Get-BwText $u }
     elseif (Test-Path -LiteralPath $u) { try { $raw = Get-Content -LiteralPath $u -Raw -Encoding UTF8 } catch { $raw = '' } }
-    if (-not $raw) { continue }
+    if (-not $raw) { Log ('升级源: ' + $u + ' 没取到内容, 试下一个'); continue }
     try {
       $j = $raw | ConvertFrom-Json
-      if (-not $j.version) { continue }
+      if (-not $j.version) { Log ('升级源: ' + $u + ' 里没有 version 字段, 试下一个') 'WARN'; continue }
       $j | Add-Member -NotePropertyName checked_ft -NotePropertyValue ((Get-Date).ToFileTime()) -Force
       $j | Add-Member -NotePropertyName source -NotePropertyValue $u -Force
       # 2026-10-09 (审查 H-7): 缓存也走原子写 —— 它被写坏只是白查一次,
       # 但既然有现成的原子写, 就没必要留一个"半截 JSON"在数据目录里。
       [void](Save-BwJsonAtomic $global:BWUpdateFile $j)
+      Log ('升级源: 这次实际用的是 ' + $u + ' (升级源版本 v' + [string]$j.version + ')')
       return $j
-    } catch { continue }
+    } catch { Log ('升级源: ' + $u + ' 的内容解析不了, 试下一个') 'WARN'; continue }
   }
+  Log ('升级源: ' + $urls.Count + ' 个地址全都没成功, 保持上次的结果') 'WARN'
   return $null
 }
 # 执行升级: 只换脚本。返回 $true 表示脚本已经换成新的。
@@ -1095,6 +1115,51 @@ function Invoke-BwLauncherUpdate {
   if (-not $Quiet) { Write-Host ('  主程序 v' + $Info.version + ' 已下好, 几秒后自动覆盖并重启; 这个窗口可以关掉。') -ForegroundColor Green }
   return $true
 }
+# ---- 升级前的本地兜底备份 (2026-10-10 复核 P1: 固定名 .bak 会被后续发布逐步刷掉) ----
+# 只给"这次真的要写的那几个文件"留备份 —— 没被换的文件一个字节都不碰;
+# 备份名带上"被替换掉的那个版本号", 例如 core.ps1.bak-2.3.0 (版本号就照 .version 里那份写)。
+# 为什么不能继续用固定名 core.ps1.bak:
+#   ① 它是**唯一**的本地兜底, 而每一次升级都会把它重新覆盖一遍。只要有过一次"半新半旧"
+#      的升级(核心脚本写成功、菜单那一步失败, 或反过来: 磁盘上两个文件不是同一版),
+#      下一次升级再存 .bak, 就把当初那份"一切都正常"的副本刷成了这份半新半旧的内容;
+#   ② 某一版有问题、用户升到下一版才发现时, .bak 里躺着的正好是**有问题的那一版**,
+#      想退回"上一个一切正常的版本"已经没有副本了 —— 本地兜底越用越旧, 再也回不去。
+# 带版本号之后: 同一个版本只留第一次存下的那一份, 后来的升级刷不掉它; 版本号读不出来
+# (文件坏了/被清掉)就退回时间戳名, 一样是"谁都不覆盖谁"。
+# 每个脚本最多留 $Keep 份(新的留下), 免得数据目录里越攒越多。
+function Backup-BwScriptForUpdate([string]$path, [string]$ver, [int]$Keep = 5) {
+  if (-not (Test-Path -LiteralPath $path)) { return '' }
+  # 版本号来自升级源或本地 .version, 先洗一遍再拿去当文件名(只留 数字/字母/点/横线)。
+  $tag = ([string]$ver).Trim()
+  if ($tag) { $tag = ($tag -replace '[^0-9A-Za-z\.\-]', '_') }
+  else { $tag = (Get-Date -Format 'yyyyMMdd-HHmmss') }
+  $bak = $path + '.bak-' + $tag
+  try {
+    if (Test-Path -LiteralPath $bak) {
+      # 同名备份已经在了 = 这个版本当初那份好副本还在, 一个字都不改。
+      Log ('升级: ' + (Split-Path $path -Leaf) + ' 已有备份 ' + (Split-Path $bak -Leaf) + ', 不覆盖(留着当初那份)')
+    } else {
+      Copy-Item -LiteralPath $path -Destination $bak -Force
+      # 时间戳显式写成"现在": 决定保留哪几份时看到的是"备份是什么时候存的",
+      # 而不是源文件原来的修改时间(几个 .bak 的源文件时间戳可能一模一样)。
+      try { [System.IO.File]::SetLastWriteTime($bak, (Get-Date)) } catch {}
+      Log ('升级: 已备份本机脚本 ' + (Split-Path $path -Leaf) + ' -> ' + (Split-Path $bak -Leaf))
+    }
+  } catch {
+    Log ('升级: 备份 ' + (Split-Path $path -Leaf) + ' 失败(不影响这次升级): ' + $_.Exception.Message) 'WARN'
+    return ''
+  }
+  # 只清理"程序自己给这个文件留的备份", 最多留 $Keep 份; 目录里其它任何文件都不动。
+  # 用 .NET 直接删: 本机 Remove-Item 走回收站, 中文路径下会报 trash 失败(见 Remove-BwFile)。
+  try {
+    $all = @(Get-ChildItem -LiteralPath (Split-Path $path -Parent) -File -Filter ((Split-Path $path -Leaf) + '.bak*') -ErrorAction SilentlyContinue |
+             Sort-Object LastWriteTime -Descending)
+    if ($Keep -gt 0 -and $all.Count -gt $Keep) {
+      foreach ($f in @($all[$Keep..($all.Count - 1)])) { try { [System.IO.File]::Delete($f.FullName) } catch {} }
+    }
+  } catch {}
+  return $bak
+}
 function Invoke-BwScriptUpdate {
   param([switch]$Quiet, [switch]$Force, [switch]$Animated, [switch]$ReopenMenu)
   # 2026-10-09 (审查 H-8): 试运行 = 什么都不做。升级要先联网, 之后写 core.ps1 / menu.ps1、
@@ -1161,10 +1226,13 @@ if ($Animated) { Show-BwUpGradeStep 1 3 '连接升级源' $true ('升级源: ' +
     $plan += [PSCustomObject]@{ Name = $nm; Bytes = $bytes; Sha = $got }
   }
   if ($plan.Count -eq 0) { Log '升级失败: 升级信息里没有可用的脚本'; return $false }
+  # 2026-10-10 (复核 P1): 备份**只为这次真的要写的文件**留(上面 $plan 里装的就是全部要写的),
+  # 而且名字带上"被换掉的那个版本号"。老写法是固定名 <文件>.bak —— 每次升级都刷一遍,
+  # 半新半旧的中间态、或"有问题的那一版"会把当初那份好副本盖掉, 本地兜底越用越旧。
+  # 现在: 没被换的文件一个字节都不碰; 同名备份已存在就绝不覆盖; 每个脚本最多留 5 份。
   foreach ($it in $plan) {
     $dst = Join-Path $global:BWRoot $it.Name
-    $bak = $dst + '.bak'
-    try { if (Test-Path -LiteralPath $dst) { Copy-Item -LiteralPath $dst -Destination $bak -Force } } catch {}
+    [void](Backup-BwScriptForUpdate $dst $local)
     try {
       [System.IO.File]::WriteAllBytes($dst, $it.Bytes)
       Log ('升级: ' + $it.Name + ' 已更新 (' + $it.Bytes.Length + ' 字节, sha256=' + $it.Sha.Substring(0,16) + ')')
@@ -3165,7 +3233,15 @@ function Get-BwFreshQueue($s) {
       # 本来就属于"很久没见过"的那一类。
       # 顺序交给下面的 Get-BwOldestFirst —— 没有时间戳的按文件名里的日期从早到晚,
       # 而必应文件名正是 `2026-09-19_…` 这种带日期的, 所以就是"从最早开始轮"。
-      foreach ($bn in $bingAdd) { if ($oldPart -notcontains $bn) { $oldPart += $bn } }
+      # 【2026-10-10 修·按用户口径收紧】必应图**只在聚焦真的一张都没得轮时**才并进来。
+      # 用户原话:「壁纸助手轮换必应图片的前提是, 聚焦图片抓不到了, 才能从必应里面
+      #            从最早的图片开始轮换」。
+      # 所以这里加一道 `$fresh.Count -eq 0` 的闸：只要还有**没看过的聚焦图**，
+      # 哪怕它已经不足 20 张、已经进了"老图循环"，也**不许**把必应图排进来 ——
+      # 那时候该继续轮聚焦自己的老图，把没看过的看完再说。
+      if ($fresh.Count -eq 0) {
+        foreach ($bn in $bingAdd) { if ($oldPart -notcontains $bn) { $oldPart += $bn } }
+      }
       if ($oldPart.Count -gt 0) {
         $recycleMode = $true
         $freshPart = @($fresh)
@@ -3591,8 +3667,132 @@ function Get-BwWallStyle {
     'center'  { return @{ Style = '0';  Tile = '0'; Label = '居中' } }
     'tile'    { return @{ Style = '0';  Tile = '1'; Label = '平铺' } }
     'span'    { return @{ Style = '22'; Tile = '0'; Label = '跨区' } }
+    # keep 跟随系统: 程序**一个字节都不写**这两个注册表值(见 Set-BwDesktopWallpaper)。
+    # 用来兑现"恢复我原来的填充方式"—— 还原之后再换图, 也不该又把用户的设置改回去。
+    'keep'    { return @{ Style = '';   Tile = '';  Label = '跟随系统(不改)' } }
     default   { return @{ Style = '10'; Tile = '0'; Label = '填充' } }
   }
+}
+# ---- 「填充方式」的用户原值: 记下来 + 能还原 (2026-10-10 复核 P2) ----
+# 程序会按需改 HKCU\Control Panel\Desktop 的 WallpaperStyle / TileWallpaper。
+# 以前**从不记录原值**, 卸载也不还原 —— 用户机器上真实的原值事后无从得知,
+# 对外文档只好照实写"不记录你的原值、卸载后也不会自动还原"。
+# 现在: 第一次真要写这两个值**之前**, 先把"当时是什么"存进数据目录的 config.json;
+# 已经有记录就一个字都不改(后来再写进去的都是程序自己改的值, 不是用户的原值)。
+# 注册表里那一项**根本不存在**时记成 <absent> —— 还原时把它删掉, 而不是写个空值
+# (空字符串本身也是一种取值, 跟"没有这一项"不是一回事)。
+$global:BwStyleOrigKey    = 'wall_style_orig'
+$global:BwStyleOrigAbsent = '<absent>'
+# 读出记下来的原值; 没有记录返回 $null(调用方按"还没改过"处理)。
+function Get-BwStyleOrig {
+  try {
+    $c = Get-BwConfig
+    if (-not $c) { return $null }
+    if (-not $c.PSObject.Properties[$global:BwStyleOrigKey]) { return $null }
+    $o = $c.PSObject.Properties[$global:BwStyleOrigKey].Value
+    if (-not $o) { return $null }
+    if (-not $o.PSObject.Properties['style']) { return $null }
+    if (-not $o.PSObject.Properties['tile']) { return $null }
+    return $o
+  } catch { return $null }
+}
+# 记录用户原值。返回 $true = 这次真的记下了; $false = 早就有记录 / 没记成, 都没动它。
+function Save-BwStyleOrig($cur) {
+  if (Get-BwStyleOrig) { return $false }
+  $style = ''; $tile = ''
+  try {
+    if ($cur) {
+      if ($cur.PSObject.Properties['WallpaperStyle']) { $style = [string]$cur.WallpaperStyle }
+      if ($cur.PSObject.Properties['TileWallpaper'])  { $tile  = [string]$cur.TileWallpaper }
+    }
+  } catch {}
+  if (-not $style) { $style = $global:BwStyleOrigAbsent }
+  if (-not $tile)  { $tile  = $global:BwStyleOrigAbsent }
+  try {
+    $c = Get-BwConfig
+    $c | Add-Member -NotePropertyName $global:BwStyleOrigKey -NotePropertyValue ([PSCustomObject]@{
+      style = $style
+      tile  = $tile
+      at    = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+    }) -Force
+    Save-BwConfig $c
+    Log ('填充方式: 已记下你原来的值 (WallpaperStyle=' + $style + ', TileWallpaper=' + $tile + '), 以后可以还原')
+    return $true
+  } catch { Log ('填充方式: 原值没能记下来: ' + $_.Exception.Message) 'WARN'; return $false }
+}
+# 把注册表里的两个值翻译回本程序的那几档; 认不出来返回 ''(说明用户用的是别的组合)。
+function Get-BwStyleKeyByReg([string]$style, [string]$tile) {
+  $k = (([string]$style).Trim() + '/' + ([string]$tile).Trim())
+  switch ($k) {
+    '10/0' { return 'fill' }
+    '6/0'  { return 'fit' }
+    '2/0'  { return 'stretch' }
+    '0/0'  { return 'center' }
+    '0/1'  { return 'tile' }
+    '22/0' { return 'span' }
+    default { return '' }
+  }
+}
+# 把记下来的原值说成人话(菜单里显示用)。
+function Format-BwStyleOrig($o) {
+  if (-not $o) { return '没有记录' }
+  $style = [string]$o.style; $tile = [string]$o.tile
+  if (($style -eq $global:BwStyleOrigAbsent) -and ($tile -eq $global:BwStyleOrigAbsent)) { return '原来没有这两项(系统默认)' }
+  $sTxt = $style; $tTxt = $tile
+  if ($style -eq $global:BwStyleOrigAbsent) { $sTxt = '没这一项' }
+  if ($tile  -eq $global:BwStyleOrigAbsent) { $tTxt = '没这一项' }
+  $lab = ''
+  switch (Get-BwStyleKeyByReg $style $tile) {
+    'fill'    { $lab = '填充' }
+    'fit'     { $lab = '适应' }
+    'stretch' { $lab = '拉伸' }
+    'center'  { $lab = '居中' }
+    'tile'    { $lab = '平铺' }
+    'span'    { $lab = '跨区' }
+  }
+  if ($lab) { $lab = ' (' + $lab + ')' }
+  return ('WallpaperStyle=' + $sTxt + ', TileWallpaper=' + $tTxt + $lab)
+}
+# 恢复用户原来的填充方式。返回 @{ Ok; Msg } —— 调用方(菜单)照 Msg 说话。
+function Restore-BwStyleOrig {
+  $o = Get-BwStyleOrig
+  if (-not $o) {
+    return @{ Ok = $false; Msg = '没有你的原值记录 —— 程序还没改过你的填充方式, 所以没什么要还原的。' }
+  }
+  $style = [string]$o.style
+  $tile  = [string]$o.tile
+  $k = 'HKCU:\Control Panel\Desktop'
+  $bad = @()
+  foreach ($it in @(@('WallpaperStyle', $style), @('TileWallpaper', $tile))) {
+    $nm = [string]$it[0]; $v = [string]$it[1]
+    try {
+      if ($v -eq $global:BwStyleOrigAbsent) {
+        # 原来没有这一项 -> 删掉它(不是写个空值)
+        Remove-ItemProperty -Path $k -Name $nm -ErrorAction SilentlyContinue
+      } else {
+        Set-ItemProperty -Path $k -Name $nm -Value $v -ErrorAction Stop
+      }
+    } catch { $bad += $nm; Log ('填充方式: 还原 ' + $nm + ' 失败: ' + $_.Exception.Message) 'WARN' }
+  }
+  # 还原之后还要让程序**不再覆盖它**: 认得出是程序那几档就按那一档走,
+  # 认不出(用户自己用的别的组合)就设成 keep —— 以后一个字节都不动这两个值。
+  $key = Get-BwStyleKeyByReg $style $tile
+  $mode = 'keep'
+  if ($key) { $mode = $key }
+  try {
+    $c = Get-BwConfig
+    $c.wallpaper_style = $mode
+    Save-BwConfig $c
+  } catch { Log ('填充方式: 还原后没能更新设置: ' + $_.Exception.Message) 'WARN' }
+  # 立刻生效: 把当前这张壁纸再设一次(keep 模式下不会写注册表)。
+  try { [void](Apply-BwWallStyle) } catch {}
+  if ($bad.Count -gt 0) {
+    return @{ Ok = $false; Msg = ('没还原干净: ' + ($bad -join ', ') + ' 写不进去(见日志)。') }
+  }
+  $tail = '以后换图不会再动它'
+  if ($key) { $tail = '以后换图还按「' + (Get-BwWallStyle).Label + '」走, 想换回程序那几档在 [4] 里选' }
+  Log ('填充方式: 已还原为你原来的值 (WallpaperStyle=' + $style + ', TileWallpaper=' + $tile + '), ' + $tail)
+  return @{ Ok = $true; Msg = ('已经还原成 ' + (Format-BwStyleOrig $o) + ' —— 立刻生效; ' + $tail + '。') }
 }
 function Set-BwDesktopWallpaper([string]$path) {
   if (-not ('WinWall' -as [type])) {
@@ -3601,8 +3801,13 @@ function Set-BwDesktopWallpaper([string]$path) {
   $w = Get-BwWallStyle
   $k = 'HKCU:\Control Panel\Desktop'
   $cur = Get-ItemProperty $k -ErrorAction SilentlyContinue
-  if ([string]$cur.WallpaperStyle -ne $w.Style) { Set-ItemProperty $k -Name WallpaperStyle -Value $w.Style }
-  if ([string]$cur.TileWallpaper -ne $w.Tile)   { Set-ItemProperty $k -Name TileWallpaper -Value $w.Tile }
+  # 2026-10-10 (复核 P2): 真要写之前先把用户原值记下来。只在第一次记, 已有的记录不动 ——
+  # 否则第二次写入时"当时的值"已经是程序自己改过的, 原值就永久丢了。
+  # Style/Tile 为空串 = keep(跟随系统), 那就一个字都不写。
+  $needWrite = (($w.Style -and ([string]$cur.WallpaperStyle -ne $w.Style)) -or ($w.Tile -and ([string]$cur.TileWallpaper -ne $w.Tile)))
+  if ($needWrite) { [void](Save-BwStyleOrig $cur) }
+  if ($w.Style -and ([string]$cur.WallpaperStyle -ne $w.Style)) { Set-ItemProperty $k -Name WallpaperStyle -Value $w.Style }
+  if ($w.Tile  -and ([string]$cur.TileWallpaper  -ne $w.Tile))  { Set-ItemProperty $k -Name TileWallpaper  -Value $w.Tile }
   return [WinWall]::SystemParametersInfo(0x0014, 0, $path, 3)
 }
 # 只改填充方式、不换图时, 得把当前这张再设一次才能立刻看到效果。

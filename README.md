@@ -6,7 +6,7 @@
 <p>简体中文 | <a href="README_EN.md">English</a></p>
 <img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square">
 <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square">
-<img alt="Version" src="https://img.shields.io/badge/version-v2.3.0-blue?style=flat-square">
+<img alt="Version" src="https://img.shields.io/badge/version-v2.2.0-blue?style=flat-square">
 <img alt="Downloads" src="https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?style=flat-square&label=downloads&color=green">
 
 <p>🖼 <b>让电脑桌面壁纸自己换，你不用管</b>　——　必应每日一图 + Windows 聚焦，4K 自动轮换</p>
@@ -56,9 +56,9 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 下载
 
-### 👉 [点这里下载 v2.3.0 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.3.0/MSWallpaperAssistant-v2.3.0.zip)
+### 👉 [点这里下载 v2.2.0 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.2.0/MSWallpaperAssistant-v2.2.0.zip)
 
-> 7.3 MB 的 zip，实测可解压、可运行。当前云端最新版本：v2.3.0（打开即自动升级）。
+> 7.3 MB 的 zip，实测可解压、可运行。当前云端最新版本：v2.2.0（打开即自动升级）。
 > **杀软报毒是误报，可以放心。** 程序没有购买数字签名，又是「单文件自解压」打包，
 > 加上自动升级会下载脚本再运行 —— 这三样最容易触发杀软的启发式误判。
 > 想自己确认文件没被动过：发行页上写了安装包的 SHA256，下载后执行
@@ -73,6 +73,15 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 ```
 
 就这一个 exe，不用挑、不用装、不用下一步下一步。
+
+> **本次更新了安装包，但版本号没有变。**
+> 已安装的朋友**不会收到自动升级提示** —— 升级检查是拿「线上版本号」和「你本地的版本号」比的，
+> 版本号没变，程序就不会认为自己该升级。
+> 如果你用着不顺畅（例如**壁纸重复得太快**），**请重新下载安装包覆盖安装一次即可**，你的配置与收藏都会保留。
+>
+> 这一版还把你最容易被"程序悄悄改了设置"的地方堵上了：**填充方式（拉伸 / 适应 / 填充）现在会被记住** ——
+> 程序第一次动它之前你原来是什么，它先记下来；想还原按 `[S]` → `[4]` → `[r]` 就行，
+> 还原之后程序也不会再把它改回去。
 
 ---
 
@@ -100,7 +109,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ```
   ============================================================
-   桌面壁纸 v2.0.10    作者: 海风（kele551）
+   桌面壁纸 v2.2.0    作者: 海风（kele551）
    gitee.com/kele551/ms-wallpaper-assistant
   ============================================================
 
@@ -293,7 +302,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 顺手带上这几样，能省一轮来回：
 
 1. Windows 版本（设置 → 系统 → 关于）
-2. 程序版本号（菜单标题上就有，比如 `v2.3.0`）
+2. 程序版本号（菜单标题上就有，比如 `v2.2.0`）
 3. `wallpaper.log` 末尾十几行（菜单 `[L]` 能看到）
 
 ---
@@ -362,12 +371,18 @@ Releases are built from the source code in this repository; the build command is
 
 **不会留下**：注册表自启动项、服务、计划任务、系统代理 / DNS / hosts 的改动 —— 这几样代码里一处都没有。
 
-**会留下两样，卸载前请留意**：
+**会留下一样，卸载前请留意**：
 
 - **「启动」文件夹里的快捷方式** —— 只有第 1 步做了才会删；直接删 exe 不会清它。
-- **「壁纸填充方式」** —— 程序会按需写 `HKCU\Control Panel\Desktop` 的
-  `WallpaperStyle` / `TileWallpaper`（这是 Windows 自己的壁纸设置，与系统「个性化」同一位置）。
-  程序**不记录你的原值，卸载后也不会自动还原**；想恢复默认，在系统「个性化 → 背景」里改一次即可。
+
+**「壁纸填充方式」可以自己还原**：程序会按需写 `HKCU\Control Panel\Desktop` 的
+`WallpaperStyle` / `TileWallpaper`（这是 Windows 自己的壁纸设置，与系统「个性化」同一位置）。
+**第一次要改这两个值之前，程序会先把你的原值记下来** —— 存在数据目录 `config.json` 的
+`wall_style_orig` 里，已有记录不会被后来的升级覆盖。想还原就按
+`[S]` 设置 → `[4]` 壁纸填充方式 → `[r] 恢复我原来的填充方式`：程序会把这两个值写回原样、
+立刻生效，之后换图也不再动它。卸载前按一下就干净了（记录本身跟着数据目录一起删，见第 4 步）。
+**如实说明一句**：**没有记录功能的老版本**在它那时已经改掉的值找不回来了 —— 这条记录是从
+「会记录原值」的那一版起才有的；旧版本留下的这个坑，只能你自己在系统「个性化 → 背景」里改一次。
 
 </details>
 
@@ -378,7 +393,7 @@ Releases are built from the source code in this repository; the build command is
 <summary><b>版本迭代</b>（点击展开）</summary>
 
 
-每次改版都会打一个版本号、发一版下载。**当前最新：v2.3.0**
+每次改版都会打一个版本号、发一版下载。**当前最新：v2.2.0**
 
 小版本的改动都归到同一个大版本下面说，一行一个版本：
 

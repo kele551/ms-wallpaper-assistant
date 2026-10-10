@@ -42,7 +42,7 @@ import time
 import datetime
 import ctypes
 
-VERSION = '2.3.0'
+VERSION = '2.2.0'
 APP_NAME = '微软壁纸助手'
 DATA_DIR_NAME = '微软壁纸助手数据'
 PAYLOAD_FILES = ['core.ps1', 'menu.ps1', '使用说明.txt', '微软壁纸助手.ico']
@@ -393,7 +393,23 @@ def sync_payload(d):
             if os.path.isfile(s):
                 shutil.copy2(s, os.path.join(d, f))
         return d, False
-    if cur == VERSION and not missing:
+    if cur == VERSION:
+        # 【2026-10-10 修·载荷缺失时会静默退回旧版】原来这里写的是
+        #     if cur == VERSION and not missing: return d, False
+        # —— 版本号相同、但**少了任何一个** payload（用户很容易顺手删掉
+        # "使用说明.txt"或图标）时，守卫就不成立，直接落到下面那段破坏性路径：
+        # 把 exe 内嵌的四份**全量覆盖**一遍、并把 .version 写回 exe 版本。
+        # 为什么这是真问题：**在线升级可以只更新脚本、不动 exe**（升级源的 scripts
+        # 段就是干这个的），那种情况下数据目录里的 core.ps1 / menu.ps1 会比
+        # exe 内嵌的更新，而版本号**恰好相同** —— 于是一次"补个缺失文件"的动作，
+        # 会把热更过来的新脚本**静默换回 exe 里的旧版**，界面与行为退回旧版且毫无提示。
+        # 与上面"脚本比 exe 新"那一支同一个口径：**只补真正缺失的，绝不覆盖已存在的**。
+        # （代价：同版本下"脚本被改坏"不再由这里兜底 —— 那条路走的是升级源的
+        #   sha256 校验与 .bak 回滚，不该靠启动时无条件覆盖来修。）
+        for f in missing:
+            s = os.path.join(src, f)
+            if os.path.isfile(s):
+                shutil.copy2(s, os.path.join(d, f))
         return d, False
 
     if cur and cur != VERSION:
