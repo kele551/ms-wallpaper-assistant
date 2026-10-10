@@ -1,95 +1,18 @@
-﻿# Desktop Wallpaper Assistant（桌面壁纸）
+﻿<div align="center">
+<img src="docs/icon.png" alt="桌面壁纸" height="120" width="120">
 
-**Auto-rotating desktop wallpapers from Bing and Windows Spotlight.**
+<h1>桌面壁纸</h1>
 
-A small, free, open-source Windows utility — a single portable `.exe` — that downloads
-public wallpaper sources (the **Bing daily image** and **Windows Spotlight**) and rotates
-them as your desktop wallpaper on a schedule. No installer, no administrator rights; all
-images stay on your own machine.
+<p>简体中文 | <a href="README_EN.md">English</a></p>
+<img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square">
+<img alt="Platform" src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square">
+<img alt="Version" src="https://img.shields.io/badge/version-v2.2.0-blue?style=flat-square">
+<img alt="Downloads" src="https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?style=flat-square&label=downloads&color=green">
 
-> Not affiliated with, endorsed by, or sponsored by any image provider. "Bing" and "Windows
-> Spotlight" are used only to describe where the images come from.
+<p>🖼 <b>让电脑桌面壁纸自己换，你不用管</b>　——　必应每日一图 + Windows 聚焦，4K 自动轮换</p>
 
-> 作者 / Author: **HaiFeng (kele551)** · Gitee（主）: <https://gitee.com/kele551/ms-wallpaper-assistant> · GitHub（镜像）: <https://github.com/kele551/ms-wallpaper-assistant>
-
-## Features
-
-- **Two sources**: the Bing daily image + Windows Spotlight (both 4K)
-- **Automatic rotation** at an interval you choose (default: 30 minutes)
-- **Never repeats**: it remembers which images you have already seen, and keeps a favourites list
-- **Catches up**: if your PC was off for days, missed Bing images are backfilled automatically
-- **Green / portable**: one `.exe`; no installer, **no administrator rights, no autostart
-  registry entry, no service, no scheduled task**. The only registry value it may write is
-  Windows' own wallpaper settings under `HKCU\Control Panel\Desktop`
-  (`WallpaperStyle` / `TileWallpaper`), and only when you change the wallpaper fit mode
-- **Quiet**: no window flash, no popups; it also skips swapping while your screen is locked
-  or you are away from the computer
-- **Sleep-friendly**: it requests no wake state, changes no power settings, plays no audio,
-  and (since v2.0.10) stays completely quiet while you are away or locked
-- **Private by design**: images are stored locally; no user data is collected or uploaded
-- **Self-updating**: it checks the release feed and upgrades itself — no manual downloads
-
-## Download
-
-- GitHub Releases: <https://github.com/kele551/ms-wallpaper-assistant/releases>
-- Gitee Releases (main, China): <https://gitee.com/kele551/ms-wallpaper-assistant/releases>
-
-Unzip the archive and double-click `微软壁纸助手.exe` (Windows 10/11 x64). The UI is a
-console menu in Chinese; press `Q` to quit, `B` to toggle automatic rotation.
-Version: right-click the exe → Properties → Details.
-
-## Build from source
-
-The executable is built entirely from the source code in this repository, with PyInstaller:
-
-```powershell
-pip install "pyinstaller==6.22.3"
-python build-exe.py --release      # produces 微软壁纸助手.exe
-```
-
-Entry point: `launcher.py`; bundled payload: `core.ps1`, `menu.ps1`, `使用说明.txt`, icon.
-The build script refuses to package a payload whose `.ps1` files are not UTF-8 with BOM.
-
-## Antivirus false positives
-
-The executable is currently **unsigned**, and it is packaged as a single-file PyInstaller
-bundle which extracts PowerShell scripts at runtime for its auto-update feature.
-Antivirus heuristic engines can therefore report a **false positive** (Kaspersky has done so).
-You can verify the file yourself against the SHA256 published on the release page:
-
-```powershell
-certutil -hashfile 微软壁纸助手.exe SHA256
-```
-
-The full source code is public and reviewable, and the program contains no malicious
-functionality: it downloads images from Microsoft's public image services and sets them
-as the desktop wallpaper.
-
-## Privacy
-
-This program collects and uploads **no** user data. It only requests wallpaper images from
-Microsoft's public image services (Bing, Windows Spotlight) and stores them on the user's
-own computer. Apart from those image requests it transfers no information to other
-networked systems unless the user explicitly asks it to.
-
-## Code signing policy
-
-See the "Code signing policy（代码签名政策）" section below.
-
-## License
-
-MIT — see [LICENSE](LICENSE).
-
----
-
-> 以下是中文原始说明（内容与上面一致，更详细）。
-# 桌面壁纸
-
-> 作者：**海风（kele551）** · 仓库：https://gitee.com/kele551/ms-wallpaper-assistant （GitHub 同名镜像）
-
-![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Windows-blue) ![Version](https://img.shields.io/badge/version-v2.2.0-blue) ![Downloads](https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?label=downloads&color=green)
-
-**让电脑桌面壁纸自己换，你不用管。**
+<p>作者 <b>海风（kele551）</b>　·　Gitee（主）<a href="https://gitee.com/kele551/ms-wallpaper-assistant">kele551/ms-wallpaper-assistant</a>　·　GitHub（镜像）<a href="https://github.com/kele551/ms-wallpaper-assistant">kele551/ms-wallpaper-assistant</a></p>
+</div>
 
 Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到你自己电脑上，不随程序分发）：
 
@@ -169,6 +92,10 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 ---
 
 ## 菜单上都有什么
+
+<details>
+<summary><b>菜单上都有什么</b>（点击展开）</summary>
+
 
 ```
   ============================================================
@@ -297,9 +224,16 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 看到喜欢的图，主菜单按 `[F]` 就收下了，再按一次取消。收藏够了到 `[S]` → `[5]` 里打开
 「只在收藏里轮换」，以后换出来的都是你自己挑过的图。
 
+</details>
+
+
 ---
 
 ## 壁纸存哪？能自己删吗？
+
+<details>
+<summary><b>壁纸存哪？能自己删吗？</b>（点击展开）</summary>
+
 
 默认存在**「图片」文件夹里的「壁纸」**，下面两个子目录：
 
@@ -324,9 +258,16 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 | 整个库挪走 | 菜单会提醒你，到设置里把位置指过去就行 |
 | 正在用的那张被移走了 | 如实写出来，换一张就更新了 |
 
+</details>
+
+
 ---
 
 ## 常见问题
+
+<details>
+<summary><b>常见问题</b>（点击展开）</summary>
+
 
 | 问 | 答 |
 |---|---|
@@ -335,6 +276,9 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 | **会不会拖慢电脑？** | 只有「开机自动换」开着时后台才有一个进程，平时占 30 MB 左右，绝大多数时间在睡觉。关掉就完全不占。 |
 | **提示某个盘「写不进去」？** | 那是这台机器那个盘的权限设置（常见于用第三方分区工具格的盘），不是程序不支持它。按提示选 `[1]` 一键修好，或者换个盘 —— 壁纸放哪个盘都能用。 |
 | **不想用了怎么卸？** | 菜单按 `[B]` 关掉自动换 → 删掉 exe → 想连配置也清掉就再删数据目录（`[S]` 设置 `[7]` 里能看到位置）。**下载的壁纸一张都不会被删。** |
+
+</details>
+
 
 ---
 
@@ -355,6 +299,10 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 构建方式（Build from source）
 
+<details>
+<summary><b>构建方式（Build from source）</b>（点击展开）</summary>
+
+
 本项目**完全从本仓库源码构建**，产物只有一个 exe，任何人可复现：
 
 ```powershell
@@ -371,7 +319,14 @@ python build-exe.py --release
 
 Releases are built from the source code in this repository; the build command is the one above.
 
+</details>
+
+
 ## Code signing policy（代码签名政策）
+
+<details>
+<summary><b>Code signing policy（代码签名政策）</b>（点击展开）</summary>
+
 
 **Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).**
 
@@ -401,7 +356,14 @@ Releases are built from the source code in this repository; the build command is
 （「壁纸填充方式」写在 `HKCU\Control Panel\Desktop` 的那两个值属于 Windows 自己的壁纸设置，
 程序退出时不会去动它；想恢复默认，在系统「个性化 → 背景」里改一次即可。）
 
+</details>
+
+
 ## 版本迭代
+
+<details>
+<summary><b>版本迭代</b>（点击展开）</summary>
+
 
 每次改版都会打一个版本号、发一版下载。**当前最新：v2.2.0**
 
@@ -441,6 +403,9 @@ v1.5 里面各小版本都改了什么：
 
 > **一句说明**：v1.2.0 以前是「安装版」（要双击 bat 装计划任务），那个做法已经作废。
 > 现在的版本是绿色单文件，老的安装脚本不再提供 —— 直接下最新版就行。
+
+</details>
+
 
 ---
 
@@ -490,3 +455,17 @@ MIT（见 [LICENSE](LICENSE)）。
 | 安全 | 漏洞请**不要**开公开 Issue，按 [SECURITY.md](SECURITY.md) 私下报告 |
 | 持续集成 | [.github/workflows/build.yml](.github/workflows/build.yml) 在 Windows runner 上真实打包并输出 SHA256（每天构建只需 `pyinstaller`，运行主程序**零第三方依赖**） |
 | 发布纪律 | 发版前必须跑发版前自检并全绿（版本一致性、成品与升级源同源、`.ps1` 的 BOM 与语法、对外文档不含私人邮箱），红一条不许发 |
+---
+
+## ♥️ 支持项目
+
+如果 **桌面壁纸** 帮到了你，**给仓库点个 Star ⭐** 就是最好的支持 —— 它能让更多人看到这个项目。
+
+如果想再进一步，也可以请作者喝杯咖啡（**完全自愿，不影响任何功能**）：
+
+| 微信 | 支付宝 |
+|:---:|:---:|
+| ![微信收款码](docs/qr-wechat.png) | ![支付宝收款码](docs/qr-alipay.png) |
+
+> 本项目以 MIT 协议自由开源，**没有付费版、也没有付费功能**；捐赠纯属自愿，
+> 与功能开放、版本更新、Issue 响应**没有任何关系**。
