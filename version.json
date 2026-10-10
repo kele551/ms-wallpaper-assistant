@@ -4,17 +4,17 @@
   "notes": "",
   "scripts": {
     "core.ps1": {
-      "sha256": "56705C1A2E0022447359E436026A953D0676E303ADED75FF1C0D901D8913E37A",
+      "sha256": "D0AA64C38FC1607275D0E5DBF26F0E7D563EAEC09957BC04A2E2E09AEB1496B7",
       "url": "https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/core.ps1"
     },
     "menu.ps1": {
-      "sha256": "23B31B552CD4E1B6B4A882DADE07706A6C0797CDD55F23804E74708BC0692C40",
+      "sha256": "B4874DE6132A9EF90A97E2687506B801EEB9A5EC127A6E05FFD2C002EF2E3119",
       "url": "https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/menu.ps1"
     }
   },
   "launcher": {
-    "sha256": "269C8E9A65659D1D833FAD53689774A083C219D04471E59C36258429FD8A85B5",
+    "sha256": "39A70A44FB5A49087AFB612F8FB5C94F08D633A5888341D3D5422C688D425362",
     "url": "https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.2.0/微软壁纸助手.exe",
-    "size": 7716623
+    "size": 7720161
   }
 }
