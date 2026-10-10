@@ -1,0 +1,16 @@
+# 桌面壁纸 —— 依赖清单
+#
+# 说明：运行本程序**不需要安装任何第三方 Python 包**。
+#   程序主体是 PowerShell 脚本（core.ps1 / menu.ps1，Windows 自带 PowerShell 5.1 即可运行），
+#   另有一个只负责启动与自动升级的 Python 入口（launcher.py），只用 Python 标准库。
+#   下面两组依赖分别只用于"打包 exe"和"发版工具"，与最终用户无关。
+#
+# 许可证对应关系见 README 的「第三方组件与许可」一节。
+
+# ── 仅打包 exe 时需要（build-exe.py）────────────────────────────────────
+# PyInstaller: GPL-2.0-with-exception（官方明确：打包产物不受 GPL 约束）
+pyinstaller>=6.0
+
+# ── 仅发版工具需要（tools/publish.py）───────────────────────────────────
+# requests: Apache-2.0
+requests>=2.28

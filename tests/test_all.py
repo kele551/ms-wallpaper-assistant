@@ -2,8 +2,8 @@
 """微软壁纸助手 - 打包后必跑的一套端到端测试.
 
 用法:
-    python _test_all.py            测 F:\wp-src\微软壁纸助手.exe
-    python _test_all.py <其他exe>
+    python tests\test_all.py                    测仓库根目录里的 微软壁纸助手.exe
+    python tests\test_all.py <其他exe路径>       测指定的 exe
 
 覆盖:
    1. 全新安装: exe 旁边不许多出任何东西, 数据必须落在 %LOCALAPPDATA%
@@ -23,7 +23,11 @@ import tempfile
 
 sys.stdout.reconfigure(encoding='utf-8')
 
-SRC = r'F:\wp-src'
+# 2026-10-10: 不再写死作者机器的 F:\wp-src —— 那是本机不存在、别人也一定没有的目录，
+# 照文档跑第一步 shutil.copy2 就 FileNotFoundError，"仓库里有测试"这件事无法复现。
+# 默认：源码与产物就在本脚本的上一级（仓库根）；也可用环境变量 BW_SRC 覆盖。
+HERE = os.path.dirname(os.path.abspath(__file__))
+SRC = os.environ.get('BW_SRC') or os.path.dirname(HERE)
 EXE = sys.argv[1] if len(sys.argv) > 1 else os.path.join(SRC, '微软壁纸助手.exe')
 DATA_DIR_NAME = '微软壁纸助手数据'
 PAYLOAD = ['core.ps1', 'menu.ps1', '使用说明.txt', '微软壁纸助手.ico']

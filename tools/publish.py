@@ -44,7 +44,11 @@ OWNER, REPO = 'kele551', 'ms-wallpaper-assistant'
 BRANCH = 'main'
 GITEE_API = 'https://gitee.com/api/v5'
 GITEE_WEB = 'https://gitee.com'
-TOKEN_CANDIDATES = [
+# 2026-10-10: 令牌文件位置支持用环境变量 GITEE_TOKEN_FILE 指定（排在两条本机默认路径之前），
+# 别的机器/贡献者就不用去猜作者本机把令牌放在哪；也可以直接用环境变量 GITEE_TOKEN 传令牌
+# 本身（load_token 优先读它，见下面）。
+_ENV_TOKEN_FILE = os.environ.get('GITEE_TOKEN_FILE')
+TOKEN_CANDIDATES = ([_ENV_TOKEN_FILE] if _ENV_TOKEN_FILE else []) + [
     r'F:\Harness\secrets\raw\workbuddy-secrets\gitee_token',   # 工作区备份(首选)
     r'C:\Users\kele551\.workbuddy\secrets\gitee_token',        # 旧位置(退回)
 ]
@@ -53,7 +57,7 @@ TOKEN_FILE = Path(TOKEN_CANDIDATES[0])
 PY = os.environ.get('MWA_PY', r'F:\Harness\toolchain\python\envs\default\Scripts\python.exe')
 GIT_EXEC_PATH = os.environ.get('MWA_GIT', r'F:/Harness/toolchain/PortableGit/versions/1.2.0/mingw64/bin')
 GIT_EXE = GIT_EXEC_PATH + '/git.exe'              # 绝对路径: 有的执行环境按名字找不到 git(WinError 2)
-GH_PUSH = r'F:\Harness\tools\github_push.py'      # 纯 API 推 GitHub(含附件), 2026-09-22 重写
+GH_PUSH = os.environ.get('MWA_GH_PUSH', r'F:\Harness\tools\github_push.py')   # 纯 API 推 GitHub(含附件), 2026-09-22 重写
 ZIP_TPL = 'MSWallpaperAssistant-v%s.zip'
 APP_NAME = '微软壁纸助手'
 EXE_NAME = '微软壁纸助手.exe'                      # version.json 里写的就是这个名字, 必须传上去
@@ -324,13 +328,16 @@ def gh_token():
     t = os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
     if t:
         return t.strip()
-    exe = r'F:\Harness\toolchain\gh\bin\gh.exe'
-    if os.path.isfile(exe):
+    # 2026-10-10: gh 的位置不再只认作者本机那一条绝对路径 —— 先看环境变量 MWA_GH，
+    # 再在 PATH 里找，最后才退回本机工具链默认路径。
+    exe = os.environ.get('MWA_GH') or shutil.which('gh') or r'F:\Harness\toolchain\gh\bin\gh.exe'
+    if exe and os.path.isfile(exe):
         import subprocess as _sp
         out = _sp.run([exe, 'auth', 'token'], capture_output=True)
         if out.returncode == 0:
             return out.stdout.decode('utf-8', 'replace').strip()
-    raise RuntimeError('拿不到 GitHub 令牌')
+    raise RuntimeError('拿不到 GitHub 令牌：请设 GH_TOKEN（或 GITHUB_TOKEN）环境变量，'
+                       '或让已登录的 gh 在 PATH 上')
 
 
 def verify(ver, assets, gh_assets=None):
@@ -435,11 +442,18 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
     if '--skip-preflight' in sys.argv:
         print('   ⚠ 已显式跳过发版前自检（--skip-preflight）—— 请在 logs\\ 里写明原因')
     else:
+        # 2026-10-10: 自检脚本两种布局都找 —— 工作区布局在 <项目>\tools\，
+        # 仓库布局在 <仓库>\tools\。此前只认前者，别的机器/评审照 README 跑
+        # 会直接"找不到自检脚本"中止（fail-closed 是对的，但等于这套流程只在一台机器上可用）。
         pf = REPO_DIR.parent / 'tools' / 'preflight_release.py'
         if not pf.exists():
-            sys.exit('找不到发版前自检脚本 %s —— 不许发布（铁律）' % pf)
+            pf = REPO_DIR / 'tools' / 'preflight_release.py'
+        if not pf.exists():
+            sys.exit('找不到发版前自检脚本（找过 %s 和 %s）—— 不许发布（铁律）'
+                     % (REPO_DIR.parent / 'tools' / 'preflight_release.py',
+                        REPO_DIR / 'tools' / 'preflight_release.py'))
         print('   ── 发版前自检（必须全绿）──')
-        r = subprocess.run([PY, str(pf)], cwd=str(REPO_DIR.parent))
+        r = subprocess.run([PY, str(pf)], cwd=str(pf.parent.parent))
         if r.returncode != 0:
             sys.exit('❌ 发版前自检未通过，已中止发布。修好再发（或 --skip-preflight 紧急跳过）')
         print('   ✅ 自检全绿，继续发布')
