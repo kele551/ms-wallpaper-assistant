@@ -136,8 +136,12 @@ function Repair-BwBaseDir([string]$base) {
   } catch { return $false }
   $code = -1
   try {
+    # 2026-10-10: -File 的值必须显式加引号。PowerShell 5.1 只是把 ArgumentList 数组
+    # 按空格拼成命令行, 不会替你补引号 —— 用户名或 %TEMP% 带空格时路径被截断, 提权那
+    # 一侧一行都不执行, 界面直接报"没修成"。menu.ps1:65 早就是 ('"{0}"' -f ...) 的正确
+    # 写法, 这里和下面 1078 行的升级小助手都漏了。
     $p = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -WindowStyle Hidden `
-         -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $tmp)
+         -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $tmp))
     if ($p) { $code = $p.ExitCode }
   } catch {
     Log ('盘权限修复: 提权被取消或起不来 - ' + $_.Exception.Message)
@@ -1075,7 +1079,12 @@ function Invoke-BwLauncherUpdate {
   $helper = Join-Path $env:TEMP ('bwupd_' + [guid]::NewGuid().ToString('N') + '.ps1')
   try {
     [System.IO.File]::WriteAllLines($helper, ($head + $hl), (New-Object System.Text.UTF8Encoding($true)))
-    Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $helper) -WindowStyle Hidden
+    # 2026-10-10: -File 的值必须显式加引号(原因同上面提权那处)。
+    # $helper 落在 %TEMP% 下, 用户名带空格的机器(如 C:\Users\Zhang San\AppData\Local\Temp)
+    # 上路径会被截断, 小助手**一行都不执行** —— 而 exe 已经下好并校验通过、界面还弹绿框说
+    # "程序会自己重启, 本窗口可以关掉", 实际一个字节没换, 程序目录多留一个约 7.7MB 的 .new,
+    # 升级锁卡住 10 分钟, 每次启动重演一遍, 用户永远停在旧版。
+    Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"{0}"' -f $helper)) -WindowStyle Hidden
   } catch {
     Log ('升级失败: 放小助手出错 ' + $_.Exception.Message)
     try { Remove-Item -LiteralPath $lockf -Force -ErrorAction SilentlyContinue } catch {}
@@ -1919,15 +1928,22 @@ function New-BwArtFitImage([string]$src, [string]$dst, [int]$W, [int]$H) {
   }
 }
 # 缓存别无限长: 张数超上限、或者总量超过 BWArtFitCacheMB, 就把最老的删掉
-# (只删本程序自己生成的 *.png, 不动目录里任何别的文件)。
+# (只删本程序自己生成的合成图, 不动目录里任何别的文件)。
 # **正在当壁纸的那一张永远不删** —— 删了它, 桌面下次重绘就会变黑/回退, 用户莫名其妙。
+# 2026-10-10: 这里原本写 -Filter *.png, 而合成缓存实际存的是 .jpg(见 Get-BwArtFitPath
+# 第 1782 行的 $key + '.jpg', New-BwArtFitImage 也按 JPEG 存) —— 于是每次清理一个文件
+# 都枚举不到, BWArtFitCacheMax=12 / BWArtFitCacheMB=48 两道上限**形同虚设**:
+# 每碰到一张宽度不到满屏线的图, 「合成」目录里就多留一张约 1MB 的 jpg, 只增不减。
+# 现在 .jpg 与 .png 都收: 前者是当前缓存, 后者是 BWArtFitVer 1 时代留下的历史缓存。
 function Remove-BwArtFitOld {
   try {
     $dir = Join-Path $global:BWRoot '合成'
     if (-not (Test-Path -LiteralPath $dir)) { return }
     $cur = ''
     try { $cur = [string](Get-ItemProperty 'HKCU:\Control Panel\Desktop' -ErrorAction SilentlyContinue).Wallpaper } catch { $cur = '' }
-    $fs = @(Get-ChildItem -LiteralPath $dir -File -Filter *.png -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
+    $fs = @(Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -in '.jpg', '.png' } |
+            Sort-Object LastWriteTime -Descending)
     if ($fs.Count -eq 0) { return }
     $total = 0
     foreach ($f in $fs) { $total += [int64]$f.Length }

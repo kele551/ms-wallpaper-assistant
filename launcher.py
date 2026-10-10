@@ -380,7 +380,18 @@ def sync_payload(d):
     except Exception:
         pass
     missing = [f for f in PAYLOAD_FILES if not os.path.isfile(os.path.join(d, f))]
-    if not missing and ver_tuple(cur) > ver_tuple(VERSION):
+    # 2026-10-10: 脚本比 exe 新（程序自己热更过，.version 记的是数据目录里脚本的版本）
+    # 时必须原样保留。原写法是 `if not missing and ver_tuple(cur) > ver_tuple(VERSION)`，
+    # 只要数据目录里少**任何一个** payload 文件 —— 用户很容易把"使用说明.txt"或图标
+    # 当垃圾删掉 —— 这个守卫就不成立，直接落到下面那段：按 .files.json 删旧文件、
+    # 把 exe 内嵌的旧 core.ps1/menu.ps1 拷回去、.version 写回 exe 版本。热更状态被
+    # 静默回退，界面与行为退回旧版且毫无提示。
+    # 现在拆开：处于热更状态时，只补真正缺失的文件，绝不覆盖已存在的、绝不动 .version。
+    if ver_tuple(cur) > ver_tuple(VERSION):
+        for f in missing:
+            s = os.path.join(src, f)
+            if os.path.isfile(s):
+                shutil.copy2(s, os.path.join(d, f))
         return d, False
     if cur == VERSION and not missing:
         return d, False

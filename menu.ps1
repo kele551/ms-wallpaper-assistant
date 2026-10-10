@@ -774,7 +774,9 @@ function Show-BwSettings {
         Write-Host ''
         Write-Host '  [o] 打开这个文件夹    [回车] 返回'
         $k7 = Normalize-BwKey (Read-Host '  ')
-        if ($k7 -eq 'o') { try { Start-Process -FilePath 'explorer.exe' -ArgumentList $global:BWRoot } catch {} }
+        # 2026-10-10: -ArgumentList 同样要自己加引号(与上面 65 行同一个写法)。
+        # 数据目录位于 C:\Users\<用户名>\... , 用户名带空格时不加引号 explorer 打不开。
+        if ($k7 -eq 'o') { try { Start-Process -FilePath 'explorer.exe' -ArgumentList ('"{0}"' -f $global:BWRoot) } catch {} }
       }
       '8' {
         Write-Host ''
