@@ -591,6 +591,13 @@ function Show-BwSettings {
     if ($cap -gt 0) { $capTxt = ($cap.ToString() + ' 张') }
     $libN = @(Get-ChildItem -LiteralPath ([string]$c.spotlight_save_dir) -File -Filter *.jpg -ErrorAction SilentlyContinue).Count
     Write-Host ('  [8] 图库上限        ' + $capTxt + ' · 现在库里 ' + $libN + ' 张')
+    # 2026-10-10 晚新增: 必应库也加上限(用户担心别的用户硬盘小 —— 必应库原来根本没上限)
+    $bcap = 0
+    try { $bcap = [int]$c.bing_cap } catch { $bcap = 0 }
+    $bcapTxt = '不限'
+    if ($bcap -gt 0) { $bcapTxt = ($bcap.ToString() + ' 张') }
+    $bingCnt = @(Get-ChildItem -LiteralPath ([string]$c.bing_save_dir) -File -Filter *.jpg -ErrorAction SilentlyContinue).Count
+    Write-Host ('  [b] 必应库上限      ' + $bcapTxt + ' · 现在库里 ' + $bingCnt + ' 张')
     Write-Host '  [9] 重新抓取源池    清空下载记录 (不动图片文件)'
     $afOn = '关'
     if ([bool]$c.auto_fetch) { $afOn = '开' }
@@ -599,6 +606,10 @@ function Show-BwSettings {
     $fitOn = '关'
     if (Test-BwArtFitOn $c) { $fitOn = '开' }
     Write-Host ('  [a] 小图不放大      ' + $fitOn + '  · 开 = 1:1 居中 + 同图模糊底; 关 = 拉大铺满(会糊)')
+    # 2026-10-10 晚新增: 下载画质。默认已改成按屏幕自动(1080p 屏省一半空间), 这里给开关。
+    $resTxt = '按屏幕自动'
+    if ([string]$c.resolution_mode -eq 'uhd') { $resTxt = '固定最大 (4K/UHD)' }
+    Write-Host ('  [c] 下载画质        ' + $resTxt + '  · 自动 = 1080p 屏只下 1080p(约省一半空间)')
     # 单张图下载超时: 原本在"某个图源"的设置页里, 图源摘掉之后挪到这一级(能力留着, 等合适的图源)
     $toSecShow = 20
     try { $toSecShow = Get-BwSrcTimeoutSec $c } catch { $toSecShow = 20 }
@@ -922,6 +933,52 @@ function Show-BwSettings {
         } else {
           Write-Host '  要填一个数字(秒), 没改。' -ForegroundColor Yellow
         }
+        Pause-Bw
+      }
+      'b' {
+        Write-Host ''
+        Write-Host '  必应库(每天的「当日一图」攒下来的)也照这个数留: 超了每换一张就把最老的'
+        Write-Host '  「已经看过」的一张移进回收站。没看过的不会动; 移走的能从回收站还原。'
+        Write-Host '  填 0 = 不限(只增不减: 4K 档一年约 1.4 GB, 1080p 档约 0.7 GB)。'
+        Write-Host ('  能填 ' + $global:BwLimit.bing_cap.Min + ' ~ ' + $global:BwLimit.bing_cap.Max + ' 张。')
+        Write-Host '  提醒: 移进回收站**不等于**腾出空间 —— 回收站还在同一块盘上, 想真腾地方要清空回收站。' -ForegroundColor DarkGray
+        Write-Host ''
+        $v = Read-Host ('  必应库最多留多少张? (现在 ' + $bcapTxt + ', 回车不改)')
+        $vv = Normalize-BwKey $v
+        if (-not $v) {
+          # 直接回车 = 不改
+        } elseif ($vv -match '^\d+$') {
+          $vvN = 0
+          if (-not [int]::TryParse($vv, [ref]$vvN)) { $vvN = $global:BwLimit.bing_cap.Max + 1 }
+          $v2 = Limit-BwNum $vvN 'bing_cap'
+          if (($v2 -ne $vvN) -and ($vvN -ne 0)) { Write-Host ('  ' + $vv + ' 张出界了, 按 ' + $v2 + ' 张算。') -ForegroundColor Yellow }
+          $c.bing_cap = $v2
+          Save-BwConfig $c
+          if ($v2 -eq 0) { Write-Host '  好了, 必应库不限张数。' }
+          else { Write-Host ('  好了, 必应库最多留 ' + $v2 + ' 张, 超了就把看过的最老的移进回收站。') }
+          Log ('设置: 必应库上限 -> ' + $v2)
+        } else { Write-Host '  要填一个数字 (0 = 不限), 没改。' -ForegroundColor Yellow }
+        Pause-Bw
+      }
+      'c' {
+        Write-Host ''
+        Write-Host '  下载画质 —— 直接决定每张图多大、占多少硬盘:'
+        Write-Host '    [1] 按屏幕自动   按屏幕的**物理**分辨率挑档: 1080p 屏只下 1920x1080'
+        Write-Host '                     (约 1-2 MB/张), 2K/4K 屏下最大档。新装默认就是这个。'
+        Write-Host '    [2] 固定最大     一律下 4K/UHD(约 3-6 MB/张), 最清晰、也最占地方。'
+        Write-Host ''
+        $k = Normalize-BwKey (Read-Host '  选哪个? (1 = 按屏幕自动 / 2 = 固定最大, 回车不改)')
+        if ($k -eq '1') {
+          $c.resolution_mode = 'auto'
+          Save-BwConfig $c
+          Write-Host '  好了, 以后按屏幕自动挑档。'
+          Log '设置: 下载画质 -> auto (按屏幕自动)'
+        } elseif ($k -eq '2') {
+          $c.resolution_mode = 'uhd'
+          Save-BwConfig $c
+          Write-Host '  好了, 以后一律下 4K/UHD。'
+          Log '设置: 下载画质 -> uhd (固定最大)'
+        } else { Write-Host '  没改。' }
         Pause-Bw
       }
       'q' { $back = $true }
@@ -1547,6 +1604,14 @@ do {
     $sz = 0; try { $sz = (Get-ChildItem -LiteralPath $dir2 -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum } catch {}
     $free = 0; try { $free = (New-Object System.IO.DriveInfo ((Split-Path $dir2 -Qualifier))).AvailableFreeSpace } catch {}
     [void]$warn.Add('聚焦库 ' + $spotN + ' 张, 超过上限 ' + $capN + ' 张 (约 ' + [math]::Round($sz / 1MB) + ' MB); 该盘剩 ' + [math]::Round($free / 1GB, 1) + ' GB —— 超出的旧图会进回收站, [S]→[8] 可调')
+  }
+  # 2026-10-10 晚: 必应库也加上限了, 超了同样提醒一句(它原来是会一直涨的那个口子)
+  $bcapN = 0; try { $bcapN = [int]$c0.bing_cap } catch {}
+  if (($bcapN -gt 0) -and ($bingN -gt $bcapN)) {
+    $dirB = [string]$c0.bing_save_dir
+    $szB = 0; try { $szB = (Get-ChildItem -LiteralPath $dirB -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum } catch {}
+    $freeB = 0; try { $freeB = (New-Object System.IO.DriveInfo ((Split-Path $dirB -Qualifier))).AvailableFreeSpace } catch {}
+    [void]$warn.Add('必应库 ' + $bingN + ' 张, 超过上限 ' + $bcapN + ' 张 (约 ' + [math]::Round($szB / 1MB) + ' MB); 该盘剩 ' + [math]::Round($freeB / 1GB, 1) + ' GB —— 超出的旧图会进回收站, [S]→[b] 可调')
   }
   if ($spotN -eq 0) { [void]$warn.Add('聚焦库空的, 后台正在补图; 想马上抓按 [2]') }
   $strN = @(@($s0.strangers) | Where-Object { $_ }).Count

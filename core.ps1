@@ -517,7 +517,10 @@ function Get-BwConfig {
     $c = New-Object PSObject
     Add-Member -InputObject $c NoteProperty bing_save_dir $d.bing -Force
     Add-Member -InputObject $c NoteProperty spotlight_save_dir $d.spotlight -Force
-    Add-Member -InputObject $c NoteProperty resolution_mode 'uhd' -Force
+    # 2026-10-10 晚: 默认从 uhd 改成 auto —— 按屏幕物理分辨率挑档。
+    # 理由(用户提出): 1080p 屏的用户原来也在下 4K 图(3-6 MB/张), 纯占硬盘;
+    # auto 档在 1080p 屏只下 1920x1080(约 1-2 MB/张), 画质在自己屏上看不出差别。
+    Add-Member -InputObject $c NoteProperty resolution_mode 'auto' -Force
   }
   if (-not $c.bing_save_dir) { Add-Member -InputObject $c NoteProperty bing_save_dir $d.bing -Force }
   if (-not $c.spotlight_save_dir) {
@@ -526,7 +529,9 @@ function Get-BwConfig {
     if ($par) { Add-Member -InputObject $c NoteProperty spotlight_save_dir (Join-Path $par '聚焦') -Force }
     else { Add-Member -InputObject $c NoteProperty spotlight_save_dir $d.spotlight -Force }
   }
-  if (-not $c.resolution_mode) { Add-Member -InputObject $c NoteProperty resolution_mode 'uhd' -Force }
+  # 2026-10-10 晚: 默认 'auto' —— 按屏幕挑档、省硬盘(见上面那段说明)。
+  # 已经有 config.json 的用户不受影响: 他文件里写着 uhd 就还是 uhd, 只补缺失的字段。
+  if (-not $c.resolution_mode) { Add-Member -InputObject $c NoteProperty resolution_mode 'auto' -Force }
   if (-not $c.spotlight_per_cycle) { Add-Member -InputObject $c NoteProperty spotlight_per_cycle 6 -Force }
   if (-not $c.cycle_minutes) { Add-Member -InputObject $c NoteProperty cycle_minutes 30 -Force }
   # 壁纸填充方式。默认 fill(填充) —— 与 v1.3.0 及更早的行为一致, 老用户升级后桌面不会变样。
@@ -541,6 +546,11 @@ function Get-BwConfig {
   # 只新增有限几张, 库越大、同样的图轮到第二次的间隔就越长(库 200 张 + 30 分钟一轮 ≈ 4 天才
   # 轮一遍)。**只改新装的默认值**: 已经有 config.json 的用户保持他自己那份, 不覆盖。
   if (-not $c.PSObject.Properties['lib_cap']) { Add-Member -InputObject $c NoteProperty lib_cap 200 -Force }
+  # 必应库上限(2026-10-10 晚·用户提出「怕别的用户硬盘小」): 必应库原来**没有上限**,
+  # 一天一张、4K 档一年就是约 1.4 GB, 几年攒成几个 GB 也没人管。
+  # 默认跟图库上限一样 200 张; 超了同样把「已经看过的、最老的」移进回收站(能还原)。
+  # 0 = 不限。想让它长期攒图就调大(菜单 [S] → [b])。
+  if (-not $c.PSObject.Properties['bing_cap']) { Add-Member -InputObject $c NoteProperty bing_cap 200 -Force }
   # ---- 聚焦源池的三道闸 (2026-10-09 用户要求: 别把 800+ 张的源池一次抽干) ----
   # fetch_round_cap : 单轮最多抓几张(硬上限; 想一次抓更多也不给, 源池要慢慢放)
   # fetch_day_cap   : 每天最多抓几张(跨菜单/后台/向导统一算, 换天归零)
@@ -644,6 +654,8 @@ $global:BwLimit = @{
   # 图库上限(张)。0 = 不限; 上限卡在 2000, 再多就不是壁纸库而是冷备份了。
   # Def 同步成 200(新装默认值), 手改成读不出来的值时也退到这个数。
   lib_cap             = @{ Min = 5; Max = 2000; Def = 200; Zero = $true  }
+  # 必应库上限(张)。0 = 不限; 范围与图库上限一致(4K 图一千张就是好几个 GB)。
+  bing_cap            = @{ Min = 5; Max = 2000; Def = 200; Zero = $true  }
   # 聚焦源池保护(2026-10-09): 单轮上限 / 单日上限 / 老图回收间隔。都允许用户手改, 但有范围。
   fetch_round_cap     = @{ Min = 1; Max = 50;   Def = 6;   Zero = $false }
   fetch_day_cap       = @{ Min = 1; Max = 200;  Def = 20;  Zero = $false }
@@ -1576,6 +1588,15 @@ function Get-BwLibCap {
   try { $v = [int]$c.lib_cap } catch { $v = 0 }
   return $v
 }
+# 必应库的上限(0 = 不限)。跟聚焦库**各算各的** —— 两个库用途不同:
+# 聚焦是轮换主力, 必应是「每日一图」的存档, 用户可能想给不同的张数。
+# (2026-10-10 晚新增, 起因: 用户担心别的用户硬盘小 —— 必应库原来根本没上限。)
+function Get-BwBingCap {
+  $c = Get-BwConfig
+  $v = 0
+  try { $v = [int]$c.bing_cap } catch { $v = 0 }
+  return $v
+}
 # 移进回收站(能还原)。走不通就退到「已看过」文件夹 —— 绝不直接删文件。
 function Move-BwToRecycle([string]$path) {
   if (-not (Test-Path -LiteralPath $path)) { return $false }
@@ -1599,11 +1620,11 @@ function Move-BwToRecycle([string]$path) {
   return $false
 }
 # 换完一张之后调一次: 库超上限就淘汰看过的最老的, 直到降到上限以内。
-function Trim-BwLibrary($s) {
-  $cap = Get-BwLibCap
+# 一个库的裁剪: 超过 $cap 张就把「已经看过的、最老的」移进回收站(能还原), 绝不动没看过的。
+# $label 只用于日志(图库 / 必应库)。移进回收站**不释放空间**(回收站还在同一块盘上),
+# 所以界面上别把"裁了"说成"腾出了空间" —— 想真腾地方得清空回收站。
+function Trim-BwOneDir($s, [string]$dir, [int]$cap, [string]$label) {
   if ($cap -le 0) { return 0 }
-  $c = Get-BwConfig
-  $dir = [string]$c.spotlight_save_dir
   if (-not $dir) { return 0 }
   if (-not (Test-Path -LiteralPath $dir)) { return 0 }
   $files = @(Get-ChildItem -LiteralPath $dir -File -Filter *.jpg -ErrorAction SilentlyContinue)
@@ -1626,9 +1647,18 @@ function Trim-BwLibrary($s) {
     if (Move-BwToRecycle $f.FullName) { $moved++ }
   }
   if ($moved -gt 0) {
-    Log ('图库上限 ' + $cap + ' 张: 库里 ' + $files.Count + ' 张超了, 已把看过的最老的 ' + $moved + ' 张移进回收站')
+    Log ($label + '上限 ' + $cap + ' 张: 库里 ' + $files.Count + ' 张超了, 已把看过的最老的 ' + $moved + ' 张移进回收站')
   }
   return $moved
+}
+# 库超上限就裁。2026-10-10 晚起**两个库都裁**: 聚焦按 lib_cap、必应按 bing_cap,
+# 两个上限各自可以设 0 = 不限(菜单 [S] → [8] 与 [b])。
+function Trim-BwLibrary($s) {
+  $c = Get-BwConfig
+  $n = 0
+  $n += (Trim-BwOneDir $s ([string]$c.spotlight_save_dir) (Get-BwLibCap) '图库')
+  $n += (Trim-BwOneDir $s ([string]$c.bing_save_dir) (Get-BwBingCap) '必应库')
+  return $n
 }
 
 # 从 wallpaper.log 把"以前换过哪些图"捞回来填进「看过」名单。
@@ -3642,7 +3672,9 @@ function Get-BwCandidates($meta, $mode) {
         $w = $b.Width; $h = $b.Height
       } catch {}
     }
-    if ($w -ge 3840) { $suf += '_UHD' }
+    # 2026-10-10 晚: 门槛从 3840 降到 2560 —— 2K 屏原来会先试 1920x1200,
+    # 铺满 2560 宽时被放大, 反而比 4K 糊。1080p 及以下的屏照旧走小档(省硬盘)。
+    if ($w -ge 2560) { $suf += '_UHD' }
     elseif ($h -ge 1200) { $suf += '_1920x1200'; $suf += '_UHD' }
     elseif ($w -ge 1920) { $suf += '_1920x1080'; $suf += '_1920x1200'; $suf += '_UHD' }
     else { $suf += '_1366x768'; $suf += '_1920x1080'; $suf += '_UHD' }
