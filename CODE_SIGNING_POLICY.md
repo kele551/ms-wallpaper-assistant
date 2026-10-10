@@ -1,6 +1,6 @@
 # 代码签名政策（Code Signing Policy）
 
-> 微软壁纸助手 —— 作者：**海风（kele551）** · <https://github.com/kele551/ms-wallpaper-assistant>
+> 桌面壁纸 —— 作者：**海风（kele551）** · <https://github.com/kele551/ms-wallpaper-assistant>
 > 最近更新：2026-10-09
 
 ## 中文

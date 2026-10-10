@@ -1,20 +1,20 @@
 {
-  "version": "2.2.0",
-  "min_launcher": "2.2.0",
+  "version": "2.3.0",
+  "min_launcher": "2.3.0",
   "notes": "",
   "scripts": {
     "core.ps1": {
-      "sha256": "B79A675FA5221E26A7EEFC7B24BC8BAC8A10239A22A8ED3AA4BC2EFFA5927FBF",
+      "sha256": "619153102947B297242A7942626FCAC013AE5B39750F1DF7B50713DA540C8401",
       "url": "https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/core.ps1"
     },
     "menu.ps1": {
-      "sha256": "1E82E1F8C5317EFB4D87BC54F641A590F26B970078ABF6141AE9BF40C757FBCD",
+      "sha256": "9B81EF26151F664CB8A499ADE3E3D8EBBEC6481108465AD8D29CF4998B9042B2",
       "url": "https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/menu.ps1"
     }
   },
   "launcher": {
-    "sha256": "94EF513C391B4D0D4C97CEB39D114D3596DE891284C35FC50B2723A613AC2F61",
-    "url": "https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.2.0/微软壁纸助手.exe",
-    "size": 7709624
+    "sha256": "81A064B00806C31126A9C5413D15485210524E554B63DC81CC93DAD9F9D3A589",
+    "url": "https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.3.0/微软壁纸助手.exe",
+    "size": 7709846
   }
 }

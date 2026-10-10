@@ -6,7 +6,7 @@
 <p>简体中文 | <a href="README_EN.md">English</a></p>
 <img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square">
 <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square">
-<img alt="Version" src="https://img.shields.io/badge/version-v2.2.0-blue?style=flat-square">
+<img alt="Version" src="https://img.shields.io/badge/version-v2.3.0-blue?style=flat-square">
 <img alt="Downloads" src="https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?style=flat-square&label=downloads&color=green">
 
 <p>🖼 <b>让电脑桌面壁纸自己换，你不用管</b>　——　必应每日一图 + Windows 聚焦，4K 自动轮换</p>
@@ -28,6 +28,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 - **不用安装** —— 下载一个 exe，双击就用
 - **不要管理员权限**，不写自启动注册表项、不装服务与计划任务
+  （「开机自动换壁纸」是**在「启动」文件夹里放一个快捷方式**实现的；菜单 `[B]` 可一键关闭并删除它）
 - **改写系统的只有一件事**：设壁纸走 Windows 标准做法
   （`SystemParametersInfo(SPI_SETDESKWALLPAPER)`），其中「壁纸填充方式」写在 Windows 自己的
   `HKCU\Control Panel\Desktop`（`WallpaperStyle` / `TileWallpaper`，与系统「个性化」是同一个位置），
@@ -55,9 +56,9 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 下载
 
-### 👉 [点这里下载 v2.2.0 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.2.0/MSWallpaperAssistant-v2.2.0.zip)
+### 👉 [点这里下载 v2.3.0 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.3.0/MSWallpaperAssistant-v2.3.0.zip)
 
-> 7.3 MB 的 zip，实测可解压、可运行。当前云端最新版本：v2.2.0（打开即自动升级）。
+> 7.3 MB 的 zip，实测可解压、可运行。当前云端最新版本：v2.3.0（打开即自动升级）。
 > **杀软报毒是误报，可以放心。** 程序没有购买数字签名，又是「单文件自解压」打包，
 > 加上自动升级会下载脚本再运行 —— 这三样最容易触发杀软的启发式误判。
 > 想自己确认文件没被动过：发行页上写了安装包的 SHA256，下载后执行
@@ -271,7 +272,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 | 问 | 答 |
 |---|---|
-| **双击没反应？** | 多半是安全软件拦了，把它加入信任就行。程序只从 bing.com 和微软官方接口下图，没有任何上传行为。 |
+| **双击没反应？** | 多半是安全软件拦了，把它加入信任就行。程序联网只有这几种情况：从 bing.com 与微软官方接口下图、检查更新时访问 Gitee / GitHub、补漏与归档时可能经第三方 GitHub 加速节点（`ghfast.top` / `gh-proxy.com`）中转。**全程没有任何上传行为。** |
 | **中文显示成乱码？** | 系统「非 Unicode 程序语言」要设成「中文(简体, 中国)」。 |
 | **会不会拖慢电脑？** | 只有「开机自动换」开着时后台才有一个进程，平时占 30 MB 左右，绝大多数时间在睡觉。关掉就完全不占。 |
 | **提示某个盘「写不进去」？** | 那是这台机器那个盘的权限设置（常见于用第三方分区工具格的盘），不是程序不支持它。按提示选 `[1]` 一键修好，或者换个盘 —— 壁纸放哪个盘都能用。 |
@@ -292,7 +293,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 顺手带上这几样，能省一轮来回：
 
 1. Windows 版本（设置 → 系统 → 关于）
-2. 程序版本号（菜单标题上就有，比如 `v2.2.0`）
+2. 程序版本号（菜单标题上就有，比如 `v2.3.0`）
 3. `wallpaper.log` 末尾十几行（菜单 `[L]` 能看到）
 
 ---
@@ -351,10 +352,22 @@ Releases are built from the source code in this repository; the build command is
 
 **卸载（Uninstallation）**
 
-见《使用说明》的「卸载」一节：菜单 [S] → [6] 关闭自动换并删除桌面快捷方式，
-再删除 exe 与数据目录即可 —— 不写自启动注册表项、不装服务与计划任务、不改系统代理/DNS/hosts。
-（「壁纸填充方式」写在 `HKCU\Control Panel\Desktop` 的那两个值属于 Windows 自己的壁纸设置，
-程序退出时不会去动它；想恢复默认，在系统「个性化 → 背景」里改一次即可。）
+见《使用说明》的「卸载」一节。**完整清单**（2026-10-10 补齐）：
+
+1. 菜单按 `[B]` **关掉「开机自动换壁纸」** —— 这会删掉**启动文件夹里的那个快捷方式**。
+   （只按 `[S]`→`[6]` 关自动换也会删，两处都会清。）
+2. 删除桌面上的快捷方式（`[S]`→`[6]` 会一起删）。
+3. 删除 exe。
+4. 想连配置一起清掉，再删数据目录（`[S]` 设置 `[7]` 能看到位置）。
+
+**不会留下**：注册表自启动项、服务、计划任务、系统代理 / DNS / hosts 的改动 —— 这几样代码里一处都没有。
+
+**会留下两样，卸载前请留意**：
+
+- **「启动」文件夹里的快捷方式** —— 只有第 1 步做了才会删；直接删 exe 不会清它。
+- **「壁纸填充方式」** —— 程序会按需写 `HKCU\Control Panel\Desktop` 的
+  `WallpaperStyle` / `TileWallpaper`（这是 Windows 自己的壁纸设置，与系统「个性化」同一位置）。
+  程序**不记录你的原值，卸载后也不会自动还原**；想恢复默认，在系统「个性化 → 背景」里改一次即可。
 
 </details>
 
@@ -365,7 +378,7 @@ Releases are built from the source code in this repository; the build command is
 <summary><b>版本迭代</b>（点击展开）</summary>
 
 
-每次改版都会打一个版本号、发一版下载。**当前最新：v2.2.0**
+每次改版都会打一个版本号、发一版下载。**当前最新：v2.3.0**
 
 小版本的改动都归到同一个大版本下面说，一行一个版本：
 

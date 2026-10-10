@@ -1,6 +1,6 @@
 # 参与贡献（Contributing）
 
-> 微软壁纸助手 —— 作者：**海风（kele551）** · <https://github.com/kele551/ms-wallpaper-assistant>
+> 桌面壁纸 —— 作者：**海风（kele551）** · <https://github.com/kele551/ms-wallpaper-assistant>
 
 先说清楚这个项目的脾气，能省掉双方很多时间：
 

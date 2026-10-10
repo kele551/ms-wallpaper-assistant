@@ -2990,6 +2990,30 @@ function Invoke-BwAllSrcFetch([int]$count, [switch]$Quiet, [switch]$Force, [swit
   }
   return @($out)
 }
+# 【2026-10-10 修·由用户提问引出】老图循环应当"最早看过的先回来", 而不是洗牌。
+#
+# 用户原话:「**既然是老图循环, 为什么不从最早的图片开始循环呢**」
+# 原来的行为: 回收的老图走 Get-BwBalancedOrder 洗牌; 而且"库里全看过、又没一张
+# 够回收间隔"时会走「历史清零重来」分支, 把整库重新洗一遍 —— 于是同一张图两次
+# 出现的间隔**忽长忽短**(平均 35 小时 = 70 张 x 30 分钟, 但有的 1 小时就撞回来)。
+# 用户就是这么发现"这张壁纸怎么又出现了"的。
+#
+# 现在: 按"上次看过"从**最早到最近**排 —— 间隔被拉到最大而且均等。
+# 时间戳不明的(Get-BwSeenDays 返回 -1)按"很老"处理排在最前: 它们本来就是靠
+# Test-BwOldImageReusable 的"名单位置(最近 20 条之外)"判定为老的。
+function Get-BwOldestFirst($s, [string[]]$names, [DateTime]$now) {
+  $list = @($names | Where-Object { $_ })
+  if ($list.Count -le 1) { return @($list) }
+  $tmp = @($list | ForEach-Object {
+    $d = -1
+    try { $d = Get-BwSeenDays $s (Get-BwNameKey $_) $now } catch { $d = -1 }
+    $age = 99999                      # 时间戳不明 -> 当"很老", 排最前
+    if ($d -ge 0) { $age = $d }
+    [pscustomobject]@{ Name = $_; Age = $age }
+  } | Sort-Object -Property @{ Expression = { $_.Age }; Descending = $true },
+                            @{ Expression = { $_.Name }; Descending = $false })
+  return @($tmp | ForEach-Object { $_.Name })
+}
 # 2026-10-09 轮换均衡(用户要求"四个源轮流出现, 别让某源霸屏或缺席"):
 # 纯随机洗牌在库容悬殊时很难看 —— 比如一类 100 张、另一类 6 张, 随机排出来经常
 # "连着七八张都是同一类"或者"张数少的那类大半天没露面"。
@@ -3070,6 +3094,7 @@ function Get-BwFreshQueue($s) {
 
   # 挑掉看过的
   $recycleMode = $false     # 这一轮是不是"老图循环"
+  $oldestFirst = $false     # 走了"历史清零重来"那条分支(整库按最早看过优先排)
   $freshPart = @()
   $oldPart = @()
   $seen = @{}
@@ -3112,26 +3137,68 @@ function Get-BwFreshQueue($s) {
     } else {
       # 未看过的不足 20 张 -> 进入"老图循环": 够久没出现过(>= recycle_min_days 天)的老图
       # 也排进来, 排在没看过的后面。官方每天新增的仍然插队, 所以不会一直吃老图。
+      #
+      # 【2026-10-10 修·用户提议】用户原话:
+      #   「**可以打开思路, 聚焦的图片轮完了, 可以轮必应图库啊, 从最早开始轮**」
+      # 对 —— 必应库那几十张本来**根本不参与轮换**(见 Get-BwRotPool 的说明:
+      # 它按"每日一图"的节奏走), 于是聚焦那几十张被反复轮、必应那几十张一直躺着。
+      # 现在: 一旦进入老图循环(聚焦见底), 就把**必应库也并进这一轮**,
+      # 和聚焦老图一起按"上次看过"从最早往最近排 —— 图池立刻大一截, 重复来得更慢。
+      # 平时的"新图优先"路径不受影响, 必应照旧走它的"每日一图"。
+      $bingAdd = @()
+      foreach ($f in @(Get-BwBingAll)) {
+        $bn = [string]$f.Name
+        if ($bn -and ($names -notcontains $bn)) { $names += $bn; $bingAdd += $bn }
+      }
+      $allNames = @($names)
       $now2 = Get-Date
       $minDays2 = Get-BwRecycleMinDays (Get-BwConfig)
       $oldPart = @($names | Where-Object {
         $kk = Get-BwNameKey $_
         $seen.ContainsKey($kk) -and (Test-BwOldImageReusable $s $kk $now2 $minDays2)
       })
+      # 【2026-10-10 修·审查 P1】刚并进来的必应图**既不在「看过」名单里、
+      # hist_at 里也没记过时间**(规则 1 原来不记账, 同批已补), 所以上面那个
+      # `$seen.ContainsKey(...)` 条件会把它们**全部漏掉** ——
+      # 现象就是"并进来了、但排队时一张都用不上", 等于这次改动白做。
+      # 这里把本次新并进来的必应图直接算作"老图": 它们都当过一天"每日一图",
+      # 本来就属于"很久没见过"的那一类。
+      # 顺序交给下面的 Get-BwOldestFirst —— 没有时间戳的按文件名里的日期从早到晚,
+      # 而必应文件名正是 `2026-09-19_…` 这种带日期的, 所以就是"从最早开始轮"。
+      foreach ($bn in $bingAdd) { if ($oldPart -notcontains $bn) { $oldPart += $bn } }
       if ($oldPart.Count -gt 0) {
         $recycleMode = $true
         $freshPart = @($fresh)
-        $oldest = 0
+        # 【2026-10-10 修】这一行原来固定写"最早 N 天前看过"。必应图并进来之后
+        # 它们大多**没有时间戳**(hist_at 里没有), Get-BwSeenDays 返回 -1,
+        # 于是 N 恒为 0, 日志会写成"最早 0 天前看过" —— 读起来像"刚看过",
+        # 跟事实(其实是按文件名里的日期从早到晚排的)正好相反。这里如实分开说。
+        $oldest = -1
+        $unknown = 0
         foreach ($o in $oldPart) {
           $dd = Get-BwSeenDays $s (Get-BwNameKey $o) $now2
-          if ($dd -gt $oldest) { $oldest = $dd }
+          if ($dd -lt 0) { $unknown++ } elseif ($dd -gt $oldest) { $oldest = $dd }
         }
-        Log ('重洗队列: 未看过的只剩 ' + $fresh.Count + ' 张(<' + $global:BWRecycleBelow + ') -> 进入老图循环, 回收 ' + $oldPart.Count + ' 张老图(最早 ' + $oldest + ' 天前看过, 间隔 >=' + $minDays2 + ' 天)')
+        $ageTxt = '最早 ' + $oldest + ' 天前看过'
+        if ($oldest -lt 0) { $ageTxt = '都没有时间戳' }
+        elseif ($unknown -gt 0) { $ageTxt = $ageTxt + '; 另 ' + $unknown + ' 张没有时间戳(按文件名里的日期从早到晚)' }
+        Log ('重洗队列: 未看过的只剩 ' + $fresh.Count + ' 张(<' + $global:BWRecycleBelow + ') -> 进入老图循环, 回收 ' + $oldPart.Count + ' 张老图(' + $ageTxt + ', 间隔 >=' + $minDays2 + ' 天)')
       } elseif ($fresh.Count -eq 0) {
         # 库里的图全都看过、而且一张都还没到回收间隔: 退回老办法 —— 历史清零重来一轮,
         # 但留最近 20 条, 免得刚看完那张翻个身又排到队首。
+        #
+        # 【2026-10-10 注·第二轮审查指出】加了"聚焦轮完就轮必应库"(见上面那一段)之后,
+        # 只要有必应图, 上面那个 `$oldPart.Count -gt 0` 就必然成立, 于是**这条分支
+        # 在必应库非空时走不到了**。它现在只在"必应库整个为空"(用户删光了/盘没挂上)
+        # 时才兜底 —— 这不是死代码, 但**注释必须说清**, 免得以后有人以为它还是主路径。
+        # 顺带说明代价: 少掉的那个副作用是"把 history 裁到最近 20 条"。
+        # 不裁也不会涨到天上去 —— Add-BwHist 本身给 history 封了顶(见那边的实现);
+        # 而且现在这条路上真正决定顺序的是 Get-BwOldestFirst 的"按时间从早到晚"。
         $s.history = @(@(Get-BwHist $s) | Select-Object -Last 20)
-        Log ('重洗队列: 库里 ' + $names.Count + ' 张全都看过且还没到回收间隔 -> 历史清零重来(留最近 20 条防连着重复)')
+        # 这一轮也**按"最早看过"优先排**, 不再整库洗牌 ——
+        # 见 Get-BwOldestFirst 上面那段说明(由用户提问引出)。
+        $oldestFirst = $true
+        Log ('重洗队列: 库里 ' + $names.Count + ' 张全都看过且还没到回收间隔 -> 历史清零重来(留最近 20 条防连着重复; 本轮按"最早看过"优先排)')
       } else {
         Log ('重洗队列: 未看过的只剩 ' + $fresh.Count + ' 张(不到 ' + $global:BWRecycleBelow + ' 张), 但还没有够 ' + $minDays2 + ' 天的老图可回收 -> 这一轮只排这 ' + $fresh.Count + ' 张')
         $names = $fresh
@@ -3153,13 +3220,20 @@ function Get-BwFreshQueue($s) {
       Log '重洗队列: 库里全是做了记号的外来图, 这一轮照常用它们换 (总得有图可换)'
     }
   }
-  # 老图循环: 新图洗牌排在前面(先把没看过的看完), 回收的老图洗牌跟在后面。
-  # 2026-10-09: 洗牌改成"按来源轮流抽"(Get-BwBalancedOrder) —— 四个源轮流出现,
-  # 张数少的源不会被张数多的源淹没。轮转起点跟着换图次数走, 不总是同一个源打头。
+  # 老图循环: 新图洗牌排在前面(先把没看过的看完)。
+  # 【2026-10-10 修·用户提问引出】回收的老图改成**按"上次看过"从最早到最近排**,
+  # 不再洗牌 —— 这样每张图两次出现的间隔最大而且均等。
+  # 用户原话:「既然是老图循环, 为什么不从最早的图片开始循环呢」。
+  # 2026-10-09 那个"按来源轮流抽"的均衡(Get-BwBalancedOrder)是为**四个源**防霸屏加的;
+  # 现在图源只剩聚焦一个, 均衡已无意义, 反而盖住了"按时间排"。
   $turn = 0
   try { $turn = [int]$s.refills + [int]$s.shown } catch { $turn = 0 }
   if ($recycleMode) {
-    return @(@(Get-BwBalancedOrder $freshPart $turn) + @(Get-BwBalancedOrder $oldPart $turn))
+    return @(@(Get-BwBalancedOrder $freshPart $turn) + @(Get-BwOldestFirst $s $oldPart $now2))
+  }
+  if ($oldestFirst) {
+    # 「历史清零重来」那条分支: 整库按"最早看过"优先排, 不走洗牌
+    return @(Get-BwOldestFirst $s $names $now2)
   }
   return @(Get-BwBalancedOrder $names $turn)
 }
@@ -3224,7 +3298,14 @@ function Sync-BwQueue($s) {
   foreach ($f in @(Get-BwRotPool)) { $live[[string]$f.Name] = $true }
   # 开了「只看收藏」时队列里会混进必应库的图, 把它们也算作"还在",
   # 否则这些图会在每次取图前被当成"已被删掉"剔得一干二净。
-  if ([bool]$c.fav_only) { foreach ($f in @(Get-BwBingAll)) { $live[[string]$f.Name] = $true } }
+  #
+  # 【2026-10-10 修·用户提议引出】这一句原来只在 fav_only 时才跑, 现在**无条件跑** ——
+  # 因为"聚焦轮完就轮必应库"(见 Get-BwFreshQueue)会把必应图排进**常规队列**。
+  # 不放开的话: 队列里那 22 张必应在每次取图前都被 Sync-BwQueue 当"已删除"剔掉
+  # (必应库不在 Get-BwRotPool 里), 同时打出一行
+  # "队列里有 22 张已经不在库里 (被删除或移到别处), 已剔除" 的**假告警**,
+  # 而且必应图永远换不上桌面 —— 等于这次改动白做。
+  foreach ($f in @(Get-BwBingAll)) { $live[[string]$f.Name] = $true }
   $before = @($s.queue | Where-Object { $_ }).Count
   if ($before -eq 0) { return 0 }
   $s.queue = @($s.queue | Where-Object { $_ -and $live.ContainsKey([string]$_) })
@@ -4503,6 +4584,12 @@ function Invoke-BwCycle {
           }
           $ok = Set-BwWall $path
           $s.last_wall = $path
+          # 【2026-10-10 修】必应当日图也要记进"看过"时间表(hist_at)。
+          # 别处都记了(手动切必应见上面巡检那一段、轮换取图见 Add-BwSrcRot/Add-BwHist),
+          # 只有这一处漏 —— 后果: hist_at 里永远没有必应图, Get-BwSeenDays 一律返回 -1。
+          # 一旦"聚焦轮完就轮必应"(见 Get-BwFreshQueue), 它们会被当成"很老"全排到队首,
+          # 今天早上刚当每日一图换过的那张, 约 21 次换图(约 10 小时)后就会原样再出现一次。
+          Add-BwHist $s $name
           Log ('今日首次 -> 必应当日壁纸 ' + $name + ' (ok=' + $ok + ')')
         }
         $s.last_bing_date = $today
