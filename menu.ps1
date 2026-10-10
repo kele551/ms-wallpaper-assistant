@@ -2,7 +2,7 @@
 # 作者: 海风（kele551）   https://gitee.com/kele551/ms-wallpaper-assistant
 . (Join-Path $PSScriptRoot 'core.ps1')
 
-$global:BWVersion = '2.3.0'
+$global:BWVersion = '2.2.0'
 
 # 显示名(2026-10-09 合规要求: 产品名不带他人商标): 界面上就叫「桌面壁纸」。
 # **只改显示名** —— exe 文件名(微软壁纸助手.exe)、数据目录(%LOCALAPPDATA%\微软壁纸助手)、
@@ -713,6 +713,14 @@ function Show-BwSettings {
         Write-Host '========== 壁纸填充方式 ==========' -ForegroundColor Cyan
         Write-Host ''
         Write-Host ('  现在: ' + (Get-BwWallStyle).Label)
+        # 2026-10-10 (复核 P2): 显示"程序第一次改之前你原来是什么", 并给一个还原入口。
+        # 原值存在数据目录的 config.json (wall_style_orig), 卸载前按一下 [r] 就能还原。
+        $origW = Get-BwStyleOrig
+        if ($origW) {
+          Write-Host ('  你原来的: ' + (Format-BwStyleOrig $origW) + '   (程序第一次改之前记下来的)') -ForegroundColor DarkGray
+        } else {
+          Write-Host '  你原来的: 还没记过 —— 程序还没改过你的填充方式。' -ForegroundColor DarkGray
+        }
         Write-Host ''
         Write-Host '   [1] 填充   铺满屏幕, 按比例放大后多出来的裁掉 (默认)'
         Write-Host '   [2] 适应   整张完整显示, 不够的地方留黑边'
@@ -721,6 +729,7 @@ function Show-BwSettings {
         Write-Host '   [5] 平铺   原尺寸反复铺满'
         Write-Host '   [6] 跨区   多显示器横跨 (单屏效果同填充)'
         Write-Host ''
+        Write-Host '  [r] 恢复我原来的填充方式' -ForegroundColor Yellow
         Write-Host '  [q] 返回'
         Write-Host ''
         $k2 = Normalize-BwKey (Read-Host '  选哪个')
@@ -732,6 +741,10 @@ function Show-BwSettings {
           $null = Apply-BwWallStyle
           Write-Host ('  好了: ' + (Get-BwWallStyle).Label + ' —— 已立刻应用到当前这张壁纸。')
           Log ('设置: 填充方式改为 ' + $map[$k2])
+        } elseif ($k2 -eq 'r') {
+          $rr = Restore-BwStyleOrig
+          if ($rr.Ok) { Write-Host ('  ' + $rr.Msg) -ForegroundColor Green }
+          else { Write-Host ('  ' + $rr.Msg) -ForegroundColor Yellow }
         }
         Pause-Bw
       }
