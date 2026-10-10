@@ -2779,7 +2779,8 @@ function Find-BwWallFile([psobject]$c, [string]$name) {
   return ''
 }
 # 参与轮换的图池 = 聚焦库 + 开着的新图源库。
-# (必应库不进队列: 它按"每日一图"的节奏走, 见 Invoke-BwCycle 规则 1。)
+# (必应库**也**进队列 —— 由 Get-BwFreshQueue 组装队列时并进来, 2026-10-10 晚起按"永远按最旧优先"排;
+#  本函数只管聚焦与新图源那部分。必应那条"每日一图"另走 Invoke-BwCycle 规则 1, 与队列无关。)
 function Get-BwRotPool {
   $c = Get-BwConfig
   $out = @(Get-BwSpotlightAll)
