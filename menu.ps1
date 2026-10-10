@@ -2,7 +2,7 @@
 # 作者: 海风（kele551）   https://gitee.com/kele551/ms-wallpaper-assistant
 . (Join-Path $PSScriptRoot 'core.ps1')
 
-$global:BWVersion = '2.1.0'
+$global:BWVersion = '2.2.0'
 
 # 显示名(2026-10-09 合规要求: 产品名不带他人商标): 界面上就叫「桌面壁纸」。
 # **只改显示名** —— exe 文件名(微软壁纸助手.exe)、数据目录(%LOCALAPPDATA%\微软壁纸助手)、
