@@ -39,6 +39,16 @@ from pathlib import Path
 
 import requests
 
+# 2026-10-12 修(发布现场崩过一次): Windows 控制台默认 GBK ——
+# build-exe.py 子进程按 GBK 打中文路径, 本脚本按 UTF-8 解码得到一个 �,
+# 再把这行 print 回 GBK 控制台就 UnicodeEncodeError, 发布跑到一半当场崩。
+# 父子两侧都钉成 UTF-8(与 preflight_release.py 同一套做法)。
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
+
 REPO_DIR = Path(__file__).resolve().parent.parent
 OWNER, REPO = 'kele551', 'ms-wallpaper-assistant'
 BRANCH = 'main'
