@@ -6,6 +6,7 @@
 <p><a href="README.md">简体中文</a> | English</p>
 
 <a href="https://github.com/kele551/ms-wallpaper-assistant/releases" title="Download"><img alt="Downloads" src="https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?style=flat-square&label=GitHub%20downloads&color=brightgreen" height="30"></a>
+<a href="https://gitee.com/kele551/ms-wallpaper-assistant/access" title="Gitee 仓库访问统计 · IP 全部累计 · 每日自动更新"><img alt="Gitee visits" src="https://img.shields.io/badge/Gitee-visits_222-c71d24?style=flat-square&labelColor=3d4552"></a>
 
 <a href="https://github.com/kele551/ms-wallpaper-assistant/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
 <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square">
