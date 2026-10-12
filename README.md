@@ -6,7 +6,7 @@
 <p>简体中文 | <a href="README_EN.md">English</a></p>
 <img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square">
 <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square">
-<img alt="Version" src="https://img.shields.io/badge/version-v2.2.0-blue?style=flat-square">
+<img alt="Version" src="https://img.shields.io/badge/version-v2.2.1-blue?style=flat-square">
 <img alt="Downloads" src="https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?style=flat-square&label=downloads&color=green">
 
 <p>🖼 <b>让电脑桌面壁纸自己换，你不用管</b>　——　必应每日一图 + Windows 聚焦，4K 自动轮换</p>
@@ -58,9 +58,9 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 下载
 
-### 👉 [点这里下载 v2.2.0 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.2.0/MSWallpaperAssistant-v2.2.0.zip)
+### 👉 [点这里下载 v2.2.1 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.2.1/MSWallpaperAssistant-v2.2.1.zip)
 
-> 7.3 MB 的 zip，实测可解压、可运行。当前云端最新版本：v2.2.0（打开即自动升级）。
+> 7.3 MB 的 zip，实测可解压、可运行。当前云端最新版本：v2.2.1（打开即自动升级）。
 > **杀软报毒是误报，可以放心。** 程序没有购买数字签名，又是「单文件自解压」打包，
 > 加上自动升级会下载脚本再运行 —— 这三样最容易触发杀软的启发式误判。
 > 想自己确认文件没被动过：发行页上写了安装包的 SHA256，下载后执行
@@ -323,7 +323,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 顺手带上这几样，能省一轮来回：
 
 1. Windows 版本（设置 → 系统 → 关于）
-2. 程序版本号（菜单标题上就有，比如 `v2.2.0`）
+2. 程序版本号（菜单标题上就有，比如 `v2.2.1`）
 3. `wallpaper.log` 末尾十几行（菜单 `[L]` 能看到）
 
 ---
@@ -414,7 +414,7 @@ Releases are built from the source code in this repository; the build command is
 <summary><b>版本迭代</b>（点击展开）</summary>
 
 
-每次改版都会打一个版本号、发一版下载。**当前最新：v2.2.0**
+每次改版都会打一个版本号、发一版下载。**当前最新：v2.2.1**
 
 小版本的改动都归到同一个大版本下面说，一行一个版本：
 

@@ -44,7 +44,7 @@ import time
 import datetime
 import ctypes
 
-VERSION = '2.2.0'
+VERSION = '2.2.1'
 # 2026-10-12 产品改名: 「微软壁纸助手」->「壁纸助手」(去掉他人商标前缀)。
 # 旧名常量**刻意保留**, 只做兼容探测:
 #   * 新数据目录 %LOCALAPPDATA%\壁纸助手; 老目录第一次启动时整体**复制**过来
