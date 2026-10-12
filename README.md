@@ -4,7 +4,7 @@
 <h1>桌面壁纸</h1>
 
 <p>简体中文 | <a href="README_EN.md">English</a></p>
-<a href="https://github.com/kele551/ms-wallpaper-assistant/releases" title="点击去下载"><img alt="Downloads" src="https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?style=flat-square&label=%E7%B4%AF%E8%AE%A1%E4%B8%8B%E8%BD%BD&color=brightgreen" height="30"></a>
+<a href="https://github.com/kele551/ms-wallpaper-assistant/releases" title="点击去下载"><img alt="Downloads" src="https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?style=flat-square&label=GitHub%E4%B8%8B%E8%BD%BD&color=brightgreen" height="30"></a>
 
 <a href="https://github.com/kele551/ms-wallpaper-assistant/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
 <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square">
@@ -391,6 +391,7 @@ Releases are built from the source code in this repository; the build command is
 
 </details>
 
+---
 
 ## Code signing policy（代码签名政策）
 
@@ -446,6 +447,7 @@ Releases are built from the source code in this repository; the build command is
 
 </details>
 
+---
 
 ## 版本迭代
 
@@ -515,6 +517,8 @@ MIT（见 [LICENSE](LICENSE)）。
 
 图片来源与授权、商标与命名、隐私边界等说明见 [COMPLIANCE.md](COMPLIANCE.md)。
 
+---
+
 ## 路线图（Roadmap）
 
 按优先级从高到低，都是已经排进计划、能落到代码上的事：
@@ -532,6 +536,8 @@ MIT（见 [LICENSE](LICENSE)）。
 
 > 路线图只列真实在办的事，做完一项改一项；临时想到的、还没验证的想法不写在这里。
 
+---
+
 ## 参与贡献与治理
 
 | 项目 | 说明 |
@@ -543,6 +549,7 @@ MIT（见 [LICENSE](LICENSE)）。
 | 安全 | 漏洞请**不要**开公开 Issue，按 [SECURITY.md](SECURITY.md) 私下报告 |
 | 持续集成 | [.github/workflows/build.yml](.github/workflows/build.yml) 在 Windows runner 上真实打包并输出 SHA256（每天构建只需 `pyinstaller`，运行主程序**零第三方依赖**） |
 | 发布纪律 | 发版前必须跑发版前自检并全绿（版本一致性、成品与升级源同源、`.ps1` 的 BOM 与语法、对外文档不含私人邮箱），红一条不许发 |
+
 ---
 
 ## ♥️ 支持项目
@@ -557,3 +564,7 @@ MIT（见 [LICENSE](LICENSE)）。
 
 > 本项目以 MIT 协议自由开源，**没有付费版、也没有付费功能**；捐赠纯属自愿，
 > 与功能开放、版本更新、Issue 响应**没有任何关系**。
+
+---
+
+<p align="center"><sub>© 2026 海风（kele551） · MIT License · <a href="https://gitee.com/kele551/ms-wallpaper-assistant">Gitee 主仓库</a> · <a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub 镜像</a></sub></p>

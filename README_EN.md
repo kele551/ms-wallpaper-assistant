@@ -5,7 +5,7 @@
 
 <p><a href="README.md">简体中文</a> | English</p>
 
-<a href="https://github.com/kele551/ms-wallpaper-assistant/releases" title="Download"><img alt="Downloads" src="https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?style=flat-square&label=Downloads&color=brightgreen" height="30"></a>
+<a href="https://github.com/kele551/ms-wallpaper-assistant/releases" title="Download"><img alt="Downloads" src="https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?style=flat-square&label=GitHub%20downloads&color=brightgreen" height="30"></a>
 
 <a href="https://github.com/kele551/ms-wallpaper-assistant/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
 <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square">
@@ -57,6 +57,8 @@ images stay on your own machine.
 
 > 作者 / Author: **HaiFeng (kele551)** · Gitee（主）: <https://gitee.com/kele551/ms-wallpaper-assistant> · GitHub（镜像）: <https://github.com/kele551/ms-wallpaper-assistant>
 
+---
+
 ## Features
 
 - **Two sources**: the Bing daily image + Windows Spotlight (both 4K)
@@ -74,6 +76,8 @@ images stay on your own machine.
 - **Private by design**: images are stored locally; no user data is collected or uploaded
 - **Self-updating**: it checks the release feed and upgrades itself — no manual downloads
 
+---
+
 ## Download
 
 - GitHub Releases: <https://github.com/kele551/ms-wallpaper-assistant/releases>
@@ -82,6 +86,8 @@ images stay on your own machine.
 Unzip the archive and double-click `壁纸助手.exe` (Windows 10/11 x64; installs from before the 2026-10-12 rename keep the old file name — same program). The UI is a
 console menu in Chinese; press `Q` to quit, `B` to toggle automatic rotation.
 Version: right-click the exe → Properties → Details.
+
+---
 
 ## Build from source
 
@@ -94,6 +100,8 @@ python build-exe.py --release      # produces 壁纸助手.exe
 
 Entry point: `launcher.py`; bundled payload: `core.ps1`, `menu.ps1`, `使用说明.txt`, icon.
 The build script refuses to package a payload whose `.ps1` files are not UTF-8 with BOM.
+
+---
 
 ## Antivirus false positives
 
@@ -110,6 +118,8 @@ The full source code is public and reviewable, and the program contains no malic
 functionality: it downloads images from Microsoft's public image services and sets them
 as the desktop wallpaper.
 
+---
+
 ## Privacy
 
 This program collects and uploads **no** user data. It only requests wallpaper images from
@@ -117,10 +127,19 @@ Microsoft's public image services (Bing, Windows Spotlight) and stores them on t
 own computer. Apart from those image requests it transfers no information to other
 networked systems unless the user explicitly asks it to.
 
+---
+
 ## Code signing policy
 
 See the "Code signing policy（代码签名政策）" section below.
 
+---
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+---
+
+<p align="center"><sub>© 2026 海风（kele551） · MIT License · <a href="https://gitee.com/kele551/ms-wallpaper-assistant">Gitee</a> · <a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub</a></sub></p>
+
