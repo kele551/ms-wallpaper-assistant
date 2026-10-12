@@ -1,16 +1,24 @@
 ﻿# 桌面壁纸 - 菜单
 # 作者: 海风（kele551）   https://gitee.com/kele551/ms-wallpaper-assistant
-. (Join-Path $PSScriptRoot 'core.ps1')
+# 2026-10-12 (审查 P2): 补 -DryRun 透传 —— 原来从源码目录直接跑 menu.ps1 时 BWDry 恒为 false,
+# 试运行保护全灭, 而且开头没有 .version 时进菜单的自动升级会把仓库里的 core/menu **就地覆盖成线上版**。
+param([switch]$DryRun)
+. (Join-Path $PSScriptRoot 'core.ps1') -DryRun:$DryRun
 
 $global:BWVersion = '2.2.0'
 
 # 显示名(2026-10-09 合规要求: 产品名不带他人商标): 界面上就叫「桌面壁纸」。
-# **只改显示名** —— exe 文件名(微软壁纸助手.exe)、数据目录(%LOCALAPPDATA%\微软壁纸助手)、
-# 仓库名与 version.json 里的地址/附件名、图标文件名, 一律没动(见 logs\新增图源-20261009.md)。
+# 2026-10-12 产品改名「微软壁纸助手」->「壁纸助手」: exe 文件名/数据目录/图标都换新名。
+# **老用户升级是原位覆盖、文件名不变(还是老名)**, 所以本文件所有按文件名判断的地方
+# 一律新旧双名兼容(见 BWExeName/BWExeNameLegacy); 数据目录由启动器自动迁移。
+# 仓库名与 version.json 里的地址不变 —— 改了会断掉全体存量用户的自动升级。
 # 快捷方式也跟着改名字; 老名字那份不会被丢下: Move-BwLnkToNewName 会把它就地搬成新名字,
 # 既不会在桌面留一个旧壳, 也不会在启动项里变成两个开机自启。
 $global:BWLnkName       = '桌面壁纸.lnk'
 $global:BWLnkNameLegacy = '微软壁纸助手.lnk'
+# 2026-10-12 改名: exe 文件名新旧双名 —— 固定名/进程探测/图标都两个名一起认
+$global:BWExeName       = '壁纸助手.exe'
+$global:BWExeNameLegacy = '微软壁纸助手.exe'
 
 # 2026-10-05 修: 窗口标题栏也要写脚本版本。标题栏原本只有 launcher.py 设过一次(用的是
 # **exe 的版本**), 而脚本可以被自动升级到比 exe 更新 —— 于是标题栏写 v2.0.7、菜单正文写
@@ -127,6 +135,15 @@ function Resolve-BwUnwritableBase([string]$base) {
 
 # ---------- 选择壁纸文件夹 (首次运行向导和「设置」共用) ----------
 # 返回选中的路径; 返回空串表示"这轮没选出来, 重新问一遍"。
+# 2026-10-12 (审查 P2): 统一的路径收尾清理 —— 原来 198/208/214 直接 TrimEnd('\'),
+# 把盘根 "D:\" 裁成 "D:", 再过 Test-BwPathShape(要求 X:\ 形式)必然被拒,
+# 用户收到"要写完整路径"的提示却不知错在哪。盘根(2~3 字符)不裁。
+function Trim-BwPathSep([string]$p) {
+  $q = ([string]$p).Trim().Trim('"')
+  while ($q.Length -gt 3 -and $q.EndsWith('\')) { $q = $q.Substring(0, $q.Length - 1) }
+  return $q
+}
+
 function Select-BwBase([string]$suggest, [string]$suggestReason) {
   $cands = @()
   # 第一项固定是系统「图片」文件夹 —— 用户要的就是"图片库里的壁纸文件夹"。
@@ -195,7 +212,7 @@ function Select-BwBase([string]$suggest, [string]$suggestReason) {
     if ($idx -eq $manual) {
       $p = Read-Host '  输入完整路径 (比如 D:\我的壁纸, 网络盘写 \\服务器\共享\目录)'
       if (-not $p) { return '' }
-      return $p.Trim().Trim('"').TrimEnd('\')
+      return (Trim-BwPathSep $p)
     }
     return $cands[$idx - 1].Path
   }
@@ -205,13 +222,13 @@ function Select-BwBase([string]$suggest, [string]$suggestReason) {
     Pause-Bw
     return ''
   }
-  return $t.TrimEnd('\')
+  return (Trim-BwPathSep $t)
 }
 
 # 把壁纸文件夹定下来并写进 config。下面的「必应」「聚焦」两个子目录顺手建好。
 # 返回是否成功。
 function Set-BwBase([string]$base) {
-  $b = $base.TrimEnd('\')
+  $b = Trim-BwPathSep $base
   if (-not (Test-BwPathShape $b)) {
     Write-Host ('  要写完整路径, 比如 D:\壁纸 —— 已保持不变')
     return $false
@@ -314,11 +331,14 @@ function Show-BrowseAll {
     } else { Write-Host '  没有这一项' }
     return
   }
-  try {
-    $p = $files[[int]$sel].file.FullName
-    $ok = Set-BwWallManual $s $p '手动浏览设壁纸'
-    Write-Host ('  已设为壁纸 (ok=' + $ok + '): ' + (Split-Path $p -Leaf))
-  } catch { Write-Host '  序号无效' }
+  # 2026-10-12 (审查 P2): TryParse + 范围检查 —— 非数字/越界原来靠 catch 兜底,
+  # $p 已经是 $null 还会先跑一遍设壁纸再报个含糊的"序号无效"; 别处(298/491/505)早就是这个写法。
+  $ixSel = -1
+  if (-not [int]::TryParse(([string]$sel).Trim(), [ref]$ixSel)) { Write-Host '  序号无效'; return }
+  if ($ixSel -lt 0 -or $ixSel -ge $files.Count) { Write-Host '  序号无效'; return }
+  $p = $files[$ixSel].file.FullName
+  $ok = Set-BwWallManual $s $p '手动浏览设壁纸'
+  Write-Host ('  已设为壁纸 (ok=' + $ok + '): ' + (Split-Path $p -Leaf))
 }
 
 # ---------- [4] 下载必应图片 (补齐 2021 至今 / 补漏; 归档源 niumoo/bing-wallpaper, 2021-02 至今 4K) ----------
@@ -371,7 +391,7 @@ function Invoke-BwRefill {
   # 2026-10-09 (用户要求): 手动批量入口也要有上限和提醒 —— 微软聚焦源池总共就 800+ 张,
   # 官方每天只新增有限几张。一把抓几百张等于把池子抽干, 之后很久都没有新图可换
   # (去重是永久的: 下过就不再下)。所以这里加单次硬上限 50 张, 并说清楚为什么。
-  $want = [int]$c.spotlight_per_cycle
+  $want = 0; try { $want = [int]$c.spotlight_per_cycle } catch {}   # 2026-10-12 (审查 P2): 手改 config 塞非法值不许把菜单主循环打死
   if ($want -gt 50) {
     Write-Host '  一次最多 50 张, 这次按 50 张抓。' -ForegroundColor Yellow
     $want = 50
@@ -1015,8 +1035,17 @@ function Invoke-BwFirstRun {
     $fixed = Resolve-BwUnwritableBase $try
     if ($fixed) { $base = $fixed }
   }
+  $frTry = 0
   while (-not $base) {
+    $frTry++
     Show-BwFirstRunHead
+    if ($frTry -gt 2) {
+      # 2026-10-12 (审查 P2): 给向导一个出口 —— 原来除了挑出一个可写路径没有别的路,
+      # 只想先看一眼的用户只能 Ctrl+C。
+      Write-Host '  (按 Q 再回车 = 这次先不设, 不改任何设置; 下次双击再来)' -ForegroundColor DarkGray
+      $kq0 = ((Read-Host '  继续挑') + '').Trim().ToLower()
+      if ($kq0 -eq 'q') { Write-Host '  好, 这次先不设。'; Start-Sleep -Milliseconds 800; exit 0 }
+    }
     Write-Host '  这台机器上推荐的位置写不进去, 你自己挑一个:'
     Write-Host ''
     $sel = Select-BwBase $d.base $d.reason
@@ -1072,7 +1101,7 @@ function Invoke-BwFirstRun {
 }
 
 # ---------- 开机自动换壁纸 (绿色做法: 往「启动」文件夹放个快捷方式, 不需要管理员) ----------
-# 快捷方式指向 微软壁纸助手.exe --daemon。exe 是 GUI 子系统程序, 后台模式
+# 快捷方式指向固定名 exe(壁纸助手.exe, 老用户还是旧名) --daemon。exe 是 GUI 子系统程序, 后台模式
 # 一个控制台都不建, 所以开机拉起时不会闪任何窗口。
 function Get-BwStartupLnk {
   return (Join-Path ([Environment]::GetFolderPath('Startup')) $global:BWLnkName)
@@ -1082,7 +1111,7 @@ function Get-BwStartupLnk {
 function Get-BwStartupLnkLegacy {
   return (Join-Path ([Environment]::GetFolderPath('Startup')) $global:BWLnkNameLegacy)
 }
-# 快捷方式要指向**固定名**那份 exe (微软壁纸助手.exe), 而不是 微软壁纸助手-v1.4.0.exe。
+# 快捷方式要指向**固定名**那份 exe (壁纸助手.exe, 老用户原地保留旧名), 而不是 壁纸助手-v2.2.1.exe。
 # 指到带版本号的名字上, 下一次升级换了文件名, 开机自动换就无声失效了 ——
 # 用户不打开菜单根本看不出来 (v1.3.0 就是这么断的: CHANGELOG 说了要用固定名,
 # 但部署时只拷了带版本号的那份, 于是建快捷方式时直接用了当前 exe 路径)。
@@ -1093,7 +1122,14 @@ function Get-BwFixedExe {
   if (Test-Path -LiteralPath $p) { $cur = (Get-Content -LiteralPath $p -Raw -Encoding UTF8).Trim() }
   if (-not $cur) { return '' }
   if (-not (Test-Path -LiteralPath $cur)) { return '' }
-  return (Join-Path (Split-Path $cur -Parent) '微软壁纸助手.exe')
+  # 2026-10-12 改名双名兼容: 老用户原位覆盖后文件名还是老名, 新装是新名 ——
+  # 哪个真实存在用哪个; 都不在(当前 exe 是带版本号的名字)就回新名, 由 Ensure 复制出一份。
+  $dir = Split-Path $cur -Parent
+  foreach ($nm in @($global:BWExeName, $global:BWExeNameLegacy)) {
+    $cand = Join-Path $dir $nm
+    if (Test-Path -LiteralPath $cand) { return $cand }
+  }
+  return (Join-Path $dir $global:BWExeName)
 }
 function Ensure-BwFixedExe {
   $fixed = Get-BwFixedExe
@@ -1144,9 +1180,6 @@ function Repair-BwAutoStart {
 }
 # ---------- 桌面快捷方式 ----------
 # 桌面上要一直有一个能双击打开菜单的快捷方式, 不用用户自己动手建:
-#   · 没有 -> 建一个 (首次运行就会有)
-#   · exe 换了地方 -> 改指过去 (挪到哪个盘都跟着)
-#   · exe 被新版本覆盖过 (文件比快捷方式新) -> 重写一遍, 顺带把图标刷新成新版的
 # 在设置 [6] 里关掉之后就完全不动, 也不再自动建。
 #   · 没有 -> 建一个, **只建这一次** (首次运行就会有)
 #   · exe 换了地方 -> 改指过去 (挪到哪个盘都跟着)
@@ -1214,8 +1247,12 @@ function Find-BwDesktopLnk {
 # 缓存里存的还是旧图标 —— 表现为"放桌面一个样、拖进文件夹又一个样"。
 # 独立的 .ico 是另一条路径, 没被旧版本污染过, 显示出来的始终是这张图。
 function Get-BwIconLocation([string]$exe) {
-  $ico = Join-Path $global:BWRoot '微软壁纸助手.ico'
-  if (Test-Path -LiteralPath $ico) { return ('{0},0' -f $ico) }
+  # 2026-10-12 改名: 数据目录里的图标, 新装是「壁纸助手.ico」; 老用户热更上来的
+  # 还是「微软壁纸助手.ico」(payload 只补缺失不覆盖同名旧物) —— 两个名都认, 新名优先。
+  foreach ($nm in @('壁纸助手.ico', '微软壁纸助手.ico')) {
+    $ico = Join-Path $global:BWRoot $nm
+    if (Test-Path -LiteralPath $ico) { return ('{0},0' -f $ico) }
+  }
   return ('{0},0' -f $exe)
 }
 # 真正写盘的那一步: 返回 create / update / ok / fail
@@ -1325,7 +1362,8 @@ function Test-BwAutoStart {
 # 认进程命令行里带 --daemon 的那个, 那是真正在按节拍换图的那个。
 function Test-BwDaemonRunning {
   try {
-    $ps = @(Get-CimInstance Win32_Process -Filter "Name='微软壁纸助手.exe'" -ErrorAction SilentlyContinue |
+    # 2026-10-12 改名双名兼容: 老用户进程还顶着旧文件名跑, 新装是新名
+    $ps = @(Get-CimInstance Win32_Process -Filter "Name='$($global:BWExeName)' OR Name='$($global:BWExeNameLegacy)'" -ErrorAction SilentlyContinue |
             Where-Object { $_.CommandLine -and ($_.CommandLine -like '*--daemon*') })
     return ($ps.Count -gt 0)
   } catch { return $false }
@@ -1351,7 +1389,7 @@ function Enable-BwAutoStart {
   $lnk = Get-BwStartupLnk
   $exe = Get-BwLauncherPath
   if ((-not $exe) -or (-not (Test-Path -LiteralPath $exe))) {
-    Write-Host '  找不到主程序「微软壁纸助手.exe」。'
+    Write-Host ('  找不到主程序「' + $global:BWExeName + '」(旧版文件名也行)。')
     Write-Host '  请直接双击那个 exe 打开本菜单, 再来开这个开关。'
     return $false
   }
@@ -1375,7 +1413,7 @@ function Enable-BwAutoStart {
     Write-Host ('  指向: ' + $exe)
     if ($started) { Write-Host '  后台已经现在就跑起来了, 不用等下次开机 —— 到点就换。' -ForegroundColor Green }
     else { Write-Host '  (后台这次没拉起来, 下次开机才会自动跑)' -ForegroundColor DarkYellow }
-    if ((Split-Path $exe -Leaf) -ne '微软壁纸助手.exe') {
+    if (@($global:BWExeName, $global:BWExeNameLegacy) -notcontains (Split-Path $exe -Leaf)) {
       Write-Host '  (这份 exe 名字里带版本号, 以后换新版本要重开一次本开关)' -ForegroundColor DarkYellow
     }
     return $true
@@ -1487,7 +1525,9 @@ try {
       Start-Sleep -Seconds 3
       if (-not $needLauncher) {
         Write-Host '  正在打开新版本...' -ForegroundColor Green
-        try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'menu.ps1') } catch {}
+        # 2026-10-12 (审查 P1): 同步 & 调用会等**新菜单退出**才走完 —— 老窗口僵在后台,
+        # 屏幕上同时两个窗口。改脱离式启动, 本窗口马上收摊。
+        try { Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"{0}"' -f (Join-Path $PSScriptRoot 'menu.ps1'))) } catch {}
       }
       return
     }
@@ -1549,7 +1589,8 @@ do {
   $moved = $false
   if (Test-BwAutoStart) { $auto = '开'; $moved = Repair-BwAutoStart }
   # 后台到底有没有在跑: 开关只管"下次开机起不起", 管不了"这次有没有后台" —— 两件事。
-  $running = Test-BwDaemonRunning  # —— 状态就三行: 换图 / 图库 / 位置与当前壁纸 ——
+  # —— 状态就三行: 换图 / 图库 / 位置与当前壁纸 ——
+  $running = Test-BwDaemonRunning
   # 2026-09-22 重排: 原来首页堆了十来行状态和提示, 一屏挤满、重点看不出来。
   $runTxt = '后台没跑'
   if ($running) { $runTxt = '后台在跑' }
@@ -1596,7 +1637,11 @@ do {
   if ($upInfo -and ((Compare-BwVer ([string]$upInfo.version) (Get-BwLocalScriptVer)) -gt 0)) {
     $nt = ''
     try { if ($upInfo.notes) { $nt = ' —— ' + [string]$upInfo.notes } } catch {}
-    [void]$warn.Add('有新版本 v' + $upInfo.version + ' —— 自动升级没成功 (按 [U] 重试)' + $nt)
+    # 2026-10-12 (审查 P1·FoxPath v1.1.1 口径): 这条读的是缓存, 要注明"是什么时候查的",
+    # 免得拿几小时前的旧结果当现状吓唬用户。
+    $ckAge = ''
+    try { $ckAge = ' [信息截至 ' + ([datetime]::FromFileTime([int64]$upInfo.checked_ft)).ToString('MM-dd HH:mm') + ']' } catch {}
+    [void]$warn.Add('有新版本 v' + $upInfo.version + ' —— 自动升级没成功 (按 [U] 重试)' + $nt + $ckAge)
   }
   $capN = 0; try { $capN = [int]$c0.lib_cap } catch {}
   if (($capN -gt 0) -and ($spotN -gt $capN)) {
@@ -1620,7 +1665,8 @@ do {
     $why0 = Test-BwUnsafePlace $base0
     if ($why0) { [void]$warn.Add($why0 + ' —— 按 [S] 再按 [3] 换位置, 换的时候会问你要不要把已有的图一起搬过去') }
   }
-  if ((($bingN + $spotN) -eq 0) -and ([int]$s0.shown -gt 0)) { [void]$warn.Add('库里一张图都没有, 但程序换过壁纸 —— 按 [S] 重设保存位置, 否则会自动重下') }
+  $shown0 = 0; try { $shown0 = [int]$s0.shown } catch {}   # 2026-10-12 (审查 P2): 同上, 裸 [int] 不许崩主循环
+  if ((($bingN + $spotN) -eq 0) -and ($shown0 -gt 0)) { [void]$warn.Add('库里一张图都没有, 但程序换过壁纸 —— 按 [S] 重设保存位置, 否则会自动重下') }
   if ($moved) { [void]$warn.Add('程序位置变过, 开机自动换已重新指向当前这个 exe') }
   if ($warn.Count -gt 0) {
     Write-Host ''
@@ -1631,8 +1677,8 @@ do {
   Write-Host ''
   # —— 按键分组: 动作在前, 设置在后; 每组一条分隔线 ——
   Write-Host '  ------------------------ 换图 ------------------------' -ForegroundColor DarkCyan
-  Write-Host '   [1] 换一张壁纸          [2] 下载聚焦图片'
-  Write-Host '   [3] 浏览壁纸库          [4] 下载必应图片'
+  Write-Host '   [1] 换一张壁纸    [2] 下载聚焦图片'
+  Write-Host '   [3] 浏览壁纸库    [4] 下载必应图片'
   Write-Host '   [F] 收藏 / 取消当前这张'
   Write-Host '  --------------------- 后台与设置 ---------------------' -ForegroundColor DarkCyan
   # 「后台这次有没有在跑」和「下次开机起不起」是两件事, 分开写清楚, 别让人读成一件。
@@ -1648,9 +1694,9 @@ do {
     Write-Host '   开机自动换: 关' -ForegroundColor Gray
     Write-Host '   [A] 打开开机自动换'
   }
-  Write-Host '   [S] 设置        [U] 检查更新'
+  Write-Host '   [S] 设置    [U] 检查更新'
   Write-Host '  ------------------------ 其它 ------------------------' -ForegroundColor DarkCyan
-  Write-Host '   [L] 查看日志   [R] 刷新   [Q] 退出'
+  Write-Host '   [L] 查看日志    [R] 刷新    [Q] 退出'
   Write-Host ''
   $k = Normalize-BwKey (Read-Host '请选择')
   $quit = $false
@@ -1674,7 +1720,11 @@ do {
       Write-Host ''
       Write-Host ('  当前脚本版本: v' + (Get-BwLocalScriptVer) + '   主程序: v' + (Get-BwLauncherVer))
       Write-Host '  正在检查升级源...'
-      $tgtU = ''; try { $iU = Get-BwUpdateInfo; if ($iU) { $tgtU = [string]$iU.version } } catch {}
+      # 2026-10-12 (审查 P1·同 FoxPath v1.1.1 修的缺陷): 手动检查必须**强制联网** ——
+      # 原来这行读 6 小时缓存: 成功框的目标版本和 $needLauU 判定拿的都是旧数据,
+      # 文案说"正在检查升级源"实际可能一个字节都没下。
+      $tgtU = ''; try { $iU = Get-BwUpdateInfo -Force; if ($iU) { $tgtU = [string]$iU.version } } catch {}
+      if (-not $tgtU) { Write-Host '  升级源连不上, 下面按实际结果处理。' -ForegroundColor Yellow }
       $needLauU = $false
       try { if (Get-BwLauncherVer) { $needLauU = ((Compare-BwVer $tgtU (Get-BwLauncherVer)) -gt 0) } } catch {}
       $didU = [bool](Invoke-BwScriptUpdate -Force -Animated -ReopenMenu)
@@ -1689,7 +1739,8 @@ do {
         Start-Sleep -Seconds 3
         if (-not $needLauU) {
           Write-Host '  正在打开新版本...' -ForegroundColor Green
-          try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'menu.ps1') } catch {}
+          # 2026-10-12 (审查 P1): 同上, 脱离式启动, 本窗口不陪新菜单等退出。
+          try { Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"{0}"' -f (Join-Path $PSScriptRoot 'menu.ps1'))) } catch {}
         }
         $quit = $true
       } else {

@@ -1,6 +1,6 @@
 ﻿# -*- coding: utf-8 -*-
 """
-微软壁纸助手 - 绿色单文件版启动器。
+壁纸助手 - 绿色单文件版启动器。
 
 作者: 海风（kele551）   https://gitee.com/kele551/ms-wallpaper-assistant
 
@@ -11,7 +11,9 @@
                         没有"先建控制台再隐藏"的闪窗问题。
     - 开机后台自启    -> 完全不创建控制台, 一个窗口都不会闪。
 
-* 数据放用户目录 (%LOCALAPPDATA%\\微软壁纸助手), 程序 exe 旁边**不放任何东西** ——
+* 数据放用户目录 (%LOCALAPPDATA%\\壁纸助手), 程序 exe 旁边**不放任何东西** ——
+  (2026-10-12 改名: 产品旧名「微软壁纸助手」, 旧名数据目录里的东西会在新版第一次
+   启动时**复制**过来 —— 校验通过才算数, 旧目录**保留不删**, 留作回滚兜底。)
   放在 Program Files 也不会在旁边生出一个数据文件夹。删掉那个目录 = 彻底卸载,
   不写自启动注册表项、不装服务与计划任务、不需要管理员。
   (唯一的例外与对外文档一致: 设壁纸时按 Windows 标准做法调 SystemParametersInfo,
@@ -43,9 +45,19 @@ import datetime
 import ctypes
 
 VERSION = '2.2.0'
-APP_NAME = '微软壁纸助手'
-DATA_DIR_NAME = '微软壁纸助手数据'
-PAYLOAD_FILES = ['core.ps1', 'menu.ps1', '使用说明.txt', '微软壁纸助手.ico']
+# 2026-10-12 产品改名: 「微软壁纸助手」->「壁纸助手」(去掉他人商标前缀)。
+# 旧名常量**刻意保留**, 只做兼容探测:
+#   * 新数据目录 %LOCALAPPDATA%\壁纸助手; 老目录第一次启动时整体**复制**过来
+#     (复制 -> 逐文件校验 -> 旧目录保留不删, 回滚有据);
+#   * 便携 U 盘模式: exe 旁边若还是老名「微软壁纸助手数据」(里面有 portable.txt),
+#     就**继续用老目录**, 不搬家不分裂;
+#   * 互斥体名 Local\MSWallpaperAssistantDaemon 不改 —— 改名过渡期新老 exe
+#     可能同时在跑, 守护进程必须继续互斥, 只能有一个。
+APP_NAME = '壁纸助手'
+LEGACY_APP_NAME = '微软壁纸助手'
+DATA_DIR_NAME = '壁纸助手数据'
+LEGACY_DATA_DIR_NAME = '微软壁纸助手数据'
+PAYLOAD_FILES = ['core.ps1', 'menu.ps1', '使用说明.txt', '壁纸助手.ico']
 MUTEX_NAME = 'Local\\MSWallpaperAssistantDaemon'
 CREATE_NO_WINDOW = 0x08000000
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
@@ -250,9 +262,10 @@ def legacy_dirs():
     """exe 旁边可能存在的旧数据位置 (以前的版本留下的)。"""
     h = here()
     out = []
-    d = os.path.join(h, DATA_DIR_NAME)
-    if os.path.isdir(d):
-        out.append(d)
+    for _nm in (DATA_DIR_NAME, LEGACY_DATA_DIR_NAME):   # 2026-10-12: 新老两个便携目录名都认
+        d = os.path.join(h, _nm)
+        if os.path.isdir(d):
+            out.append(d)
     if any(os.path.isfile(os.path.join(h, f)) for f in ('config.json', 'state.json')):
         out.append(h)
     return out
@@ -260,11 +273,11 @@ def legacy_dirs():
 
 def _cleanup_legacy(src, dst):
     """搬完并校验通过才敢删。两种旧布局分开处理:
-         * 「微软壁纸助手数据」子目录 -> 整个删掉
+         * 「壁纸助手数据 / 微软壁纸助手数据」子目录 -> 整个删掉
          * 数据直接摊在 exe 旁边    -> 只删本程序认识的那几个文件, 别的碰都不碰
     """
     try:
-        if os.path.basename(src.rstrip('\\/')) == DATA_DIR_NAME:
+        if os.path.basename(src.rstrip('\\/')) in (DATA_DIR_NAME, LEGACY_DATA_DIR_NAME):
             shutil.rmtree(src)
         else:
             for f in os.listdir(src):
@@ -323,10 +336,57 @@ def appdata_dir():
     return os.path.join(os.environ.get('LOCALAPPDATA') or os.path.expanduser('~'), APP_NAME)
 
 
+def legacy_appdata_dir():
+    """改名前的老用户数据目录 (%LOCALAPPDATA%\\微软壁纸助手)。"""
+    return os.path.join(os.environ.get('LOCALAPPDATA') or os.path.expanduser('~'), LEGACY_APP_NAME)
+
+
+def migrate_from_legacy_appdata(dst):
+    """2026-10-12 改名迁移: 把老名 appdata 目录**复制**进新目录。
+
+    口径跟 exe 旁边旧数据搬家一个样: 复制 -> 逐文件比大小+MD5 -> 全对才算成。
+    两点不同: ① 老目录**保留不删**(它是回滚兜底, 用户在菜单 [S]->[7] 看过新目录
+    没问题后自己删); ② 新目录已有 config.json = 已经在新名下跑过, 直接跳过。
+    新目录里已存在的同名文件一律以新目录为准, 绝不覆盖。
+    """
+    src = legacy_appdata_dir()
+    if not os.path.isdir(src) or os.path.abspath(src) == os.path.abspath(dst):
+        return
+    if os.path.isfile(os.path.join(dst, 'config.json')):
+        return
+    moved = 0
+    try:
+        names = os.listdir(src)
+    except Exception:
+        return
+    for f in names:
+        s = os.path.join(src, f)
+        t = os.path.join(dst, f)
+        try:
+            if os.path.isdir(s):
+                if not os.path.isdir(t):
+                    shutil.copytree(s, t)
+                    moved += 1
+                continue
+            if not os.path.isfile(s):
+                continue
+            if os.path.isfile(t):
+                continue
+            shutil.copy2(s, t)
+            if os.path.getsize(t) != os.path.getsize(s) or _md5(t) != _md5(s):
+                _note(dst, '改名迁移中断: %s 校验不一致, 老目录原样保留' % f)
+                return
+            moved += 1
+        except Exception as e:
+            _note(dst, '改名迁移中断: %s (%s), 老目录原样保留' % (s, e))
+            return
+    _note(dst, '改名迁移: 从老数据目录(%s)复制了 %d 项过来; 老目录保留, 确认新目录没问题后可在菜单 [S]->[7] 删除' % (LEGACY_APP_NAME, moved))
+
+
 def data_dir():
     """数据放哪, 按这个顺序定:
-       1) 便携模式: exe 旁边的「微软壁纸助手数据」里放着 portable.txt -> 跟着 exe 走
-       2) 正常:     %LOCALAPPDATA%\\微软壁纸助手
+       1) 便携模式: exe 旁边的「壁纸助手数据」(或老名「微软壁纸助手数据」)里放着 portable.txt -> 跟着 exe 走
+       2) 正常:     %LOCALAPPDATA%\\壁纸助手  (老名目录第一次启动时复制迁移, 老目录保留)
                     —— 程序爱放哪放哪 (Program Files 也行), 旁边不会多出任何东西
        3) LOCALAPPDATA 写不进去 (极罕见) -> 才退回 exe 旁边
        发现 exe 旁边有旧数据 -> 自动搬进 2), 校验通过后再删掉旧的。
@@ -335,8 +395,12 @@ def data_dir():
     pd = os.path.join(h, DATA_DIR_NAME)
     if os.path.isfile(os.path.join(pd, 'portable.txt')) and writable(pd):
         return pd
+    pd_old = os.path.join(h, LEGACY_DATA_DIR_NAME)   # 2026-10-12: 便携 U 盘上还是老目录名 -> 继续用它
+    if os.path.isfile(os.path.join(pd_old, 'portable.txt')) and writable(pd_old):
+        return pd_old
     d = appdata_dir()
     if writable(d):
+        migrate_from_legacy_appdata(d)
         migrate_into(d)
         return d
     if writable(pd):
@@ -347,6 +411,28 @@ def data_dir():
 
 
 # ---------------------------------------------------------------- 释放内嵌脚本
+def _write_launcher_txt(d):
+    """2026-10-12 (审查 P1): 每次启动都把 launcher.txt 校正成当前 exe 路径。
+    原来只在"版本变更全量重放"时写 —— 用户挪动/改名 exe(正是这次改名的现场)后,
+    launcher.txt 还指着老路径, 主程序自动升级报"找不到主程序路径"、菜单自启修复失效,
+    而且全是静默的。先比对再写(内容一样不碰盘), 写走临时文件+原子替换。"""
+    p = os.path.join(d, 'launcher.txt')
+    want = os.path.abspath(sys.executable if getattr(sys, 'frozen', False) else __file__)
+    try:
+        cur = open(p, encoding='utf-8', errors='replace').read().strip()
+    except Exception:
+        cur = ''
+    if cur == want:
+        return
+    try:
+        tmp = p + '.tmp%d' % os.getpid()
+        with open(tmp, 'w', encoding='utf-8') as fp:
+            fp.write(want)
+        os.replace(tmp, p)
+    except Exception:
+        pass
+
+
 def ver_tuple(v):
     """把 '2.0.5' 变成 (2,0,5)。比不了就当成 0 —— 宁可不升级, 也不能因为版本号怪就乱覆盖。"""
     try:
@@ -362,6 +448,7 @@ def ver_tuple(v):
 
 
 def sync_payload(d):
+    _write_launcher_txt(d)   # 2026-10-12: 见 _write_launcher_txt —— 所有 return 分支之前都过这一道
     src = payload_src()
     ver_file = os.path.join(d, '.version')
     cur = ''

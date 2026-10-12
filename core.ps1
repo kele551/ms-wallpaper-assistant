@@ -94,6 +94,8 @@ function Test-BwDriveUsable([string]$root) {
   if (-not $root) { return $false }
   $r = $root.TrimEnd('\') + '\'
   if (Test-BwRootWritable $r) { return $true }
+  # 这是**老装机布局**盘根库目录(<盘>\微软壁纸助手), 老用户的目录还在原位、
+  # 探测按老名保留(2026-10-12 产品改名不动这个兼容点; 新版不再往盘根造这个目录)。
   return (Test-BwWritable (Join-Path $r '微软壁纸助手'))
 }
 # 盘根写不进去时的一次性修复。
@@ -514,6 +516,7 @@ function Get-BwConfig {
   if (Test-Path $global:CfgPath) { try { $c = Get-Content $global:CfgPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch {} }
   $d = Get-BwDefaults
   if (-not $c) {
+    $freshCfg = $true   # 2026-10-12: 标记"config.json 原本不存在"(给下面 bing_cap 定默认用)
     $c = New-Object PSObject
     Add-Member -InputObject $c NoteProperty bing_save_dir $d.bing -Force
     Add-Member -InputObject $c NoteProperty spotlight_save_dir $d.spotlight -Force
@@ -550,7 +553,10 @@ function Get-BwConfig {
   # 一天一张、4K 档一年就是约 1.4 GB, 几年攒成几个 GB 也没人管。
   # 默认跟图库上限一样 200 张; 超了同样把「已经看过的、最老的」移进回收站(能还原)。
   # 0 = 不限。想让它长期攒图就调大(菜单 [S] → [b])。
-  if (-not $c.PSObject.Properties['bing_cap']) { Add-Member -InputObject $c NoteProperty bing_cap 200 -Force }
+  # 2026-10-12 (审查 P1·用户拍板 A 案): **老用户**缺这个字段时补 0(不限) ——
+  # 原来一律补 200, 等于攒了几年必应存档的人在下一次换图时被**静默批量移进回收站**,
+  # 太惊吓。只有全新 config(这台机器第一次装)才默认 200; 老用户想省硬盘随时菜单 [S]→[b] 调小。
+  if (-not $c.PSObject.Properties['bing_cap']) { Add-Member -InputObject $c NoteProperty bing_cap $(if ($freshCfg) { 200 } else { 0 }) -Force }
   # ---- 聚焦源池的三道闸 (2026-10-09 用户要求: 别把 800+ 张的源池一次抽干) ----
   # fetch_round_cap : 单轮最多抓几张(硬上限; 想一次抓更多也不给, 源池要慢慢放)
   # fetch_day_cap   : 每天最多抓几张(跨菜单/后台/向导统一算, 换天归零)
@@ -596,7 +602,10 @@ function Get-BwConfig {
 # 一声不吭全没了。改成原子写之后, 最坏情况是"这一次没写进去", 旧文件一个字节都没被动过。
 # 返回 $true = 真的换成新的了; $false = 保持原样(原因已写进日志, 旧文件仍在)。
 function Save-BwTextAtomic([string]$path, [string]$text) {
-  $tmp = $path + '.tmp'
+  # 2026-10-12 (审查 P1): 临时文件名带上本进程 PID —— 菜单与守护进程并发写同一份
+  # state.json 时共用一个 .tmp 会互相覆盖、还互相删(校验不过的一方顺手把对方的 tmp 删了)。
+  # 恢复侧(Repair-BwDamagedState)同步改成按 '<名>*.tmp' 找最新的一份。
+  $tmp = $path + '.' + $PID + '.tmp'
   try {
     [System.IO.File]::WriteAllText($tmp, $text, (New-Object System.Text.UTF8Encoding($false)))
     # 写完先读回来比一遍再替换: 磁盘满/配额到顶会写出一个 0 字节的"成功"文件,
@@ -767,13 +776,30 @@ function Get-BwLocalScriptVer {
 }
 # 升级请求一律直连(不绕本机代理: 本机代理可能正是狐径, 而 Gitee 本来就直连更快)
 function Get-BwBytes([string]$url, [int]$timeoutSec = 20) {
+  # 2026-10-12 (审查 P1): 原来用 WebClient.DownloadData —— $timeoutSec 根本没接到任何超时设置上,
+  # 坏网口一次能挂满默认 100 秒, 三次重试叠加更久(后台巡检被一个死地址拖成好几分钟)。
+  # 换 HttpWebRequest 显式设 Timeout/ReadWriteTimeout。
+  # 顺带把 https 闸门做在总入口(审查 P1·安全): http:// 的下载地址一律拒绝 ——
+  # version.json 里哈希与文件同源, http 源被中间人劫持就能同时伪造两者。
+  if ($url -match '^http://') { Log ('下载: 拒绝 http:// 地址(只允许 https): ' + $url) 'WARN'; return $null }
+  $toMs = 20000
+  try { if ($timeoutSec -gt 0) { $toMs = $timeoutSec * 1000 } } catch {}
   for ($try = 1; $try -le 3; $try++) {
     try {
       [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-      $wc = New-Object System.Net.WebClient
-      $wc.Headers.Add('User-Agent', 'MSWallpaperAssistant')
-      $wc.Proxy = $null
-      return $wc.DownloadData($url)
+      $req = [System.Net.HttpWebRequest]::Create($url)
+      $req.UserAgent = 'MSWallpaperAssistant'
+      $req.Proxy = $null
+      $req.Timeout = $toMs
+      $req.ReadWriteTimeout = $toMs
+      $resp = $req.GetResponse()
+      try {
+        $stm = $resp.GetResponseStream()
+        $ms = New-Object System.IO.MemoryStream
+        $stm.CopyTo($ms)
+        try { $stm.Dispose() } catch {}
+        return $ms.ToArray()
+      } finally { try { $resp.Close() } catch {} }
     } catch {
       if ($try -ge 3) { return $null }
       Start-Sleep -Seconds 2
@@ -840,6 +866,8 @@ function Show-BwUpGradeFlow([string]$label, [int]$step, [int]$total, [int]$frame
 }
 # 下载 + 动画(异步下载, 一边下一边流动); 失败返回 $null
 function Get-BwBytesAnimated([string]$url, [int]$timeoutSec, [string]$label, [int]$step, [int]$total) {
+  # 2026-10-12 (审查 P1·安全): 同 Get-BwBytes 的 https 闸门。
+  if ($url -match '^http://') { Log ('下载: 拒绝 http:// 地址(只允许 https): ' + $url) 'WARN'; return $null }
   try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $wc = New-Object System.Net.WebClient
@@ -909,7 +937,8 @@ function Get-BwUpdateInfo {
   if ($cfgUrl) { Log ('升级源: 自定义地址与内置地址一起试(共 ' + $urls.Count + ' 个): ' + ($urls -join ' | ')) }
   foreach ($u in $urls) {
     $raw = ''
-    if ($u -match '^(https?)://') { $raw = Get-BwText $u }
+    if ($u -match '^https://') { $raw = Get-BwText $u }
+    elseif ($u -match '^http://') { Log ('升级源: 拒绝 http:// 地址(只允许 https): ' + $u) 'WARN' }
     elseif (Test-Path -LiteralPath $u) { try { $raw = Get-Content -LiteralPath $u -Raw -Encoding UTF8 } catch { $raw = '' } }
     if (-not $raw) { Log ('升级源: ' + $u + ' 没取到内容, 试下一个'); continue }
     try {
@@ -931,7 +960,8 @@ function Get-BwUpdateInfo {
 # ---- 主程序(exe)自动覆盖升级 ----
 # 用户 2026-09-22 明确要求:「自动升级, 自动覆盖」。
 # 正在运行的 exe 不能直接覆盖, 所以走这套: 自己先停 -> 小助手接管 -> 覆盖 -> 重新启动。
-#   1) 新 exe 先下到 <目录>\微软壁纸助手.exe.new 并校验 SHA256(对不上立刻放弃);
+#   1) 新 exe 先下到 <当前 exe 同目录>\<exe 名>.new 并校验 SHA256(对不上立刻放弃);
+#      (2026-10-12 改名: 覆盖是**原位替换、文件名不变** —— 老用户升上来还是老文件名, 新装是新文件名。)
 #   2) 写一个独立的 .cmd 小助手, 由它: 让旧程序 --stop -> 等进程真的消失 ->
 #      move /y .new 覆盖原 exe -> 启动新的 --daemon -> 删掉自己;
 #   3) 本进程只负责把 .new 放好、把小助手放出去, 之后与它无关。
@@ -1244,13 +1274,33 @@ if ($Animated) { Show-BwUpGradeStep 1 3 '连接升级源' $true ('升级源: ' +
   # 现在: 没被换的文件一个字节都不碰; 同名备份已存在就绝不覆盖; 每个脚本最多留 5 份。
   foreach ($it in $plan) {
     $dst = Join-Path $global:BWRoot $it.Name
-    [void](Backup-BwScriptForUpdate $dst $local)
+    $bak = Backup-BwScriptForUpdate $dst $local
+    # 2026-10-12 (审查 P1): 直接 WriteAllBytes 盖目标文件不是原子操作 —— 写到一半
+    # 断电/被杀, 半截 core.ps1 会**永远留在数据目录里**(launcher 按 .version 判定
+    # "已就位"就不再重拉), 等于砖化。改成: 临时文件 → 读回验 sha → 原子替换 →
+    # 替换后再验一遍; 中途失败且有本次备份时, 用备份把目标恢复回旧版。
+    $tmpU = $dst + '.' + $PID + '.updatetmp'
     try {
-      [System.IO.File]::WriteAllBytes($dst, $it.Bytes)
+      [System.IO.File]::WriteAllBytes($tmpU, $it.Bytes)
+      $back = [System.IO.File]::ReadAllBytes($tmpU)
+      if ($back.Length -ne $it.Bytes.Length -or (Get-BwSha256Hex $back) -ne $it.Sha) { throw '临时文件读回校验不一致' }
+      if (Test-Path -LiteralPath $dst) { [System.IO.File]::Replace($tmpU, $dst, [NullString]::Value) }
+      else { [System.IO.File]::Move($tmpU, $dst) }
+      $fin = [System.IO.File]::ReadAllBytes($dst)
+      if ((Get-BwSha256Hex $fin) -ne $it.Sha) { throw '替换后读回校验不一致' }
       Log ('升级: ' + $it.Name + ' 已更新 (' + $it.Bytes.Length + ' 字节, sha256=' + $it.Sha.Substring(0,16) + ')')
     } catch {
-      Log ('升级失败: 写 ' + $it.Name + ' 出错: ' + $_.Exception.Message)
+      Log ('升级失败: 写 ' + $it.Name + ' 出错: ' + $_.Exception.Message + ' (保持旧版)')
       if (-not $Quiet) { Write-Host ('  写 ' + $it.Name + ' 失败: ' + $_.Exception.Message) -ForegroundColor Red }
+      try { if (Test-Path -LiteralPath $tmpU) { [System.IO.File]::Delete($tmpU) } } catch {}
+      try {
+        $curSha = ''
+        if (Test-Path -LiteralPath $dst) { $curSha = Get-BwSha256Hex ([System.IO.File]::ReadAllBytes($dst)) }
+        if ($curSha -and $curSha -ne $it.Sha -and $bak -and (Test-Path -LiteralPath $bak)) {
+          Copy-Item -LiteralPath $bak -Destination $dst -Force
+          Log ('升级: 已用本机备份 ' + (Split-Path $bak -Leaf) + ' 恢复 ' + $it.Name)
+        }
+      } catch {}
       return $false
     }
   }
@@ -1295,7 +1345,15 @@ function Read-BwJsonState([string]$path) {
 # 返回救回来的对象; 救不回来返回 $null(调用方按"新装"处理, 但用户已被明确告知)。
 function Repair-BwDamagedState([string]$why) {
   $note = '换图进度文件(state.json)读不出来: ' + $why
-  $tmp = $global:BWState + '.tmp'
+  # 2026-10-12: 原子写的临时文件名带 PID(见 Save-BwTextAtomic), 这里按
+  # "state.json*.tmp" 找**最新**的一份; 老的固定名 .tmp 也照样被这个通配捞到。
+  $tmp = ''
+  try {
+    $tdir = Split-Path $global:BWState -Parent
+    $tleaf = Split-Path $global:BWState -Leaf
+    $tcand = @(Get-ChildItem -LiteralPath $tdir -File -Filter ($tleaf + '*.tmp') -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
+    if ($tcand.Count -gt 0) { $tmp = [string]$tcand[0].FullName }
+  } catch {}
   # 留档名要保证唯一: 同一秒里损坏两次(测试里就是这么撞上的)时, 重名会让
   # File.Move 直接失败 —— 那就等于"证据留不下来", 跟静默重置一样糟。
   $baseKeep = $global:BWState + '.corrupt-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
@@ -1304,7 +1362,7 @@ function Repair-BwDamagedState([string]$why) {
   while (Test-Path -LiteralPath $keep) { $kn++; $keep = $baseKeep + '-' + $kn }
   $obj = $null
   # 1) 先看原子写留下的临时文件: 写入被打断时, 完整的新内容往往就在它里面
-  if (Test-Path -LiteralPath $tmp) {
+  if ($tmp -and (Test-Path -LiteralPath $tmp)) {
     $r = Read-BwJsonState $tmp
     if ($r.Ok) { $obj = $r.Value }
   }
@@ -3295,7 +3353,7 @@ function Get-BwFreshQueue($s) {
         $ageTxt = '最早 ' + $oldest + ' 天前看过'
         if ($oldest -lt 0) { $ageTxt = '都没有时间戳' }
         elseif ($unknown -gt 0) { $ageTxt = $ageTxt + '; 另 ' + $unknown + ' 张没有时间戳(按文件名里的日期从早到晚)' }
-        Log ('重洗队列: 未看过的只剩 ' + $fresh.Count + ' 张(<' + $global:BWRecycleBelow + ') -> 进入老图循环, 回收 ' + $oldPart.Count + ' 张老图(' + $ageTxt + ', 间隔 >=' + $minDays2 + ' 天)')
+        Log ('轮换队列: 按"最旧优先"共排 ' + ($fresh.Count + $oldPart.Count) + ' 张(没看过 ' + $fresh.Count + ' 张, 老图 ' + $oldPart.Count + ' 张: ' + $ageTxt + ', 间隔 >=' + $minDays2 + ' 天)')
       } elseif ($fresh.Count -eq 0) {
         # 库里的图全都看过、而且一张都还没到回收间隔: 退回老办法 —— 历史清零重来一轮,
         # 但留最近 20 条, 免得刚看完那张翻个身又排到队首。
@@ -3345,7 +3403,16 @@ function Get-BwFreshQueue($s) {
     # 2026-10-10 晚·用户要求"永远按最旧优先": 没看过的与看过的放进**同一个**排序,
     # 不再"没看过的先洗牌、老图另排一段"。没看过的没有时间戳, Get-BwOldestFirst 会把它们
     # 当成"最老"排在最前(内部按文件名里的日期从早到晚), 看过的按上次看过时间从早到晚跟在后面。
-    return @(Get-BwOldestFirst $s (@($freshPart) + @($oldPart)) $now2)
+    # 【2026-10-12 修·P0】freshPart/oldPart 是在上面外来图过滤(再往下 40 行)
+    # 之前就定型的; 直接返回会**绕过过滤** —— 做了记号的外来图(用户自己丢进
+    # 图库的照片)照样被定时换到桌面上。这里对最终队列补一道同样的过滤:
+    # 挑掉有记号的; 万一全被挑光, 就照常用(总得有图可换, 口径与上面一致)。
+    $pool = @(@($freshPart) + @($oldPart))
+    if ($mark -and $mark.Count -gt 0) {
+      $keep = @($pool | Where-Object { -not $mark.ContainsKey((Get-BwNameKey $_)) })
+      if ($keep.Count -gt 0) { $pool = $keep }
+    }
+    return @(Get-BwOldestFirst $s $pool $now2)
   }
   if ($oldestFirst) {
     # 「历史清零重来」那条分支: 整库按"最早看过"优先排, 不走洗牌
@@ -3916,6 +3983,8 @@ function Read-BwImageMeta([string]$path) {
         $n = $len - 2
         if ($n -gt 2 -and ($i + 4 + $n) -le $b.Length) {
           $s = [System.Text.Encoding]::UTF8.GetString($b, $i + 4, $n)
+    # 写入侧标记一直是「桌面壁纸」; 「微软壁纸助手」是**更早年代图片**里的历史标记 ——
+    # 2026-10-12 产品改名后这个匹配**必须永久保留**, 否则老图的内嵌元数据全部读不回。
     if ($s.StartsWith('{') -and (($s.Contains('桌面壁纸')) -or ($s.Contains('微软壁纸助手')))) {
             $o = $s | ConvertFrom-Json
             return @{
@@ -4758,6 +4827,21 @@ function Write-BwHeartbeat {
 # 聚焦的"不重复"靠 queue: 库里所有图洗一次牌按顺序发, 发完自动再下载 6 张重洗一轮。
 # 必应只在"每天第一次"出现, 所以手动换的壁纸不会被必应抢回去。
 function Invoke-BwCycle {
+  # 2026-10-12 (审查 P1): 跨实例锁。计划任务(开机+周期)与菜单/守护并发进来时,
+  # 两个进程按同一份 last_swap 各自判定"到点了"、各换一张 -> 连跳两张、
+  # history 重复记账、两份进程快照互相整份覆盖。锁 15 分钟自动过期,
+  # 进程崩了不会把轮换永久卡死(照 backfill.lock 的做法)。试运行不碰锁(守 H-8 零副作用)。
+  $cycLock = Join-Path $global:BWRoot 'cycle.lock'
+  $lkVal = ''
+  if (-not $global:BWDry) {
+    if (Test-Path -LiteralPath $cycLock) {
+      $lkAge = 999.0
+      try { $lkAge = ((Get-Date) - (Get-Item -LiteralPath $cycLock).LastWriteTime).TotalMinutes } catch {}
+      if ($lkAge -lt 15) { Log ('轮换: 已有一次轮换在进行(锁龄 ' + [int]$lkAge + ' 分钟), 本次跳过'); return }
+    }
+    $lkVal = (Get-Date -Format 'o')
+    try { [System.IO.File]::WriteAllText($cycLock, $lkVal, (New-Object System.Text.UTF8Encoding($false))) } catch {}
+  }
   # 每天顺带看一次有没有新版脚本: 只换脚本、不需要管理员权限。
   # 整段包在 try 里 —— 升级出任何问题都不许影响换壁纸。
   try {
@@ -4871,6 +4955,15 @@ function Invoke-BwCycle {
     Save-BwStateKeepFav $s
   } catch { Log ('轮换异常: ' + $_.Exception.Message) }
   finally {
+    # 2026-10-12: 释放轮换锁 —— 只删自己写的那一份(内容对得上才删),
+    # 免得锁被判定过期后由新持有者接管、旧持有者反而把人家的锁删了。
+    if (-not $global:BWDry -and $lkVal) {
+      try {
+        if ((Test-Path -LiteralPath $cycLock) -and ((Get-Content -LiteralPath $cycLock -Raw -ErrorAction SilentlyContinue) -eq $lkVal)) {
+          [System.IO.File]::Delete($cycLock)
+        }
+      } catch {}
+    }
     # 每轮都留一行心跳 —— 正常结束、异常、以及三条规则里提前 return 的路径
     # 都会走到 finally, 所以日志里"有没有这行"本身就能判断它是否还活着。
     Write-BwHeartbeat

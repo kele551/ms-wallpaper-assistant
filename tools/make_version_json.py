@@ -16,7 +16,9 @@ def sha256(p):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--exe', default=os.path.join(REPO, '微软壁纸助手.exe'))
+    # 2026-10-12 改名: 成品/附件都叫 壁纸助手.exe (老名「微软壁纸助手.exe」是历史附件名,
+    # 只存在于旧发行页; version.json 指向必须与本次上传的附件名一字不差, 否则全体老用户 404)
+    ap.add_argument('--exe', default=os.path.join(REPO, '壁纸助手.exe'))
     ap.add_argument('--out', default=os.path.join(REPO, 'version.json'))
     a = ap.parse_args()
     with io.open(os.path.join(REPO, 'launcher.py'), encoding='utf-8') as f:
@@ -31,7 +33,7 @@ def main():
             'core.ps1': {'sha256': sha256(os.path.join(REPO, 'core.ps1')), 'url': raw + 'core.ps1'},
             'menu.ps1': {'sha256': sha256(os.path.join(REPO, 'menu.ps1')), 'url': raw + 'menu.ps1'},
         },
-        'launcher': {'sha256': sha256(a.exe), 'url': rel + '微软壁纸助手.exe',
+        'launcher': {'sha256': sha256(a.exe), 'url': rel + '壁纸助手.exe',
                      'size': os.path.getsize(a.exe)},
     }
     with io.open(a.out, 'w', encoding='utf-8', newline='') as f:

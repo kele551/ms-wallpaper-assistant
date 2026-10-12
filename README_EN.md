@@ -46,7 +46,7 @@ images stay on your own machine.
 - GitHub Releases: <https://github.com/kele551/ms-wallpaper-assistant/releases>
 - Gitee Releases (main, China): <https://gitee.com/kele551/ms-wallpaper-assistant/releases>
 
-Unzip the archive and double-click `微软壁纸助手.exe` (Windows 10/11 x64). The UI is a
+Unzip the archive and double-click `壁纸助手.exe` (Windows 10/11 x64; installs from before the 2026-10-12 rename keep the old file name — same program). The UI is a
 console menu in Chinese; press `Q` to quit, `B` to toggle automatic rotation.
 Version: right-click the exe → Properties → Details.
 
@@ -56,7 +56,7 @@ The executable is built entirely from the source code in this repository, with P
 
 ```powershell
 pip install "pyinstaller==6.22.3"
-python build-exe.py --release      # produces 微软壁纸助手.exe
+python build-exe.py --release      # produces 壁纸助手.exe
 ```
 
 Entry point: `launcher.py`; bundled payload: `core.ps1`, `menu.ps1`, `使用说明.txt`, icon.
@@ -70,7 +70,7 @@ Antivirus heuristic engines can therefore report a **false positive** (Kaspersky
 You can verify the file yourself against the SHA256 published on the release page:
 
 ```powershell
-certutil -hashfile 微软壁纸助手.exe SHA256
+certutil -hashfile 壁纸助手.exe SHA256
 ```
 
 The full source code is public and reviewable, and the program contains no malicious

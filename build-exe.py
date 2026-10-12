@@ -15,16 +15,16 @@
 
 产物
 ----
-    微软壁纸助手.exe       固定名字, 日常就用这一份。
+    壁纸助手.exe          固定名字, 日常就用这一份。
                           「开机自动换壁纸」和桌面快捷方式都指向这个名字,
                           以后升级直接同名覆盖, 链接不会断。
 
-    微软壁纸助手-vX.Y.Z.exe  只有加 --release 时才生成。名字带版本号,
+    壁纸助手-vX.Y.Z.exe    只有加 --release 时才生成。名字带版本号,
                              是往 GitHub Release 上传用的那一份。
                              (平时不生成, 免得目录里摆两个看不出该点哪个。)
 
     --release 还会打一个发给客户的 zip (名字纯 ASCII, GitHub 不会因为中文
-    把文件名剥掉), 里面就两样: 微软壁纸助手.exe + 使用说明.txt。
+    把文件名剥掉), 里面就两样: 壁纸助手.exe + 使用说明.txt。
     客户下载下来解压, 双击 exe 就能用 —— 不用挑, 不用装, 不用管别的。
 """
 import os
@@ -36,9 +36,11 @@ import tempfile
 import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-APP_NAME = '微软壁纸助手'
-PAYLOAD_FILES = ['core.ps1', 'menu.ps1', '使用说明.txt', '微软壁纸助手.ico']
-ICON = '微软壁纸助手.ico'
+# 2026-10-12 产品改名: 「微软壁纸助手」->「壁纸助手」(去商标前缀)。
+# InternalName/zip 的 ASCII 名(MSWallpaperAssistant)与仓库名不动 —— 那是对外的稳定标识。
+APP_NAME = '壁纸助手'
+PAYLOAD_FILES = ['core.ps1', 'menu.ps1', '使用说明.txt', '壁纸助手.ico']
+ICON = '壁纸助手.ico'
 
 
 def read_version():
@@ -76,7 +78,7 @@ VSVersionInfo(
           StringStruct('FileVersion', '{v}'),
           StringStruct('InternalName', 'MSWallpaperAssistant'),
           StringStruct('LegalCopyright', 'Copyright (C) 2026 HaiFeng (kele551)'),
-          StringStruct('OriginalFilename', '微软壁纸助手.exe'),
+          StringStruct('OriginalFilename', '壁纸助手.exe'),
           StringStruct('ProductName', '桌面壁纸'),
           StringStruct('ProductVersion', '{v}'),
         StringStruct('Comments', 'gitee.com/kele551/ms-wallpaper-assistant')
