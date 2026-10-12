@@ -5,34 +5,45 @@
 
 <p><a href="README.md">简体中文</a> | English</p>
 
+<a href="https://github.com/kele551/ms-wallpaper-assistant/releases" title="Download"><img alt="Downloads" src="https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?style=flat-square&label=Downloads&color=brightgreen" height="30"></a>
+
 <a href="https://github.com/kele551/ms-wallpaper-assistant/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
 <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square">
 <a href="https://github.com/kele551/ms-wallpaper-assistant/releases"><img alt="Release" src="https://img.shields.io/github/v/release/kele551/ms-wallpaper-assistant?style=flat-square&label=release&color=blue"></a>
-<img alt="Release Date" src="https://img.shields.io/github/release-date/kele551/ms-wallpaper-assistant?style=flat-square&label=release%20date&color=blueviolet">
-<a href="https://github.com/kele551/ms-wallpaper-assistant/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?style=flat-square&label=downloads&color=green"></a>
+<img alt="Last Commit" src="https://img.shields.io/github/last-commit/kele551/ms-wallpaper-assistant?style=flat-square&label=last%20commit&color=blue">
 
 <a href="https://github.com/kele551/ms-wallpaper-assistant/stargazers"><img alt="GitHub Star" src="https://img.shields.io/github/stars/kele551/ms-wallpaper-assistant?style=flat-square&logo=github&label=GitHub%20Star&color=gold"></a>
 <a href="https://gitee.com/kele551/ms-wallpaper-assistant"><img alt="Gitee Star" src="https://gitee.com/kele551/ms-wallpaper-assistant/badge/star.svg"></a>
 <a href="https://github.com/kele551/ms-wallpaper-assistant/network/members"><img alt="GitHub Fork" src="https://img.shields.io/github/forks/kele551/ms-wallpaper-assistant?style=flat-square&label=GitHub%20Fork&color=blue"></a>
-<a href="https://github.com/kele551/ms-wallpaper-assistant/issues"><img alt="Issues" src="https://img.shields.io/github/issues/kele551/ms-wallpaper-assistant?style=flat-square&label=issues"></a>
-<img alt="Issues Closed" src="https://img.shields.io/github/issues-closed/kele551/ms-wallpaper-assistant?style=flat-square&label=resolved">
-<a href="https://github.com/kele551"><img alt="Follow Author" src="https://img.shields.io/github/followers/kele551?style=flat-square&logo=github&label=follow%20author"></a>
-
-<img alt="Last Commit" src="https://img.shields.io/github/last-commit/kele551/ms-wallpaper-assistant?style=flat-square&label=last%20commit&color=blue">
-<img alt="Commit Activity" src="https://img.shields.io/github/commit-activity/y/kele551/ms-wallpaper-assistant?style=flat-square&label=commits%2Fyear&color=blue">
-<img alt="Contributors" src="https://img.shields.io/github/contributors/kele551/ms-wallpaper-assistant?style=flat-square&label=contributors&color=blue">
-<img alt="Language" src="https://img.shields.io/github/languages/top/kele551/ms-wallpaper-assistant?style=flat-square">
-<img alt="Code Size" src="https://img.shields.io/github/languages/code-size/kele551/ms-wallpaper-assistant?style=flat-square&label=code%20size">
-<a href="https://github.com/kele551/ms-wallpaper-assistant/blob/main/CONTRIBUTING.md"><img alt="PRs Welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square"></a>
+<a href="https://github.com/kele551"><img alt="Follow Author" src="https://img.shields.io/github/followers/kele551?style=flat-square&logo=github&label=follow%20author&color=blue"></a>
 
 <img alt="No Admin" src="https://img.shields.io/badge/admin%20rights-not%20needed-brightgreen?style=flat-square">
 <img alt="Portable" src="https://img.shields.io/badge/install-portable-green?style=flat-square">
-<img alt="Local Only" src="https://img.shields.io/badge/images-local%20only-brightgreen?style=flat-square">
+<img alt="Local Only" src="https://img.shields.io/badge/images-stay%20local-brightgreen?style=flat-square">
 <img alt="4K" src="https://img.shields.io/badge/quality-4K-blue?style=flat-square">
-<a href="https://www.bilibili.com/video/BV1Tupx6kEBe"><img alt="Bilibili Demo" src="https://img.shields.io/badge/demo-video-00a1d6?style=flat-square&logo=bilibili&logoColor=white"></a>
-<a href="https://github.com/kele551/ms-wallpaper-assistant/issues"><img alt="Feedback" src="https://img.shields.io/badge/feedback-issues%20welcome-orange?style=flat-square"></a>
+
+<a href="https://gitee.com/kele551/ms-wallpaper-assistant/releases"><img alt="Download from Gitee" src="https://img.shields.io/badge/%F0%9F%93%A5_Download-Gitee_primary-c71d24?style=flat-square&logo=gitee&logoColor=white&labelColor=3d4552"></a>
+<a href="https://github.com/kele551/ms-wallpaper-assistant"><img alt="GitHub mirror" src="https://img.shields.io/badge/%F0%9F%90%99_Source-GitHub_mirror-24292f?style=flat-square&logo=github&logoColor=white&labelColor=3d4552"></a>
+<a href="https://www.bilibili.com/video/BV1Tupx6kEBe"><img alt="Bilibili demo" src="https://img.shields.io/badge/%F0%9F%93%BA_Demo-Bilibili_video-00a1d6?style=flat-square&logo=bilibili&logoColor=white&labelColor=3d4552"></a>
+<a href="https://github.com/kele551/ms-wallpaper-assistant/issues"><img alt="Issues" src="https://img.shields.io/badge/%F0%9F%90%9E_Feedback-Issues_welcome-0969da?style=flat-square&labelColor=3d4552"></a>
 
 </div>
+
+<details>
+<summary>📊 <b>Repository stats</b> (click to expand)</summary>
+
+<p align="center">
+<img alt="Release Date" src="https://img.shields.io/github/release-date/kele551/ms-wallpaper-assistant?style=flat-square&label=release%20date">
+<img alt="Commit Activity" src="https://img.shields.io/github/commit-activity/y/kele551/ms-wallpaper-assistant?style=flat-square&label=commits%2Fyear">
+<img alt="Contributors" src="https://img.shields.io/github/contributors/kele551/ms-wallpaper-assistant?style=flat-square&label=contributors">
+<a href="https://github.com/kele551/ms-wallpaper-assistant/issues"><img alt="Issues" src="https://img.shields.io/github/issues/kele551/ms-wallpaper-assistant?style=flat-square&label=issues"></a>
+<img alt="Resolved" src="https://img.shields.io/github/issues-closed/kele551/ms-wallpaper-assistant?style=flat-square&label=resolved">
+<img alt="Language" src="https://img.shields.io/github/languages/top/kele551/ms-wallpaper-assistant?style=flat-square">
+<img alt="Code Size" src="https://img.shields.io/github/languages/code-size/kele551/ms-wallpaper-assistant?style=flat-square&label=code%20size">
+<a href="https://github.com/kele551/ms-wallpaper-assistant/blob/main/CONTRIBUTING.md"><img alt="PRs Welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square"></a>
+</p>
+
+</details>
 
 **Auto-rotating desktop wallpapers from Bing and Windows Spotlight.**
 
