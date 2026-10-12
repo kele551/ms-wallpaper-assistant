@@ -4,10 +4,33 @@
 <h1>桌面壁纸</h1>
 
 <p>简体中文 | <a href="README_EN.md">English</a></p>
-<img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square">
+<a href="https://github.com/kele551/ms-wallpaper-assistant/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
 <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square">
-<img alt="Version" src="https://img.shields.io/badge/version-v2.2.1-blue?style=flat-square">
-<img alt="Downloads" src="https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?style=flat-square&label=downloads&color=green">
+<a href="https://github.com/kele551/ms-wallpaper-assistant/releases"><img alt="Release" src="https://img.shields.io/github/v/release/kele551/ms-wallpaper-assistant?style=flat-square&label=release&color=blue"></a>
+<img alt="Release Date" src="https://img.shields.io/github/release-date/kele551/ms-wallpaper-assistant?style=flat-square&label=release%20date&color=blueviolet">
+<a href="https://github.com/kele551/ms-wallpaper-assistant/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?style=flat-square&label=downloads&color=green"></a>
+
+<a href="https://github.com/kele551/ms-wallpaper-assistant/stargazers"><img alt="GitHub Star" src="https://img.shields.io/github/stars/kele551/ms-wallpaper-assistant?style=flat-square&logo=github&label=GitHub%20Star&color=gold"></a>
+<a href="https://gitee.com/kele551/ms-wallpaper-assistant"><img alt="Gitee Star" src="https://gitee.com/kele551/ms-wallpaper-assistant/badge/star.svg"></a>
+<a href="https://github.com/kele551/ms-wallpaper-assistant/network/members"><img alt="GitHub Fork" src="https://img.shields.io/github/forks/kele551/ms-wallpaper-assistant?style=flat-square&label=GitHub%20Fork&color=blue"></a>
+<a href="https://gitee.com/kele551/ms-wallpaper-assistant"><img alt="Gitee Fork" src="https://gitee.com/kele551/ms-wallpaper-assistant/badge/fork.svg"></a>
+<a href="https://github.com/kele551/ms-wallpaper-assistant/issues"><img alt="Issues" src="https://img.shields.io/github/issues/kele551/ms-wallpaper-assistant?style=flat-square&label=issues"></a>
+<img alt="Issues Closed" src="https://img.shields.io/github/issues-closed/kele551/ms-wallpaper-assistant?style=flat-square&label=resolved">
+<a href="https://github.com/kele551"><img alt="Follow Author" src="https://img.shields.io/github/followers/kele551?style=flat-square&logo=github&label=follow%20author"></a>
+
+<img alt="Last Commit" src="https://img.shields.io/github/last-commit/kele551/ms-wallpaper-assistant?style=flat-square&label=last%20commit&color=blue">
+<img alt="Commit Activity" src="https://img.shields.io/github/commit-activity/y/kele551/ms-wallpaper-assistant?style=flat-square&label=commits%2Fyear&color=blue">
+<img alt="Contributors" src="https://img.shields.io/github/contributors/kele551/ms-wallpaper-assistant?style=flat-square&label=contributors&color=blue">
+<img alt="Language" src="https://img.shields.io/github/languages/top/kele551/ms-wallpaper-assistant?style=flat-square">
+<img alt="Code Size" src="https://img.shields.io/github/languages/code-size/kele551/ms-wallpaper-assistant?style=flat-square&label=code%20size">
+<a href="https://github.com/kele551/ms-wallpaper-assistant/blob/main/CONTRIBUTING.md"><img alt="PRs Welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square"></a>
+
+<img alt="No Admin" src="https://img.shields.io/badge/管理员权限-不需要-brightgreen?style=flat-square">
+<img alt="No Install" src="https://img.shields.io/badge/安装-免安装-green?style=flat-square">
+<img alt="Local Only" src="https://img.shields.io/badge/图片-只存本机-brightgreen?style=flat-square">
+<img alt="4K" src="https://img.shields.io/badge/画质-4K-blue?style=flat-square">
+<a href="https://www.bilibili.com/video/BV1Tupx6kEBe"><img alt="Bilibili Demo" src="https://img.shields.io/badge/B站-演示视频-00a1d6?style=flat-square&logo=bilibili&logoColor=white"></a>
+<a href="https://github.com/kele551/ms-wallpaper-assistant/issues"><img alt="Feedback" src="https://img.shields.io/badge/反馈-欢迎提Issue-orange?style=flat-square"></a>
 
 <p>🖼 <b>让电脑桌面壁纸自己换，你不用管</b>　——　必应每日一图 + Windows 聚焦，4K 自动轮换</p>
 
