@@ -1,3 +1,5 @@
+![浏览量](https://count.getloli.com/get/@gitee-kele551-ms-wallpaper-assistant)
+
 ﻿<div align="center">
 <img src="docs/icon.png" alt="桌面壁纸" height="120" width="120">
 
