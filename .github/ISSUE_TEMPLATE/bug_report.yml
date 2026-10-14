@@ -10,7 +10,7 @@ body:
 
         - **先看常见问题**：README 的「常见问题」一节与 `使用说明.txt` 里已经写过大部分"看着像坏了、其实是设置问题"的情况。
         - **日志最有价值**：菜单按 `[L]` 能看到 `wallpaper.log`，把**末尾十几行**贴上来就够了（里面没有隐私信息）。
-        - **安全类问题不要发在这里**：如果你怀疑是安全漏洞，请按 [SECURITY.md](../blob/main/SECURITY.md) 私下报告。
+        - **安全类问题不要发在这里**：如果你怀疑是安全漏洞，请按 [SECURITY.md](https://github.com/kele551/ms-wallpaper-assistant/blob/main/.github/SECURITY.md) 私下报告。
 
   - type: input
     id: version
