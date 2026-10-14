@@ -29,11 +29,11 @@
 
 <img src="https://count.getloli.com/get/@gitee-kele551-wallpaper?theme=normal-1" alt="浏览量" height="36">
 
-<p>🖼 <b>让电脑桌面壁纸自己换，你不用管</b>　——　必应每日一图 + Windows 聚焦，4K 自动轮换</p>
+<p>🖼 <b>让电脑桌面壁纸自己换，你不用管</b>　·　必应每日一图 + Windows 聚焦</p>
 
 <p><sub>2026-10-12 产品更名：「微软壁纸助手」→「壁纸助手」（仓库名与下载地址不变；界面显示名一直是「桌面壁纸」）</sub></p>
 
-<p>作者 <b>海风（kele551）</b>　·　Gitee（主）<a href="https://gitee.com/kele551/ms-wallpaper-assistant">kele551/ms-wallpaper-assistant</a>　·　GitHub（镜像）<a href="https://github.com/kele551/ms-wallpaper-assistant">kele551/ms-wallpaper-assistant</a></p>
+<p>作者 <b>海风（kele551）</b>　·　<a href="https://gitee.com/kele551/ms-wallpaper-assistant">Gitee（主）</a>　·　<a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub（镜像）</a></p>
 </div>
 
 <details>
