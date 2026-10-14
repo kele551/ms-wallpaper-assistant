@@ -27,7 +27,7 @@
 <a href="https://github.com/kele551/ms-wallpaper-assistant/issues"><img alt="Issues" src="https://img.shields.io/badge/%F0%9F%90%9E_%E5%8F%8D%E9%A6%88-%E6%8F%90Issue-0969da?style=flat-square&labelColor=3d4552"></a>
 <a href="#sponsor"><img alt="Sponsor" src="https://img.shields.io/badge/%E2%98%95_%E8%B5%9E%E8%B5%8F-%E8%AF%B7%E5%96%9D%E5%92%96%E5%95%A1-ff69b4?style=flat-square&labelColor=3d4552"></a>
 
-<img src="https://count.getloli.com/get/@gitee-kele551-wallpaper?theme=normal-1" alt="浏览量">
+<img src="https://count.getloli.com/get/@gitee-kele551-wallpaper?theme=normal-1" alt="浏览量" height="36">
 
 <p>🖼 <b>让电脑桌面壁纸自己换，你不用管</b>　——　必应每日一图 + Windows 聚焦，4K 自动轮换</p>
 
