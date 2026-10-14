@@ -27,7 +27,7 @@ python build-exe.py --release
 - [ ] **没有整文件重写行尾**：仓库文本文件是 **LF**，我的编辑器没把它变成 CRLF（`git diff --stat` 不应出现"整个文件都变了"）
 - [ ] 没把私人邮箱、令牌、口令写进任何文件（对外文档里反馈入口一律用 Issues 链接）
 - [ ] 没改动 `version.json` 的版本号/指纹，除非这就是一次发版（发版由维护者按 `tools/publish.py release` 流程走）
-- [ ] 对外文案没有用禁用词，改用中性技术表述（清单见 [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md)）
+- [ ] 对外文案没有用禁用词，改用中性技术表述（清单见 [CONTRIBUTING.md](CONTRIBUTING.md)）
 - [ ] 改了行为的话，README 的「常见问题」或《使用说明》对应段落一起改了 —— 文档与实现不能各说各话
 - [ ] 没有新增第三方运行时依赖（本项目坚持：主程序只用标准库；打包只额外需要 pyinstaller）
 
