@@ -25,6 +25,7 @@
 <a href="https://github.com/kele551/ms-wallpaper-assistant"><img alt="GitHub mirror" src="https://img.shields.io/badge/%F0%9F%90%99_%E6%BA%90%E7%A0%81-GitHub%E9%95%9C%E5%83%8F-24292f?style=flat-square&logo=github&logoColor=white&labelColor=3d4552"></a>
 <a href="https://www.bilibili.com/video/BV1Tupx6kEBe"><img alt="Bilibili demo" src="https://img.shields.io/badge/%F0%9F%93%BA_%E6%BC%94%E7%A4%BA-B%E7%AB%99%E8%A7%86%E9%A2%91-00a1d6?style=flat-square&logo=bilibili&logoColor=white&labelColor=3d4552"></a>
 <a href="https://github.com/kele551/ms-wallpaper-assistant/issues"><img alt="Issues" src="https://img.shields.io/badge/%F0%9F%90%9E_%E5%8F%8D%E9%A6%88-%E6%8F%90Issue-0969da?style=flat-square&labelColor=3d4552"></a>
+<a href="#sponsor"><img alt="Sponsor" src="https://img.shields.io/badge/%E2%98%95_%E8%B5%9E%E8%B5%8F-%E8%AF%B7%E5%96%9D%E5%92%96%E5%95%A1-ff69b4?style=flat-square&labelColor=3d4552"></a>
 
 <img src="https://count.getloli.com/get/@gitee-kele551-wallpaper?theme=normal-1" alt="浏览量">
 
@@ -443,6 +444,8 @@ MIT（见 [LICENSE](LICENSE)）。
 | 发布纪律 | 发版前必须跑发版前自检并全绿（版本一致性、成品与升级源同源、`.ps1` 的 BOM 与语法、对外文档不含私人邮箱），红一条不许发 |
 
 ---
+
+<a id="sponsor"></a>
 
 ## ♥️ 支持项目
 
