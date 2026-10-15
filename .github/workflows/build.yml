@@ -72,7 +72,7 @@ jobs:
           $vj = Get-Content -Raw version.json | ConvertFrom-Json
           Write-Host ("version.json = " + $vj.version)
           "version.json = $($vj.version)" | Add-Content -Encoding utf8 dist-staging\SHA256SUMS.txt
-          $exe = Get-Item '微软壁纸助手.exe'
+          $exe = Get-Item '壁纸助手.exe'
           Write-Host ("exe 文件版本 = " + $exe.VersionInfo.FileVersion)
           Write-Host ("exe 大小     = " + $exe.Length + " B")
 
@@ -84,7 +84,7 @@ jobs:
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
-          name: 微软壁纸助手-build-${{ github.sha }}
+          name: 壁纸助手-build-${{ github.sha }}
           path: dist-staging/
           if-no-files-found: error
           retention-days: 30
