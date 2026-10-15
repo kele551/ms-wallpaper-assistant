@@ -3,7 +3,6 @@
 
 <h1>桌面壁纸</h1>
 
-<p>简体中文 | <a href="docs/README_EN.md">English</a></p>
 <a href="https://github.com/kele551/ms-wallpaper-assistant/releases" title="点击去下载"><img alt="Downloads" src="https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?style=flat-square&label=GitHub%E4%B8%8B%E8%BD%BD&color=brightgreen" height="30"></a>
 <a href="https://gitee.com/kele551/ms-wallpaper-assistant/access" title="Gitee 仓库访问统计 · 实时计数"><img alt="Gitee 访问" src="https://hits.sh/gitee.com/kele551/ms-wallpaper-assistant.svg?label=Gitee%E8%AE%BF%E9%97%AE&color=c71d24&style=flat-square" height="30"></a>
 
@@ -18,7 +17,6 @@
 <a href="https://github.com/kele551"><img alt="Follow Author" src="https://img.shields.io/github/followers/kele551?style=flat-square&logo=github&label=follow%20author&color=blue"></a>
 
 <img alt="No Admin" src="https://img.shields.io/badge/管理员权限-不需要-brightgreen?style=flat-square">
-<img alt="No Install" src="https://img.shields.io/badge/安装-免安装-green?style=flat-square">
 <img alt="Local Only" src="https://img.shields.io/badge/图片-只存本机-brightgreen?style=flat-square">
 <img alt="4K" src="https://img.shields.io/badge/画质-4K-blue?style=flat-square">
 
@@ -32,7 +30,7 @@
 
 <p><sub>2026-10-12 产品更名：「微软壁纸助手」→「壁纸助手」（仓库名与下载地址不变；界面显示名一直是「桌面壁纸」）</sub></p>
 
-<p>作者 <b>海风（kele551）</b>　·　<a href="https://gitee.com/kele551/ms-wallpaper-assistant">Gitee（主）</a>　·　<a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub（镜像）</a></p>
+<p>作者 <b>海风（kele551）</b>　·　<a href="https://gitee.com/kele551/ms-wallpaper-assistant">Gitee（主）</a>　·　<a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub（镜像）</a>　·　<a href="docs/README_EN.md">English</a></p>
 </div>
 
 <details>
