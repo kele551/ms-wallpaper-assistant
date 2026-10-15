@@ -10,6 +10,7 @@ daemon.stop
 
 # 打包产物 (两份: 固定名 + 带版本号的那份)
 微软壁纸助手.exe
+壁纸助手.exe
 微软壁纸助手-v*.exe
 *.spec
 build/

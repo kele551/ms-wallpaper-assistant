@@ -38,7 +38,7 @@ $menuSrc = Get-Content -LiteralPath 'F:\wp-src\menu.ps1' -Raw -Encoding UTF8
 $cut = $menuSrc.IndexOf('# ---------- 主菜单 ----------')
 if ($cut -lt 1) { $cut = $menuSrc.Length }
 $menuSrc.Substring(0, $cut) | Set-Content -LiteralPath (Join-Path $data 'menu_test.ps1') -Encoding UTF8
-$fakeExe = Join-Path $data '微软壁纸助手.exe'
+$fakeExe = Join-Path $data '壁纸助手.exe'
 Set-Content -LiteralPath $fakeExe -Value 'fake' -Encoding ASCII
 Set-Content -LiteralPath (Join-Path $data 'launcher.txt') -Value $fakeExe -Encoding UTF8
 

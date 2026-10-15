@@ -37,7 +37,7 @@
 
 ```powershell
 # 1) 算你手上这个文件的指纹
-certutil -hashfile 微软壁纸助手.exe SHA256
+certutil -hashfile 壁纸助手.exe SHA256
 
 # 2) 跟下面任一处的值比对（三处都来自本仓库/本项目的发布流程）
 #    a. 发行页（Releases）说明里公布的 SHA256
@@ -78,7 +78,7 @@ automatically inside the CI build (the placeholder step is marked in the workflo
 and never for files that were not built from this repository. A signature will mean exactly one thing:
 *this file was built automatically from this repository's source.*
 
-**Verifying an artifact.** Compute `certutil -hashfile 微软壁纸助手.exe SHA256` and compare it with the
+**Verifying an artifact.** Compute `certutil -hashfile 壁纸助手.exe SHA256` and compare it with the
 value published on the release page, recorded in `CHANGELOG.md`, or stored as `launcher.sha256` in this
 repository's `version.json`. If they match, the file is byte-identical to the artifact built from this
 source. If they do not match, **do not run it** — please report it in the issue tracker.

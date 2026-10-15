@@ -15,7 +15,7 @@
 ```
 # 例：
 python build-exe.py --release
-# 双击 微软壁纸助手.exe → 菜单能开、[2] 改「每轮抓几张」能存住
+# 双击 壁纸助手.exe → 菜单能开、[2] 改「每轮抓几张」能存住
 ```
 
 - [ ] 我自己从源码构建过（`python build-exe.py --release`），产物能双击打开菜单
