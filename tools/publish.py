@@ -137,7 +137,7 @@ def extract_notes(ver):
       `- **v2.0.7** 一句话`        —— v1.6.x 及以前的格式
       `## v2.0.7 — 日期` + 多行正文 —— v2.x 起改用段落式, 以前这里匹配不到、发布说明会是空的
     """
-    cl = (REPO_DIR / 'CHANGELOG.md').read_text(encoding='utf-8')
+    cl = (REPO_DIR / 'docs' / 'CHANGELOG.md').read_text(encoding='utf-8')
     m = re.search(r'^- \*\*v%s\*\*(.+?)(?=^- \*\*v|\Z)' % re.escape(ver),
                   cl, re.S | re.M)
     if m:
@@ -414,8 +414,8 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
     else:
         notes = extract_notes(ver)
     if not notes:
-        sys.exit('CHANGELOG.md 里找不到 v%s 的条目 —— 直接发会得到一个空白的发行页。\n'
-                 '请先在 CHANGELOG.md 里补上该版本段落（`## v%s — 日期`）并用它自动生成，'
+        sys.exit('docs/CHANGELOG.md 里找不到 v%s 的条目 —— 直接发会得到一个空白的发行页。\n'
+                 '请先在 docs/CHANGELOG.md 里补上该版本段落（`## v%s — 日期`）并用它自动生成，'
                  '或用 --notes <文件> 指定发布说明。' % (ver, ver))
     print('   发布说明: %d 字' % len(notes))
 
@@ -471,7 +471,7 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
             sys.exit('❌ 发版前自检未通过，已中止发布。修好再发（或 --skip-preflight 紧急跳过）')
         print('   ✅ 自检全绿，继续发布')
 
-    git_commit_push(ver, ['CHANGELOG.md', 'README.md', 'core.ps1', 'menu.ps1',
+    git_commit_push(ver, ['docs/CHANGELOG.md', 'README.md', 'core.ps1', 'menu.ps1',
                           'launcher.py', '使用说明.txt', 'version.json'])
     gitee_release(ver, token, assets, notes)
     if with_github:

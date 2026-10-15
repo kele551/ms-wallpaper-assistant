@@ -73,7 +73,7 @@ REPO = _UP if os.path.exists(os.path.join(_UP, 'launcher.py')) else os.path.join
 
 VJSON = os.path.join(REPO, 'version.json')
 README = os.path.join(REPO, 'README.md')
-CHANGELOG = os.path.join(REPO, 'CHANGELOG.md')
+CHANGELOG = os.path.join(REPO, 'docs', 'CHANGELOG.md')
 MANUAL = os.path.join(REPO, '使用说明.txt')
 
 GITEE_REPO = 'https://gitee.com/kele551/ms-wallpaper-assistant'
@@ -242,12 +242,12 @@ if not check('在仓库里运行（上一级找得到 launcher.py）',
 GOVERNANCE = (
     ('LICENSE', '许可'),
     ('README.md', '门面与使用说明'),
-    ('CONTRIBUTING.md', '贡献指南'),
-    ('COMPLIANCE.md', '合规声明'),
-    ('SECURITY.md', '安全报告渠道'),
-    ('CODE_OF_CONDUCT.md', '行为准则'),
-    ('CODE_SIGNING_POLICY.md', '签名与校验说明'),
-    ('CHANGELOG.md', '更新记录'),
+    ('docs/CONTRIBUTING.md', '贡献指南'),
+    ('docs/COMPLIANCE.md', '合规声明'),
+    ('docs/SECURITY.md', '安全报告渠道'),
+    ('docs/CODE_OF_CONDUCT.md', '行为准则'),
+    ('docs/CODE_SIGNING_POLICY.md', '签名与校验说明'),
+    ('docs/CHANGELOG.md', '更新记录'),
     ('requirements.txt', '依赖清单'),
     ('.github/PULL_REQUEST_TEMPLATE.md', 'PR 模板'),
     ('.github/ISSUE_TEMPLATE/bug_report.yml', 'Bug Issue 模板'),
@@ -458,8 +458,8 @@ else:
 # ══════════════════════════════════════════════════════════════════════════
 say()
 say('⑥ 对外文档体检（私人邮箱 / 旧名语境 / 署名 / 依赖清单）')
-DOCS = ('README.md', '使用说明.txt', 'CHANGELOG.md', 'CONTRIBUTING.md', 'COMPLIANCE.md',
-        'SECURITY.md', 'CODE_OF_CONDUCT.md', 'CODE_SIGNING_POLICY.md',
+DOCS = ('README.md', '使用说明.txt', 'docs/CHANGELOG.md', 'docs/CONTRIBUTING.md', 'docs/COMPLIANCE.md',
+        'docs/SECURITY.md', 'docs/CODE_OF_CONDUCT.md', 'docs/CODE_SIGNING_POLICY.md',
         'docs/README_EN.md', '.github/PULL_REQUEST_TEMPLATE.md')
 _texts = {}
 for _f in DOCS:
@@ -527,8 +527,8 @@ check('requirements.txt 列出打包与发版工具依赖（pyinstaller / reques
 check('requirements.txt 写明运行本体零第三方依赖',
       '不需要安装任何第三方' in _req or '零第三方' in _req)
 check('README 有「第三方组件与许可」小节', '第三方组件与许可' in _rm)
-check('CONTRIBUTING.md 写明发版前必须跑本自检（tools/preflight_release.py）',
-      'preflight_release.py' in (_texts.get('CONTRIBUTING.md') or ''),
+check('docs/CONTRIBUTING.md 写明发版前必须跑本自检（tools/preflight_release.py）',
+      'preflight_release.py' in (_texts.get('docs/CONTRIBUTING.md') or ''),
       '（贡献指南里要有这条，别人才知道有门可跑）')
 skip('对外文案红线词 0 命中',
      'CONTRIBUTING「对外文案有禁用词清单」一节明确要求**不在仓库里逐词列举**'

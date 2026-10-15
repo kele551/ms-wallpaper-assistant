@@ -45,7 +45,7 @@
 <img alt="Gitee Fork" src="https://gitee.com/kele551/ms-wallpaper-assistant/badge/fork.svg">
 <img alt="Language" src="https://img.shields.io/github/languages/top/kele551/ms-wallpaper-assistant?style=flat-square">
 <img alt="Code Size" src="https://img.shields.io/github/languages/code-size/kele551/ms-wallpaper-assistant?style=flat-square&label=code%20size">
-<a href="https://github.com/kele551/ms-wallpaper-assistant/blob/main/CONTRIBUTING.md"><img alt="PRs Welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square"></a>
+<a href="https://github.com/kele551/ms-wallpaper-assistant/blob/main/docs/CONTRIBUTING.md"><img alt="PRs Welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square"></a>
 </p>
 
 </details>
@@ -86,8 +86,8 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 - [壁纸存哪？能自己删吗？](#壁纸存哪能自己删吗)
 - [常见问题](#常见问题)
 - [版本迭代](#版本迭代)
-- [代码签名政策](CODE_SIGNING_POLICY.md)
-- [贡献指南](CONTRIBUTING.md)　·　[安全政策](SECURITY.md)
+- [代码签名政策](docs/CODE_SIGNING_POLICY.md)
+- [贡献指南](docs/CONTRIBUTING.md)　·　[安全政策](docs/SECURITY.md)
 - [路线图（Roadmap）](#路线图roadmap)　·　[参与贡献与治理](#参与贡献与治理)
 - [许可](#许可)　·　[第三方组件与许可](#第三方组件与许可)
 
@@ -282,7 +282,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 几年下来好几个 GB，放系统盘容易把 C 盘撑满。
 
 **一个现成的都没有时（新机器常见），它仍然放在你的「图片」文件夹里，不会凭空多造一个
-文件夹** —— 这条是 v1.6.2 定下的行为，见 `CHANGELOG.md`。位置随时可以在菜单
+文件夹** —— 这条是 v1.6.2 定下的行为，见 `docs/CHANGELOG.md`。位置随时可以在菜单
 `[S] 设置 - [3]` 里改。
 
 **库里的图你随便删、随便挪、随便拷走，程序完全不受影响：**
@@ -342,7 +342,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 （本项目正在申请上述免费代码签名服务；通过之后，发布的可执行文件在构建流程中自动签名，
 签名即表示该文件由本仓库的源码自动构建而来。**目前发布的 exe 尚未签名**，
-请以发行页上的 SHA256 自行核对 —— 构建命令见 [CONTRIBUTING.md](CONTRIBUTING.md) 第四节，任何人可复现。）
+请以发行页上的 SHA256 自行核对 —— 构建命令见 [CONTRIBUTING.md](docs/CONTRIBUTING.md) 第四节，任何人可复现。）
 
 **团队角色（Team roles）**：提交者与审查者、签名批准者均为 [@kele551](https://github.com/kele551)
 （一人维护，已启用两步验证 MFA）。
@@ -352,8 +352,8 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 除这些图片请求之外，本程序**不会向其它联网系统传输信息，除非用户（或安装、操作它的人）明确提出要求**。
 
 **卸载（Uninstallation）**：步骤见上方「常见问题」；启动文件夹快捷方式、壁纸填充方式原值
-（`wall_style_orig`）还原等细节，完整清单见 [CONTRIBUTING.md](CONTRIBUTING.md) 第八节，
-构建与签名政策全文见 [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md)。
+（`wall_style_orig`）还原等细节，完整清单见 [CONTRIBUTING.md](docs/CONTRIBUTING.md) 第八节，
+构建与签名政策全文见 [CODE_SIGNING_POLICY.md](docs/CODE_SIGNING_POLICY.md)。
 
 </details>
 
@@ -378,8 +378,8 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 | v1.1 | 09-18 | 单层菜单、启动不闪黑窗、错过的必应图自动补 |
 | v1.0 | 09-17 | 第一个版本 |
 
-逐条改动记录见 [CHANGELOG.md](CHANGELOG.md)；v1.5.x / v1.6.x 各小版本的详细说明已迁至
-[CONTRIBUTING.md](CONTRIBUTING.md) 第七节。
+逐条改动记录见 [CHANGELOG.md](docs/CHANGELOG.md)；v1.5.x / v1.6.x 各小版本的详细说明已迁至
+[CONTRIBUTING.md](docs/CONTRIBUTING.md) 第七节。
 
 > **一句说明**：v1.2.0 以前是「安装版」（要双击 bat 装计划任务），那个做法已经作废。
 > 现在的版本是绿色单文件，老的安装脚本不再提供 —— 直接下最新版就行。
@@ -391,7 +391,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 免责声明
 
-> 完整合规声明见 **[COMPLIANCE.md](COMPLIANCE.md)**（功能边界 / 图源与版权 / 隐私 / 第三方组件与许可）。
+> 完整合规声明见 **[COMPLIANCE.md](docs/COMPLIANCE.md)**（功能边界 / 图源与版权 / 隐私 / 第三方组件与许可）。
 
 - 本工具是**个人学习用的桌面壁纸工具**，只把各图源**公开提供**的图片下载到**用户自己的电脑**上，
   **不随发行版打包分发任何图片**。
@@ -421,7 +421,7 @@ MIT（见 [LICENSE](LICENSE)）。
 | PyInstaller | **仅打包 exe 时**使用，产物是独立 exe | GPL-2.0-with-exception（官方明确：打包产物不受 GPL 约束） |
 | requests | **仅**发版工具 `tools/publish.py` 使用 | Apache-2.0 |
 
-图片来源与授权、商标与命名、隐私边界等说明见 [COMPLIANCE.md](COMPLIANCE.md)。
+图片来源与授权、商标与命名、隐私边界等说明见 [COMPLIANCE.md](docs/COMPLIANCE.md)。
 
 ---
 
@@ -449,10 +449,10 @@ MIT（见 [LICENSE](LICENSE)）。
 | 项目 | 说明 |
 | --- | --- |
 | 维护者 | [@kele551](https://github.com/kele551)（海风），一人维护，同时担任提交者、审查者与发布批准者 |
-| 响应预期 | Issue / PR 一般 **7 天内**给第一次答复；安全类问题按 [SECURITY.md](SECURITY.md) 私下走，**3 天内**响应 |
+| 响应预期 | Issue / PR 一般 **7 天内**给第一次答复；安全类问题按 [SECURITY.md](docs/SECURITY.md) 私下走，**3 天内**响应 |
 | 许可 | MIT（见 [LICENSE](LICENSE)）；提交贡献即表示同意按同一许可发布 |
-| 怎么参与 | 提 Issue / PR 之前先看 [CONTRIBUTING.md](CONTRIBUTING.md)：Issue 模板、PR 流程、代码风格、本地构建与自查、提交信息规范都在里面 |
-| 安全 | 漏洞请**不要**开公开 Issue，按 [SECURITY.md](SECURITY.md) 私下报告 |
+| 怎么参与 | 提 Issue / PR 之前先看 [CONTRIBUTING.md](docs/CONTRIBUTING.md)：Issue 模板、PR 流程、代码风格、本地构建与自查、提交信息规范都在里面 |
+| 安全 | 漏洞请**不要**开公开 Issue，按 [SECURITY.md](docs/SECURITY.md) 私下报告 |
 | 持续集成 | [.github/workflows/build.yml](.github/workflows/build.yml) 在 Windows runner 上真实打包并输出 SHA256（每天构建只需 `pyinstaller`，运行主程序**零第三方依赖**） |
 | 发布纪律 | 发版前必须跑发版前自检并全绿（版本一致性、成品与升级源同源、`.ps1` 的 BOM 与语法、对外文档不含私人邮箱），红一条不许发 |
 

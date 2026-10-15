@@ -16,7 +16,7 @@
 | 构建命令 | `python build-exe.py --release`（见 README「构建方式」） |
 | 打包工具 | PyInstaller **6.22.3**（版本固定，便于复现）；除此之外**不需要任何第三方依赖** |
 | 版本号来源 | 唯一来源是 `launcher.py` 里的 `VERSION` 常量 |
-| 自动化构建 | [workflows/build.yml](workflows/build.yml)：在 GitHub 的 Windows runner 上执行同一条命令，打印并留存 SHA256 |
+| 自动化构建 | [workflows/build.yml](../.github/workflows/build.yml)：在 GitHub 的 Windows runner 上执行同一条命令，打印并留存 SHA256 |
 
 **任何人**都可以按上面的命令自己构建一份，并与发行页上的成品逐字节比对 SHA256。
 
@@ -27,7 +27,7 @@
 - 本项目正在申请上述免费代码签名服务，**目前发布的 exe 尚未签名**。
 - 申请通过之后：
   - 签名在**构建流程（CI）里自动完成**，不手工签、不签名任何非本仓库构建的文件；
-  - 签名步骤会插在 [workflows/build.yml](workflows/build.yml) 里标注的占位位置
+  - 签名步骤会插在 [workflows/build.yml](../.github/workflows/build.yml) 里标注的占位位置
     （即"先签名、再计算 SHA256"），仓库里能看到完整的签名流程；
   - 签名只表示**该文件由本仓库源码自动构建而来**，不代表任何形式的担保。
 
@@ -68,7 +68,7 @@ certutil -hashfile 微软壁纸助手.exe SHA256
 using the build script in this repository (`python build-exe.py --release`, PyInstaller 6.22.3,
 no other third-party dependency). The version number has a single source of truth
 (`VERSION` in `launcher.py`). The same command runs in CI
-([workflows/build.yml](workflows/build.yml)) on a clean Windows runner, which prints
+([workflows/build.yml](../.github/workflows/build.yml)) on a clean Windows runner, which prints
 and stores the SHA256 of the artifacts.
 
 **Code signing.** **Free code signing provided by [SignPath.io](https://about.signpath.io),
