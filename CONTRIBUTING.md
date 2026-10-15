@@ -86,7 +86,7 @@ pip install "pyinstaller==6.22.3"
 python build-exe.py --release
 ```
 
-产物：`微软壁纸助手.exe`（固定名，日常用）、`微软壁纸助手-v<版本>.exe`、`MSWallpaperAssistant-v<版本>.zip`。
+产物：`壁纸助手.exe`（固定名，日常用）、`壁纸助手-v<版本>.exe`、`MSWallpaperAssistant-v<版本>.zip`。
 
 ### 自查（改完自己先过一遍）
 
@@ -97,6 +97,9 @@ powershell -NoProfile -Command "[void][System.Management.Automation.Language.Par
 
 发版前自检（维护者跑，改动涉及版本链时也建议本地跑一次）：版本一致性、成品与升级源同源、
 `.ps1` 的 BOM 与语法、对外文档不含私人邮箱，全绿才允许发布。
+脚本**随仓库提供**，克隆下来就能跑：**发版前必须执行 `python tools/preflight_release.py`，
+不全绿不许发布**；红项（`[FAIL]`）一条都不许发，`[SKIP]` 是本机条件不满足
+（没装依赖 / 没有成品 exe / 没联网），不算失败但要在发布记录里写明原因。
 
 ### 测试程序时的两条安全线
 

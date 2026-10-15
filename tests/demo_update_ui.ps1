@@ -1,7 +1,7 @@
 ﻿# 演示升级界面（不会真的升级任何东西）
 # 用法: powershell -ExecutionPolicy Bypass -File 演示升级界面.ps1
 $ErrorActionPreference = 'Continue'
-$repo = 'F:\Harness\projects\微软壁纸助手\repo'
+$repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path   # 仓库根（本脚本在 tests/ 下）
 $sb   = Join-Path $env:TEMP 'bwui-demo'
 $feed = Join-Path $env:TEMP 'bwui-feed'
 Remove-Item $sb, $feed -Recurse -Force -ErrorAction SilentlyContinue
