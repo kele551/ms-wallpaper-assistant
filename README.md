@@ -5,6 +5,7 @@
 
 <p>简体中文 | <a href="docs/README_EN.md">English</a></p>
 <a href="https://github.com/kele551/ms-wallpaper-assistant/releases" title="点击去下载"><img alt="Downloads" src="https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?style=flat-square&label=GitHub%E4%B8%8B%E8%BD%BD&color=brightgreen" height="30"></a>
+<a href="https://gitee.com/kele551/ms-wallpaper-assistant/access" title="Gitee 仓库访问统计 · 实时计数"><img alt="Gitee 访问" src="https://hits.sh/gitee.com/kele551/ms-wallpaper-assistant.svg?label=Gitee%E8%AE%BF%E9%97%AE&color=c71d24&style=flat-square" height="30"></a>
 
 <a href="https://github.com/kele551/ms-wallpaper-assistant/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
 <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square">
@@ -26,8 +27,6 @@
 <a href="https://www.bilibili.com/video/BV1Tupx6kEBe"><img alt="Bilibili demo" src="https://img.shields.io/badge/%F0%9F%93%BA_%E6%BC%94%E7%A4%BA-B%E7%AB%99%E8%A7%86%E9%A2%91-00a1d6?style=flat-square&logo=bilibili&logoColor=white&labelColor=3d4552"></a>
 <a href="https://github.com/kele551/ms-wallpaper-assistant/issues"><img alt="Issues" src="https://img.shields.io/badge/%F0%9F%90%9E_%E5%8F%8D%E9%A6%88-%E6%8F%90Issue-0969da?style=flat-square&labelColor=3d4552"></a>
 <a href="#sponsor"><img alt="Sponsor" src="https://img.shields.io/badge/%E2%98%95_%E8%B5%9E%E8%B5%8F-%E8%AF%B7%E5%96%9D%E5%92%96%E5%95%A1-ff69b4?style=flat-square&labelColor=3d4552"></a>
-
-<img src="https://count.getloli.com/get/@gitee-kele551-wallpaper?theme=normal-1" alt="浏览量" height="36">
 
 <p>🖼 <b>让电脑桌面壁纸自己换，你不用管</b>　·　必应每日一图 + Windows 聚焦</p>
 
