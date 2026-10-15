@@ -456,7 +456,7 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
         print('   ⚠ 已显式跳过发版前自检（--skip-preflight）—— 请在 logs\\ 里写明原因')
     else:
         # 2026-10-10: 自检脚本两种布局都找 —— 工作区布局在 <项目>\tools\，
-        # 仓库布局在 <仓库>\tools\。此前只认前者，别的机器/评审照 README 跑
+        # 仓库布局在 <仓库>\tools\。此前只认前者，别的机器照 README 跑
         # 会直接"找不到自检脚本"中止（fail-closed 是对的，但等于这套流程只在一台机器上可用）。
         pf = REPO_DIR.parent / 'tools' / 'preflight_release.py'
         if not pf.exists():
