@@ -40,3 +40,6 @@ secrets/
 # 本机私有：发布令牌与发布脚本的本机配置（绝不入库）
 .gitee_token
 tools/publish.local.json
+
+# 测试生成目录（tests/gen_ps_test.py 每次重建，不入库）
+tests/_t2/
