@@ -126,6 +126,8 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 > 按 `[A]` 不用管理员。它只是在 Windows「启动」文件夹里放一个快捷方式而已。
 
+> 想先看它长什么样：[演示视频](docs/demo/index.html)（页面内嵌播放，**录制于 v2.1.0**，界面以实际版本为准）。
+
 ---
 
 ## 菜单上都有什么
@@ -327,6 +329,22 @@ MIT（见 [LICENSE](LICENSE)）。
 - **许可**：MIT（见 [LICENSE](LICENSE)）；提交贡献即表示同意按同一许可发布。
 - **参与方式**：Issue 模板、PR 流程、代码风格、本地构建与自查、提交信息规范见 [CONTRIBUTING.md](docs/CONTRIBUTING.md)。
 - **发布纪律**：发版前必须跑发版前自检 `tools/preflight_release.py` 并全绿（版本一致性、成品与升级源同源、`.ps1` 的 BOM 与语法、对外文档不含私人邮箱），红一条不许发；[.github/workflows/build.yml](.github/workflows/build.yml) 在 Windows runner 上真实打包并输出 SHA256（每天构建只需 `pyinstaller`，运行主程序**零第三方依赖**）。
+
+---
+
+## 从源码构建
+
+不想下载现成 exe、想自己从源码打一份的话，最短路径就是下面三步（**Windows 10/11 x64 + Python 3.11 及以上**）：
+
+```powershell
+pip install "pyinstaller==6.22.3"        # 只有打包用得到；运行主程序零第三方依赖
+python build-exe.py --release            # 出成品
+python tools/preflight_release.py        # 发版前自检：全绿才算可用
+```
+
+- **产物**：仓库根目录的 `壁纸助手.exe`（固定名，日常就这一份）；加 `--release` 还会多出 `壁纸助手-v<版本>.exe` 与发给用户的 `MSWallpaperAssistant-v<版本>.zip`。
+- **怎么核对**：`python tools/preflight_release.py` 会查 Python 语法、`.ps1` 的 BOM 与语法、版本一致性、成品与升级源同源等；`[SKIP]` 是「本机没装依赖 / 没有成品 exe / 没联网」，不算失败，`[FAIL]` 一条都不许有。
+- 改完代码要跑哪些命令、容器/CI 里怎么打、键位与设置全表在哪，见 [CONTRIBUTING.md](docs/CONTRIBUTING.md) 第四节；仓库结构与「改哪儿」见 [ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ---
 

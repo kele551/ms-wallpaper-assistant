@@ -6,6 +6,7 @@
 <p><a href="../README.md">简体中文</a> | English</p>
 
 <a href="https://github.com/kele551/ms-wallpaper-assistant/releases" title="Download"><img alt="Downloads" src="https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?style=flat-square&label=GitHub%20downloads&color=brightgreen" height="30"></a>
+<a href="https://gitee.com/kele551/ms-wallpaper-assistant/access" title="Gitee repo visits · live counter"><img alt="Gitee visits" src="https://hits.sh/gitee.com/kele551/ms-wallpaper-assistant.svg?label=Gitee%20visits&color=c71d24&style=flat-square" height="30"></a>
 
 <a href="https://github.com/kele551/ms-wallpaper-assistant/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
 <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square">
@@ -17,8 +18,8 @@
 <a href="https://github.com/kele551/ms-wallpaper-assistant/network/members"><img alt="GitHub Fork" src="https://img.shields.io/github/forks/kele551/ms-wallpaper-assistant?style=flat-square&label=GitHub%20Fork&color=blue"></a>
 <a href="https://github.com/kele551"><img alt="Follow Author" src="https://img.shields.io/github/followers/kele551?style=flat-square&logo=github&label=follow%20author&color=blue"></a>
 
+<img alt="Category" src="https://img.shields.io/badge/category-application-blue?style=flat-square">
 <img alt="No Admin" src="https://img.shields.io/badge/admin%20rights-not%20needed-brightgreen?style=flat-square">
-<img alt="Portable" src="https://img.shields.io/badge/install-portable-green?style=flat-square">
 <img alt="Local Only" src="https://img.shields.io/badge/images-stay%20local-brightgreen?style=flat-square">
 <img alt="4K" src="https://img.shields.io/badge/quality-4K-blue?style=flat-square">
 
@@ -26,6 +27,7 @@
 <a href="https://github.com/kele551/ms-wallpaper-assistant"><img alt="GitHub mirror" src="https://img.shields.io/badge/%F0%9F%90%99_Source-GitHub_mirror-24292f?style=flat-square&logo=github&logoColor=white&labelColor=3d4552"></a>
 <a href="https://www.bilibili.com/video/BV1Tupx6kEBe"><img alt="Bilibili demo" src="https://img.shields.io/badge/%F0%9F%93%BA_Demo-Bilibili_video-00a1d6?style=flat-square&logo=bilibili&logoColor=white&labelColor=3d4552"></a>
 <a href="https://github.com/kele551/ms-wallpaper-assistant/issues"><img alt="Issues" src="https://img.shields.io/badge/%F0%9F%90%9E_Feedback-Issues_welcome-0969da?style=flat-square&labelColor=3d4552"></a>
+<a href="#support-the-project"><img alt="Sponsor" src="https://img.shields.io/badge/%E2%98%95_Buy%20me-Buy_me_a_coffee-ff69b4?style=flat-square&labelColor=3d4552"></a>
 
 </div>
 
@@ -38,6 +40,7 @@
 <img alt="Contributors" src="https://img.shields.io/github/contributors/kele551/ms-wallpaper-assistant?style=flat-square&label=contributors">
 <a href="https://github.com/kele551/ms-wallpaper-assistant/issues"><img alt="Issues" src="https://img.shields.io/github/issues/kele551/ms-wallpaper-assistant?style=flat-square&label=issues"></a>
 <img alt="Resolved" src="https://img.shields.io/github/issues-closed/kele551/ms-wallpaper-assistant?style=flat-square&label=resolved">
+<img alt="Gitee Fork" src="https://gitee.com/kele551/ms-wallpaper-assistant/badge/fork.svg">
 <img alt="Language" src="https://img.shields.io/github/languages/top/kele551/ms-wallpaper-assistant?style=flat-square">
 <img alt="Code Size" src="https://img.shields.io/github/languages/code-size/kele551/ms-wallpaper-assistant?style=flat-square&label=code%20size">
 <a href="https://github.com/kele551/ms-wallpaper-assistant/blob/main/docs/CONTRIBUTING.md"><img alt="PRs Welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square"></a>
@@ -84,7 +87,8 @@ images stay on your own machine.
 - Gitee Releases (main, China): <https://gitee.com/kele551/ms-wallpaper-assistant/releases>
 
 Unzip the archive and double-click `壁纸助手.exe` (Windows 10/11 x64; installs from before the 2026-10-12 rename keep the old file name — same program). The UI is a
-console menu in Chinese; press `Q` to quit, `B` to toggle automatic rotation.
+console menu in Chinese; press `Q` to quit, `[A]` to switch automatic rotation on and `[B]`
+to switch it off (the menu only shows the one that currently applies, so you can never press the wrong one).
 Version: right-click the exe → Properties → Details.
 
 ---
@@ -131,13 +135,35 @@ networked systems unless the user explicitly asks it to.
 
 ## Code signing policy
 
-See the "Code signing policy（代码签名政策）" section below.
+**Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).**
+
+This project is applying for that free code-signing service; **the released exe is not signed yet**,
+so please verify it against the SHA256 published on the release page. The full policy — privacy,
+uninstall checklist, and how a release artifact can be verified — is in
+[CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md)（代码签名政策）.
 
 ---
 
-## License
+## Contributing and governance
 
-MIT — see [LICENSE](../LICENSE).
+- **Maintainer**: [@kele551](https://github.com/kele551) (海风) — a one-person project; the same person
+  submits, reviews and approves releases. Issues and pull requests get a first reply within **7 days**;
+  security reports go through [SECURITY.md](SECURITY.md) privately and are answered within **3 days**.
+- **How to take part**: issue templates, PR flow, code style, building locally and self-checks are in
+  [CONTRIBUTING.md](CONTRIBUTING.md).
+- **Compliance**: feature boundaries, image sources and copyright, privacy, and third-party licences
+  are in [COMPLIANCE.md](COMPLIANCE.md).
+- **Release discipline**: before anything is published, `tools/preflight_release.py` must be all green
+  (version consistency, artifact matches the update feed, `.ps1` BOM and syntax, no private e-mail in
+  public docs) — one red item blocks the release.
+
+---
+
+## Support the project
+
+If this tool helps you, a **Star ⭐ on the repo** is the best way to say thanks — it helps other people
+find the project. Anything further is entirely optional and changes nothing about the features,
+updates or issue replies.
 
 ---
 

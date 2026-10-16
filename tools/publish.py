@@ -102,15 +102,18 @@ ZIP_TPL = 'MSWallpaperAssistant-v%s.zip'          # zip 的 ASCII 名不改(仓�
 APP_NAME = '壁纸助手'
 EXE_NAME = '壁纸助手.exe'                          # version.json 里写的就是这个名字, 必须传上去
 
-# 版本常量所在的三个文件
+# 版本常量所在的文件（发版时改这几处）
+#   · core.ps1 **没有** $global:BWVersion（版本只在 launcher.py 与 menu.ps1 定义，
+#     见 tools/preflight_release.py ③ 节），所以这里**不放 core.ps1** —— 放了就是一条
+#     永远匹配不到的死规则，还会让人误以为"core.ps1 的版本号也改了"。
+#   · README.md 改的是「**当前最新：vX.Y.Z**」这句正文；静态徽章 `version-vX.Y.Z-blue` 早已
+#     换成动态徽章（img.shields.io/github/v/release），原来那条规则同样永远匹配不到。
 VER_FILES = [
-    ('core.ps1', re.compile(r"(\$global:BWVersion\s*=\s*')[0-9.]+(')"),
-     lambda v: r"\g<1>%s\g<2>" % v),
     ('menu.ps1', re.compile(r"(\$global:BWVersion\s*=\s*')[0-9.]+(')"),
      lambda v: r"\g<1>%s\g<2>" % v),
     ('launcher.py', re.compile(r"(VERSION\s*=\s*')[0-9.]+(')"),
      lambda v: r"\g<1>%s\g<2>" % v),
-    ('README.md', re.compile(r'(version-v)[0-9.]+(-blue)'),
+    ('README.md', re.compile(r'(\*\*当前最新：v)[0-9.]+(\*\*)'),
      lambda v: r"\g<1>%s\g<2>" % v),
 ]
 
