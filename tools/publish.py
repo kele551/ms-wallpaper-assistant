@@ -3,7 +3,7 @@
 壁纸助手 —— 一键发布流水线
 
 依赖: 一枚 Gitee 私人令牌(仅勾 projects 权限), 存一次, 之后长期复用。
-GitHub 侧走工作区里的 REST 脚本 F:\\Harness\\tools\\github_push.py（用 gh 的令牌），
+GitHub 侧走一个纯 REST 的推送脚本（用环境变量 MWA_GH_PUSH 指定；用 gh 的令牌），
 不需要 github.com 的 git 端口 —— 那条线路时通时断。
 
 用法:
@@ -54,20 +54,48 @@ OWNER, REPO = 'kele551', 'ms-wallpaper-assistant'
 BRANCH = 'main'
 GITEE_API = 'https://gitee.com/api/v5'
 GITEE_WEB = 'https://gitee.com'
-# 2026-10-10: 令牌文件位置支持用环境变量 GITEE_TOKEN_FILE 指定（排在两条本机默认路径之前），
-# 别的机器/贡献者就不用去猜作者本机把令牌放在哪；也可以直接用环境变量 GITEE_TOKEN 传令牌
-# 本身（load_token 优先读它，见下面）。
-_ENV_TOKEN_FILE = os.environ.get('GITEE_TOKEN_FILE')
-TOKEN_CANDIDATES = ([_ENV_TOKEN_FILE] if _ENV_TOKEN_FILE else []) + [
-    r'F:\Harness\secrets\raw\workbuddy-secrets\gitee_token',   # 工作区备份(首选)
-    r'C:\Users\kele551\.workbuddy\secrets\gitee_token',        # 旧位置(退回)
-]
+# ---- 本机私有配置（可选，永不进仓库）----------------------------------------
+# 公开仓库里不写任何维护者本机路径。本机要用的解释器 / git / 推送脚本 / gh / 令牌位置，
+# 一律按：① 环境变量 → ② 本机私有配置 ~/.mwa-publish.json → ③ 与机器无关的默认值。
+# 私有配置文件示例（放在用户主目录，文件名前面有个点）：
+#   {"python": "C:\\\\Python313\\\\python.exe", "git_dir": "C:\\\\Program Files\\\\Git\\\\mingw64\\\\bin",
+#    "gh_push": "D:\\\\tools\\\\github_push.py", "gh": "C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe",
+#    "token_file": "D:\\\\private\\\\gitee_token"}
+_CFG_PATH = Path.home() / '.mwa-publish.json'
+_CFG = {}
+if _CFG_PATH.is_file():
+    try:
+        _CFG = json.loads(_CFG_PATH.read_text(encoding='utf-8'))
+    except Exception as _e:
+        print('警告: %s 解析失败(%s)，按"没有本机配置"继续' % (_CFG_PATH, _e), file=sys.stderr)
+
+_ENV_TOKEN_FILE = os.environ.get('GITEE_TOKEN_FILE') or _CFG.get('token_file')
+# 都没给就落到仓库内的 .gitee_token（已 gitignore）；也可以直接用环境变量 GITEE_TOKEN 传令牌本身
+TOKEN_CANDIDATES = [_ENV_TOKEN_FILE] if _ENV_TOKEN_FILE else [str(REPO_DIR / '.gitee_token')]
 TOKEN_FILE = Path(TOKEN_CANDIDATES[0])
-# 优先读环境变量(任意机器都能跑); 没有时退回作者本机 F:\Harness 工具链默认路径
-PY = os.environ.get('MWA_PY', r'F:\Harness\toolchain\python\envs\default\Scripts\python.exe')
-GIT_EXEC_PATH = os.environ.get('MWA_GIT', r'F:/Harness/toolchain/PortableGit/versions/1.2.0/mingw64/bin')
-GIT_EXE = GIT_EXEC_PATH + '/git.exe'              # 绝对路径: 有的执行环境按名字找不到 git(WinError 2)
-GH_PUSH = os.environ.get('MWA_GH_PUSH', r'F:\Harness\tools\github_push.py')   # 纯 API 推 GitHub(含附件), 2026-09-22 重写
+# 打包 / 子脚本用的解释器：默认就用当前这个解释器
+PY = os.environ.get('MWA_PY') or _CFG.get('python') or sys.executable
+
+
+def _find_git_dir():
+    """找 git.exe 所在目录：环境变量 → 本机配置 → PATH → 常见安装位置；找不到返回空串。"""
+    for _c in (os.environ.get('MWA_GIT'), _CFG.get('git_dir')):
+        if _c and Path(_c, 'git.exe').is_file():
+            return str(_c).replace('\\', '/')
+    _w = shutil.which('git')
+    if _w:
+        return str(Path(_w).parent).replace('\\', '/')
+    for _c in (r'C:\Program Files\Git\cmd', r'C:\Program Files (x86)\Git\cmd'):
+        if Path(_c, 'git.exe').is_file():
+            return _c.replace('\\', '/')
+    return ''
+
+
+GIT_EXEC_PATH = _find_git_dir()
+# 有绝对路径就用绝对路径: 有的执行环境按名字找不到 git(WinError 2)
+GIT_EXE = (GIT_EXEC_PATH + '/git.exe') if GIT_EXEC_PATH else 'git'
+# 纯 API 推 GitHub(含附件), 2026-09-22 重写
+GH_PUSH = os.environ.get('MWA_GH_PUSH') or _CFG.get('gh_push') or str(REPO_DIR / 'tools' / 'github_push.py')
 ZIP_TPL = 'MSWallpaperAssistant-v%s.zip'          # zip 的 ASCII 名不改(仓库英文标识稳定)
 # 2026-10-12 产品改名: 「微软壁纸助手」->「壁纸助手」。GitHub 侧的 ASCII 附件名
 # (MSWallpaperAssistant-vX.Y.Z.exe)同样不改 —— 那条线路怕中文名被削。
@@ -155,9 +183,10 @@ def extract_notes(ver):
 
 def run(cmd, cwd=REPO_DIR, env=None, check=True):
     e = os.environ.copy()
-    e['GIT_EXEC_PATH'] = GIT_EXEC_PATH
-    # git.exe 不在系统 PATH 里, 得自己塞进去, 否则 subprocess 找不到 'git'
-    e['PATH'] = GIT_EXEC_PATH.replace('/', os.sep) + os.pathsep + e.get('PATH', '')
+    if GIT_EXEC_PATH:            # 没找到 git 目录就交给 PATH 上那个 git
+        e['GIT_EXEC_PATH'] = GIT_EXEC_PATH
+        # git.exe 不在系统 PATH 里, 得自己塞进去, 否则 subprocess 找不到 'git'
+        e['PATH'] = GIT_EXEC_PATH.replace('/', os.sep) + os.pathsep + e.get('PATH', '')
     if env:
         e.update(env)
     cmd = list(cmd)
@@ -341,9 +370,8 @@ def gh_token():
     t = os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
     if t:
         return t.strip()
-    # 2026-10-10: gh 的位置不再只认作者本机那一条绝对路径 —— 先看环境变量 MWA_GH，
-    # 再在 PATH 里找，最后才退回本机工具链默认路径。
-    exe = os.environ.get('MWA_GH') or shutil.which('gh') or r'F:\Harness\toolchain\gh\bin\gh.exe'
+    # 2026-10-16: gh 的位置只认"环境变量 → 本机私有配置 → PATH"，公开脚本里不写本机路径。
+    exe = os.environ.get('MWA_GH') or _CFG.get('gh') or shutil.which('gh')
     if exe and os.path.isfile(exe):
         import subprocess as _sp
         out = _sp.run([exe, 'auth', 'token'], capture_output=True)

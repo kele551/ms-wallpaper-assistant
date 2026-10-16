@@ -12,6 +12,8 @@ daemon.stop
 微软壁纸助手.exe
 壁纸助手.exe
 微软壁纸助手-v*.exe
+# 2026-10-16: 产品更名后带版本号的那份也要挡（此前只挡了旧名，git add -A 会把成品带进公开仓库）
+壁纸助手-v*.exe
 *.spec
 build/
 dist/
@@ -34,3 +36,7 @@ Harnesssecrets*
 secrets/
 *.pem
 *.key
+
+# 本机私有：发布令牌与发布脚本的本机配置（绝不入库）
+.gitee_token
+tools/publish.local.json

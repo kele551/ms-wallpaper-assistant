@@ -11,9 +11,9 @@
 
 | 项目 | 事实 |
 |---|---|
-| 源码 | 全部在本仓库；`launcher.py` + `core.ps1` + `menu.ps1` + `使用说明.txt` + `微软壁纸助手.ico` |
+| 源码 | 全部在本仓库；`launcher.py` + `core.ps1` + `menu.ps1` + `使用说明.txt` + `壁纸助手.ico` |
 | 构建脚本 | 仓库根目录的 `build-exe.py` |
-| 构建命令 | `python build-exe.py --release`（见 README「构建方式」） |
+| 构建命令 | `python build-exe.py --release`（见 [CONTRIBUTING.md](CONTRIBUTING.md) 第四节「如何在本地构建与自查」） |
 | 打包工具 | PyInstaller **6.22.3**（版本固定，便于复现）；除此之外**不需要任何第三方依赖** |
 | 版本号来源 | 唯一来源是 `launcher.py` 里的 `VERSION` 常量 |
 | 自动化构建 | [workflows/build.yml](../.github/workflows/build.yml)：在 GitHub 的 Windows runner 上执行同一条命令，打印并留存 SHA256 |

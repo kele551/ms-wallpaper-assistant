@@ -267,7 +267,7 @@ SOURCE_FILES = ('launcher.py', 'core.ps1', 'menu.ps1', 'build-exe.py',
                 '壁纸助手.ico', '使用说明.txt', 'version.json',
                 'tests/test_all.py', 'tests/syn.ps1', 'tests/gen_ps_test.py',
                 'tools/publish.py', 'tools/make_version_json.py',
-                'docs/icon.png', 'docs/qr-sponsor.png', 'download-stats.html')
+                'docs/icon.png', 'docs/qr-sponsor.png')
 _missing2 = [p for p in SOURCE_FILES if not os.path.exists(os.path.join(REPO, p))]
 check('源码与资源文件齐全（%d 项）' % len(SOURCE_FILES), not _missing2,
       ('缺: ' + '、'.join(_missing2)) if _missing2 else '')
@@ -469,8 +469,16 @@ for _f in DOCS:
 check('对外文档读得到（%d 份）' % len(DOCS), len(_texts) == len(DOCS),
       '缺: %s' % '、'.join(f for f in DOCS if f not in _texts))
 
+# 2026-10-16: 把仓库自己的 tools/*.py 也纳入下面同一套邮箱检查 —— 之前只扫对外文档，
+# 结果这个自检脚本的注释里就长期留着一个真实邮箱（还是"加空格"的写法）。
+for _f in ['tools/' + _n for _n in sorted(os.listdir(os.path.join(REPO, 'tools')))
+           if _n.endswith('.py')]:
+    _t = read(os.path.join(REPO, _f))
+    if _t is not None:
+        _texts[_f] = _t
+
 # 私人邮箱：先把正文归一化（去空白与零宽字符、全角转半角）再匹配 ——
-# 旧版直接抓正则，**抓不到"加空格规避"的写法**（README 里真实存在过 `75219857 @qq.com`）。
+# 旧版直接抓正则，**抓不到"把邮箱用空格拆开"的写法**（对外文档里真实出现过这种规避写法）。
 FULLWIDTH = {0x3000: ' ', 0xFF20: '@', 0xFF0E: '.', 0xFF0B: '+', 0xFF0D: '-'}
 for _i in range(0xFF10, 0xFF1A):
     FULLWIDTH[_i] = chr(_i - 0xFF10 + ord('0'))
