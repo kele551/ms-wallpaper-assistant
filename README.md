@@ -87,7 +87,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 下载
 
-### 👉 [点这里下载 v2.2.1 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.2.1/MSWallpaperAssistant-v2.2.1.zip)
+### 👉 [点这里下载 v2.3.0 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.3.0/MSWallpaperAssistant-v2.3.0.zip)
 
 > **三个平台代码一致**：[Gitee](https://gitee.com/kele551/ms-wallpaper-assistant)（主源）· [GitHub](https://github.com/kele551/ms-wallpaper-assistant)（镜像）· [AtomGit](https://atomgit.com/kele551/ms-wallpaper-assistant)（代码镜像，只提供源码归档）。
 > **二进制发行包请从 Gitee（主）或 GitHub（镜像）下载**；三个平台都收 Issue / PR。
@@ -138,7 +138,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ```
   ============================================================
-   桌面壁纸 v2.2.1    作者: 海风（kele551）
+   桌面壁纸 v2.3.0    作者: 海风（kele551）
    gitee.com/kele551/ms-wallpaper-assistant
   ============================================================
 
@@ -237,11 +237,25 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ---
 
+## 自动更新是怎么保证安全的
+
+在线升级会先做**两道校验**，全过才替换文件：
+
+1. **Ed25519 公钥验签**：线上 `version.json` 必须带一份同目录的 `version.json.sig`
+   （由维护者的离线私钥签名），客户端用内置公钥验签，**验不过一律拒绝、保留旧版**；
+2. **sha256 指纹**：脚本与主程序下载后逐字节比对 `version.json` 里声明的 sha256，对不上就丢弃。
+
+签名**私钥只在维护者机器上、绝不进仓库**（公钥公开无妨，本来就随程序分发）。
+要说清能力边界：这道验签防的是「升级源被篡改 / 中间人换包」，**防不了**维护者机器上的私钥本身被偷，
+也**不等于** Windows 代码签名证书（那是另一回事，见下面「Code signing policy」）。
+
+---
+
 ## 用了之后，跟我说说感受
 
 好不好用、哪儿别扭、还想要什么功能 —— 都欢迎说，一句两句也行：**提 Issue**（推荐）[GitHub Issues](https://github.com/kele551/ms-wallpaper-assistant/issues)　·　[Gitee Issues](https://gitee.com/kele551/ms-wallpaper-assistant/issues)，或直接在 [Gitee 仓库](https://gitee.com/kele551/ms-wallpaper-assistant) 留言。
 
-顺手带上这几样能省一轮来回：**Windows 版本**（设置 → 系统 → 关于）· **程序版本号**（菜单标题上就有，比如 `v2.2.1`）· **`wallpaper.log` 末尾十几行**（菜单 `[L]` 能看到）。
+顺手带上这几样能省一轮来回：**Windows 版本**（设置 → 系统 → 关于）· **程序版本号**（菜单标题上就有，比如 `v2.3.0`）· **`wallpaper.log` 末尾十几行**（菜单 `[L]` 能看到）。
 
 ---
 
@@ -257,7 +271,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 版本迭代
 
-**当前最新：v2.2.1**（2026-10-12；安装包曾在版本号不变的前提下更新过一次，内容见「下载」一节）。最近三代改了什么：
+**当前最新：v2.3.0**（2026-10-12；安装包曾在版本号不变的前提下更新过一次，内容见「下载」一节）。最近三代改了什么：
 
 - **v2.2.x**：产品更名「桌面壁纸」；升级可靠性、轮换顺序（永远按最旧优先）、硬盘占用（两个库都设上限 + 按屏幕挑画质）。
 - **v2.1.0**：显示名与合规调整；修真机上「升级后起不来」的事故。

@@ -774,6 +774,12 @@ function Get-BwLocalScriptVer {
   if (Test-Path -LiteralPath $p) { try { return (Get-Content -LiteralPath $p -Raw -Encoding UTF8).Trim() } catch {} }
   return '0.0.0'
 }
+# 2026-10-16 (升级通道加固·演练隔离): 下载地址只认 https；唯一例外是**回环 http**
+# (http://127.0.0.1 / http://localhost)，只给发版前升级演练用(本地起 http 服务当升级源)。
+# 回环地址只有本机能连，远程攻击者拿不到也利用不了，生产安全不受影响。
+function Test-BwIsLoopbackHttp([string]$url) {
+  return ([string]$url) -match '^http://(127\.0\.0\.1|localhost)(:[0-9]+)?($|/)'
+}
 # 升级请求一律直连(不绕本机代理: 本机代理可能正是狐径, 而 Gitee 本来就直连更快)
 function Get-BwBytes([string]$url, [int]$timeoutSec = 20) {
   # 2026-10-12 (审查 P1): 原来用 WebClient.DownloadData —— $timeoutSec 根本没接到任何超时设置上,
@@ -781,7 +787,7 @@ function Get-BwBytes([string]$url, [int]$timeoutSec = 20) {
   # 换 HttpWebRequest 显式设 Timeout/ReadWriteTimeout。
   # 顺带把 https 闸门做在总入口(审查 P1·安全): http:// 的下载地址一律拒绝 ——
   # version.json 里哈希与文件同源, http 源被中间人劫持就能同时伪造两者。
-  if ($url -match '^http://') { Log ('下载: 拒绝 http:// 地址(只允许 https): ' + $url) 'WARN'; return $null }
+  if ($url -match '^http://' -and -not (Test-BwIsLoopbackHttp $url)) { Log ('下载: 拒绝非回环 http:// 地址(只允许 https 或回环 http): ' + $url) 'WARN'; return $null }
   $toMs = 20000
   try { if ($timeoutSec -gt 0) { $toMs = $timeoutSec * 1000 } } catch {}
   for ($try = 1; $try -le 3; $try++) {
@@ -866,8 +872,8 @@ function Show-BwUpGradeFlow([string]$label, [int]$step, [int]$total, [int]$frame
 }
 # 下载 + 动画(异步下载, 一边下一边流动); 失败返回 $null
 function Get-BwBytesAnimated([string]$url, [int]$timeoutSec, [string]$label, [int]$step, [int]$total) {
-  # 2026-10-12 (审查 P1·安全): 同 Get-BwBytes 的 https 闸门。
-  if ($url -match '^http://') { Log ('下载: 拒绝 http:// 地址(只允许 https): ' + $url) 'WARN'; return $null }
+  # 2026-10-12 (审查 P1·安全): 同 Get-BwBytes 的 https 闸门（2026-10-16 放行回环 http）。
+  if ($url -match '^http://' -and -not (Test-BwIsLoopbackHttp $url)) { Log ('下载: 拒绝非回环 http:// 地址(只允许 https 或回环 http): ' + $url) 'WARN'; return $null }
   try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $wc = New-Object System.Net.WebClient
@@ -902,14 +908,63 @@ function Show-BwUpGradeDone([bool]$ok, [string]$to, [string]$msg) {
   }
   Write-Host ''
 }
+# 2026-10-16 (升级通道加固): 在"相信 version.json 之前"先用主程序内置公钥验签。
+# 签名对象是 version.json 的**原始字节**, 签名在 <源地址>.sig (128 个十六进制字符)。
+# 这里把原始字节与 .sig 都落到临时文件, 调 壁纸助手.exe --verify-update 拿退出码:
+#   0 = 通过; 非 0 = 拒绝(缺签名/格式错/不匹配, 主程序会打印人话并返回非 0)。
+# 纯读纯计算: 除了写两个临时文件(验完即删), 不联网、不改任何状态。
+function Test-BwUpdateSignature([byte[]]$rawBytes, [string]$source) {
+  $exe = Get-BwExePath
+  if (-not $exe) { Log '升级验签: 找不到主程序路径(launcher.txt), 无法验签, 拒绝这次升级信息' 'WARN'; return $false }
+  $sigText = ''
+  if ($source -match '^https://' -or (Test-BwIsLoopbackHttp $source)) {
+    $sigText = Get-BwText ($source + '.sig') 10
+  } elseif ($source -match '^http://') {
+    Log ('升级验签: 拒绝非回环 http:// 升级源(只允许 https 或回环 http): ' + $source) 'WARN'
+    return $false
+  } else {
+    $sp = $source + '.sig'
+    if (Test-Path -LiteralPath $sp) { try { $sigText = [System.IO.File]::ReadAllText($sp) } catch { $sigText = '' } }
+  }
+  if (-not $sigText) { Log ('升级验签: 拿不到签名 ' + $source + '.sig, 拒绝这次升级信息') 'WARN'; return $false }
+  $vjTmp = Join-Path $env:TEMP ('bwvj_' + $PID + '_' + [guid]::NewGuid().ToString('N') + '.json')
+  $sigTmp = $vjTmp + '.sig'
+  $rc = 1
+  try {
+    [System.IO.File]::WriteAllBytes($vjTmp, $rawBytes)
+    [System.IO.File]::WriteAllText($sigTmp, $sigText, (New-Object System.Text.UTF8Encoding($false)))
+    # exe 路径与文件路径都显式加引号(中文 + 空格安全), 用 Start-Process -Wait -PassThru 拿退出码
+    $p = Start-Process -FilePath $exe -ArgumentList @('--verify-update', ('"' + $vjTmp + '"'), ('"' + $sigTmp + '"')) -WindowStyle Hidden -Wait -PassThru
+    $rc = [int]$p.ExitCode
+  } catch {
+    Log ('升级验签: 调用主程序验签出错: ' + $_.Exception.Message) 'WARN'
+    $rc = 1
+  } finally {
+    try { [System.IO.File]::Delete($vjTmp) } catch {}
+    try { [System.IO.File]::Delete($sigTmp) } catch {}
+  }
+  if ($rc -ne 0) {
+    Log ('升级验签: version.json 验签未通过(退出码 ' + $rc + '), 已拒绝这次升级信息') 'WARN'
+    return $false
+  }
+  return $true
+}
 function Get-BwUpdateInfo {
   param([switch]$Force, [switch]$Offline)
+  # 2026-10-16 (升级通道加固): 只认"验过签"的缓存。旧版(或之前那份)写的缓存没有 sig_ok 标记,
+  # 当没缓存、重新联网验签 —— 否则"删掉 update.json / 读一份旧缓存"就成了跳过验签的后门。
   if (-not $Force -and (Test-Path -LiteralPath $global:BWUpdateFile)) {
     try {
       $c = Get-Content -LiteralPath $global:BWUpdateFile -Raw -Encoding UTF8 | ConvertFrom-Json
-      $age = (Get-Date) - ([datetime]::FromFileTime([int64]$c.checked_ft))
-      if ($age.TotalHours -lt 6) { return $c }
-      if ($Offline) { return $c }
+      $cachedOk = $false
+      try { if ($c.PSObject.Properties['sig_ok'] -and $c.sig_ok) { $cachedOk = $true } } catch {}
+      if (-not $cachedOk) {
+        Log '升级缓存不是验签得来的(可能是旧版写的), 忽略它、重新联网验签' 'WARN'
+      } else {
+        $age = (Get-Date) - ([datetime]::FromFileTime([int64]$c.checked_ft))
+        if ($age.TotalHours -lt 6) { return $c }
+        if ($Offline) { return $c }
+      }
     } catch {}
   } elseif ($Offline) { return $null }
   $urls = @()
@@ -936,20 +991,30 @@ function Get-BwUpdateInfo {
   if ($urls.Count -eq 0) { Log '升级源: 候选地址是空的, 这次没法检查更新' 'WARN'; return $null }
   if ($cfgUrl) { Log ('升级源: 自定义地址与内置地址一起试(共 ' + $urls.Count + ' 个): ' + ($urls -join ' | ')) }
   foreach ($u in $urls) {
+    $rawBytes = $null
     $raw = ''
-    if ($u -match '^https://') { $raw = Get-BwText $u }
-    elseif ($u -match '^http://') { Log ('升级源: 拒绝 http:// 地址(只允许 https): ' + $u) 'WARN' }
-    elseif (Test-Path -LiteralPath $u) { try { $raw = Get-Content -LiteralPath $u -Raw -Encoding UTF8 } catch { $raw = '' } }
+    if ($u -match '^https://' -or (Test-BwIsLoopbackHttp $u)) {
+      $rawBytes = Get-BwBytes $u
+      if ($rawBytes) { $raw = [System.Text.Encoding]::UTF8.GetString($rawBytes) }
+    }
+    elseif ($u -match '^http://') { Log ('升级源: 拒绝非回环 http:// 地址(只允许 https 或回环 http): ' + $u) 'WARN' }
+    elseif (Test-Path -LiteralPath $u) {
+      try { $rawBytes = [System.IO.File]::ReadAllBytes($u); $raw = [System.Text.Encoding]::UTF8.GetString($rawBytes) } catch { $rawBytes = $null; $raw = '' }
+    }
     if (-not $raw) { Log ('升级源: ' + $u + ' 没取到内容, 试下一个'); continue }
+    # 2026-10-16 (升级通道加固): 先验签、后相信。验不过就整条作废、试下一个。
+    if (-not (Test-BwUpdateSignature $rawBytes $u)) { continue }
     try {
       $j = $raw | ConvertFrom-Json
       if (-not $j.version) { Log ('升级源: ' + $u + ' 里没有 version 字段, 试下一个') 'WARN'; continue }
       $j | Add-Member -NotePropertyName checked_ft -NotePropertyValue ((Get-Date).ToFileTime()) -Force
       $j | Add-Member -NotePropertyName source -NotePropertyValue $u -Force
+      # 2026-10-16 (升级通道加固): 标记"这份结果是验过签的", 缓存命中才能放心复用(见上面读缓存分支)
+      $j | Add-Member -NotePropertyName sig_ok -NotePropertyValue $true -Force
       # 2026-10-09 (审查 H-7): 缓存也走原子写 —— 它被写坏只是白查一次,
       # 但既然有现成的原子写, 就没必要留一个"半截 JSON"在数据目录里。
       [void](Save-BwJsonAtomic $global:BWUpdateFile $j)
-      Log ('升级源: 这次实际用的是 ' + $u + ' (升级源版本 v' + [string]$j.version + ')')
+      Log ('升级源: 这次实际用的是 ' + $u + ' (升级源版本 v' + [string]$j.version + ', 已验签)')
       return $j
     } catch { Log ('升级源: ' + $u + ' 的内容解析不了, 试下一个') 'WARN'; continue }
   }

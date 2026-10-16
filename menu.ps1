@@ -5,7 +5,7 @@
 param([switch]$DryRun)
 . (Join-Path $PSScriptRoot 'core.ps1') -DryRun:$DryRun
 
-$global:BWVersion = '2.2.1'
+$global:BWVersion = '2.3.0'
 
 # 显示名(2026-10-09 合规要求: 产品名不带他人商标): 界面上就叫「桌面壁纸」。
 # 2026-10-12 产品改名「微软壁纸助手」->「壁纸助手」: exe 文件名/数据目录/图标都换新名。
