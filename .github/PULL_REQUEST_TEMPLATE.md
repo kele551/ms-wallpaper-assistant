@@ -20,6 +20,8 @@ python build-exe.py --release
 
 - [ ] 我自己从源码构建过（`python build-exe.py --release`），产物能双击打开菜单
 - [ ] 改动涉及 `.ps1` 时：文件仍是 **UTF-8 带 BOM**（PS 5.1 对无 BOM 文件按 ANSI 读，中文会乱码并解析失败）
+- [ ] 跑了仓库自带的闸门并把结果贴在上面：`python tools/preflight_release.py`（行为类改动的判据；有红项就说明为什么）
+- [ ] 我认领的任务来自 [TASKS.md](../TASKS.md) 或相关 Issue，**它的「验收命令」输出已贴在上面**（没贴 = 还没做完）
 
 ## 自查清单
 
