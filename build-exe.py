@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 一键打包: 把 launcher.py + core.ps1 + menu.ps1 + 使用说明.txt + 图标
 打成一个单文件绿色 exe。
@@ -94,7 +94,11 @@ VSVersionInfo(
 
 
 def main():
-    missing = [f for f in PAYLOAD_FILES + ['launcher.py'] if not os.path.isfile(os.path.join(HERE, f))]
+    # 2026-10-16: _ed25519.py 也要进包 —— 它是 launcher.py --verify-update 的验签实现
+    # (纯 Python、零第三方依赖)。不在 PAYLOAD_FILES 里(它不释放到数据目录), 但要跟 launcher.py
+    # 一起拷进临时目录, PyInstaller 才会把它打进 exe, 否则 --verify-update 会报"验签模块缺失"。
+    missing = [f for f in PAYLOAD_FILES + ['launcher.py', '_ed25519.py']
+               if not os.path.isfile(os.path.join(HERE, f))]
     if missing:
         print('缺文件, 没法打包: ' + ', '.join(missing))
         return 1
@@ -125,6 +129,8 @@ def main():
         for f in PAYLOAD_FILES:
             shutil.copy2(os.path.join(HERE, f), os.path.join(payload, f))
         shutil.copy2(os.path.join(HERE, 'launcher.py'), os.path.join(work, 'launcher.py'))
+        # 2026-10-16: 验签实现跟着 launcher.py 一起拷进临时目录, PyInstaller 才会打进去
+        shutil.copy2(os.path.join(HERE, '_ed25519.py'), os.path.join(work, '_ed25519.py'))
 
         vfile = os.path.join(work, 'file_version.txt')
         make_version_file(vfile, version)
