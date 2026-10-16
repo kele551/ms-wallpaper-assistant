@@ -31,7 +31,7 @@
 
 <p><sub>2026-10-12 产品更名：「微软壁纸助手」→「壁纸助手」（仓库名与下载地址不变；界面显示名一直是「桌面壁纸」）</sub></p>
 
-<p>作者 <b>海风（kele551）</b>　·　<a href="https://gitee.com/kele551/ms-wallpaper-assistant">Gitee（主）</a>　·　<a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub（镜像）</a>　·　<a href="docs/README_EN.md">English</a></p>
+<p>作者 <b>海风（kele551）</b>　·　<a href="https://gitee.com/kele551/ms-wallpaper-assistant">Gitee（主）</a>　·　<a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub（镜像）</a>　·　<a href="https://atomgit.com/kele551/ms-wallpaper-assistant">AtomGit（镜像）</a>　·　<a href="docs/README_EN.md">English</a></p>
 </div>
 
 <details>
@@ -89,7 +89,10 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ### 👉 [点这里下载 v2.2.1 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.2.1/MSWallpaperAssistant-v2.2.1.zip)
 
-> 7.3 MB 的 zip，解压后里面就两样东西：`壁纸助手.exe`（双击这个）+ `使用说明.txt`。
+> **三个平台代码一致**：[Gitee](https://gitee.com/kele551/ms-wallpaper-assistant)（主源）· [GitHub](https://github.com/kele551/ms-wallpaper-assistant)（镜像）· [AtomGit](https://atomgit.com/kele551/ms-wallpaper-assistant)（代码镜像，只提供源码归档）。
+> **二进制发行包请从 Gitee（主）或 GitHub（镜像）下载**；三个平台都收 Issue / PR。
+
+> 约 7.2 MB 的 zip（7,561,140 字节），解压后里面就两样东西：`壁纸助手.exe`（双击这个）+ `使用说明.txt`。
 > 就这一个 exe，不用挑、不用装、不用下一步下一步。
 >
 > **杀软报毒是误报，可以放心。** 程序没有数字签名、又是「单文件自解压」打包、自动升级还会下载脚本再运行，

@@ -55,7 +55,7 @@ images stay on your own machine.
 > Not affiliated with, endorsed by, or sponsored by any image provider. "Bing" and "Windows
 > Spotlight" are used only to describe where the images come from.
 
-> 作者 / Author: **HaiFeng (kele551)** · Gitee（主）: <https://gitee.com/kele551/ms-wallpaper-assistant> · GitHub（镜像）: <https://github.com/kele551/ms-wallpaper-assistant>
+> 作者 / Author: **HaiFeng (kele551)** · Gitee（主）: <https://gitee.com/kele551/ms-wallpaper-assistant> · GitHub（镜像）: <https://github.com/kele551/ms-wallpaper-assistant> · AtomGit（镜像，代码）: <https://atomgit.com/kele551/ms-wallpaper-assistant>
 
 ---
 

@@ -44,6 +44,19 @@ $e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile("core.p
 - 在 PR / 回复里写清**你跑过哪些命令、结果如何** —— 这个仓库的"契约"是 `tools/preflight_release.py`，能全绿最好；
 - 测试会真的启动程序并换掉当前桌面壁纸，跑之前心里有数。
 
+## 平台（三个，代码一致）
+
+代码同时镜像到三处：**Gitee（主源）** / **GitHub（镜像）** / **AtomGit（代码镜像）**。
+**二进制发行包只发 Gitee 与 GitHub** —— AtomGit 目前没有附件上传接口（它的 Release 只提供源码归档）。
+
+```powershell
+git push origin main --tags                     # Gitee（本仓库 origin 就是 Gitee）
+git push atomgit main --tags                    # AtomGit（令牌走 GIT_ASKPASS，不会出现在命令行）
+# GitHub 侧走工作区的纯 REST 工具（见维护者工作区工具说明）
+```
+
+三个平台改完都要推，**内容必须逐字节一致**（判定方法：`git diff atomgit/main origin/main` 应为空）。
+
 ## 任务从哪来
 
 GitHub Issues 里带 `good first issue` / `help wanted` 标签的条目，每条都写了**验收标准**；
