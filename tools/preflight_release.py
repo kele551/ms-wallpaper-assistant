@@ -108,6 +108,7 @@ USAGE = """桌面壁纸发版前自检 —— 用法
   ⑦ 测试套件 tests/test_all.py（需要已打包的成品 exe）
   ⑧ 链接与徽章可访问性（需要联网，--no-links/--offline 可跳过）
   ⑨ 线上升级源版本号对齐（只算 WARN）
+  ⑩ 升级源 Ed25519 验签（从 launcher.py 解析内置公钥；正例 + 两个负例；缺 .sig 时 [SKIP]）
 
 判据: 红项（FAIL）一条都不许有 —— 有一条就不许发布；
       跳过（SKIP）与警告（WARN）不阻断发布，但结尾会单独列出来，发布前看一眼。
@@ -205,6 +206,83 @@ HAVE_PS = False      # 有没有可用的 powershell（非 Windows / 精简系�
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# ⑩ 升级源的 Ed25519 验签（2026-10-16 升级通道加固）
+# ══════════════════════════════════════════════════════════════════════════
+SIG_NAME = 'version.json.sig'
+PUBKEY_RE = re.compile(r"""UPDATE_PUBKEY\s*=\s*['"]([0-9a-fA-F]+)['"]""")
+_HEX128 = re.compile(r'[0-9a-fA-F]{128}')
+
+
+def check_update_signature():
+    """⑩：从 launcher.py 解析内置公钥 → 正例（.sig 验 version.json 通过）→
+    两个负例（version.json 改一字节 / .sig 改一字符必须失败）。.sig 不存在时 [SKIP]。"""
+    print()
+    print('⑩ 升级源 Ed25519 验签（用客户端源码里内置的公钥）')
+    _src_p = os.path.join(REPO, 'launcher.py')
+    _src = read(_src_p) or ''
+    _pm = PUBKEY_RE.search(_src)
+    if not _pm:
+        check('从 launcher.py 里解析得到内置公钥 UPDATE_PUBKEY', False,
+              '正则未命中：客户端源码里可能改了常量名或删了公钥')
+        return ''
+    _pub = _pm.group(1)
+    check('从 launcher.py 里解析得到内置公钥 UPDATE_PUBKEY',
+          len(_pub) == 64, '公钥 %s…（%d 个十六进制字符）' % (_pub[:16], len(_pub)))
+
+    _ed_p = os.path.join(REPO, '_ed25519.py')
+    if not os.path.exists(_ed_p):
+        check('仓库里有 _ed25519.py（纯 Python 验签实现）', False, '找不到 %s' % _ed_p)
+        return _pub
+    try:
+        if REPO not in sys.path:
+            sys.path.insert(0, REPO)
+        import _ed25519
+    except Exception as _e:
+        check('_ed25519.py 能加载起来', False, type(_e).__name__)
+        return _pub
+    check('_ed25519.py 能加载起来', True)
+
+    _vjp = os.path.join(REPO, 'version.json')
+    _sigp = os.path.join(REPO, SIG_NAME)
+    if not os.path.exists(_sigp):
+        print('  [SKIP] 本地 %s 还不存在 —— 发版时由 make_version_json.py 现场生成；'
+              '这一节的"正验 + 两个负例"这次没跑（换钥匙忘改客户端这类问题仍由上面那条公钥解析拦住）'
+              % SIG_NAME)
+        return _pub
+    _sigtxt = read(_sigp) or ''
+    check('%s 是 128 个十六进制字符（一个 64 字节签名的十六进制）' % SIG_NAME,
+          bool(_HEX128.fullmatch(_sigtxt.strip())),
+          '实长 %d 字符' % len(_sigtxt.strip()))
+    _raw = open(_vjp, 'rb').read()
+    try:
+        _pk = bytes.fromhex(_pub)
+        _sg = bytes.fromhex(_sigtxt.strip())
+    except Exception as _e:
+        check('公钥与签名都是合法十六进制', False, type(_e).__name__)
+        return _pub
+    _ok = bool(_ed25519.checkvalid(_sg, _raw, _pk))
+    check('用内置公钥验 version.json 的签名 == 通过', _ok,
+          '（不过 = 签名与 version.json 不是同一批字节，或私钥与内置公钥不是一对）')
+    # ── 负例（证明闸门不是摆设）────────────────────────────────────────
+    _bad = bytearray(_raw)
+    if _bad:
+        _bad[len(_bad) // 2] ^= 0x01
+    _neg1 = not _ed25519.checkvalid(_sg, bytes(_bad), _pk)
+    check('负例：version.json 改一个字节后验签必须失败', _neg1,
+          '（这条绿 = 闸门真在看内容）')
+    _st = _sigtxt.strip()
+    _neg2 = False
+    if len(_st) == 128:
+        _flip = ('0' if _st[0].lower() != '0' else '1') + _st[1:]
+        try:
+            _neg2 = not _ed25519.checkvalid(bytes.fromhex(_flip), _raw, _pk)
+        except Exception:
+            _neg2 = False
+    check('负例：.sig 改一个字符后验签必须失败', _neg2)
+    return _pub
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # 命令行开关（写法与狐径 tools/preflight_release.py:441-456 一致）
 # ══════════════════════════════════════════════════════════════════════════
 KNOWN_ARGS = ('-h', '--help', '--offline', '--no-links')
@@ -263,7 +341,7 @@ check('治理与协作文件齐全（%d 项）' % len(GOVERNANCE), not _missing,
       ('缺: ' + '、'.join(_missing)) if _missing else
       'LICENSE / CONTRIBUTING / COMPLIANCE / SECURITY / CI 模板都在')
 
-SOURCE_FILES = ('launcher.py', 'core.ps1', 'menu.ps1', 'build-exe.py',
+SOURCE_FILES = ('launcher.py', 'core.ps1', 'menu.ps1', 'build-exe.py', '_ed25519.py',
                 '壁纸助手.ico', '使用说明.txt', 'version.json',
                 'tests/test_all.py', 'tests/syn.ps1', 'tests/gen_ps_test.py',
                 'tools/publish.py', 'tools/make_version_json.py',
@@ -733,5 +811,10 @@ else:
     if _gtv:
         check_warn('Gitee main 的 version.json 版本 == 本地 v%s' % VER,
                    str(_gtv).lstrip('v') == VER, '线上=%s 本地=%s' % (_gtv, VER))
+
+# ══════════════════════════════════════════════════════════════════════════
+# ⑩ 升级源 Ed25519 验签（纯读文件 + 纯计算，--offline / --dry-run 也照跑）
+# ══════════════════════════════════════════════════════════════════════════
+check_update_signature()
 
 finish()

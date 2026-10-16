@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 壁纸助手 - 绿色单文件版启动器。
 
@@ -36,6 +36,7 @@ import io
 import json
 import msvcrt
 import os
+import re
 import shutil
 import hashlib
 import subprocess
@@ -44,7 +45,15 @@ import time
 import datetime
 import ctypes
 
-VERSION = '2.2.1'
+VERSION = '2.3.0'
+# 【2026-10-16 升级通道加固】内置的 Ed25519 **公钥**（离线生成，公开无妨、本来就要随程序分发）。
+# 升级源 version.json 必须带一份同目录的 `version.json.sig`（128 个十六进制字符 = 64 字节签名），
+# 用这把公钥验过才认；验不过 / 没签名 / 签名格式不对，一律**拒绝**（fail-closed，见 mode_verify_update）。
+# 没有私钥就签不出合法签名，所以即便 Gitee / GitHub 账号被盗、有人推了恶意 version.json + 恶意 exe，
+# 客户端也不会装。私钥只在维护者机器上、绝不入库（见 docs/SECURITY.md）。
+# 能力边界（别夸大）：这挡的是"升级源被篡改 / 中间人换包"；挡不住维护者机器上的私钥本身被偷，
+# 也不等于 Windows 代码签名证书。
+UPDATE_PUBKEY = 'cdb8bb7a545ca55a92f4e6744dada5c80437ade25eb0dfc5c8a2b8f177f39ef1'
 # 2026-10-12 产品改名: 「微软壁纸助手」->「壁纸助手」(去掉他人商标前缀)。
 # 旧名常量**刻意保留**, 只做兼容探测:
 #   * 新数据目录 %LOCALAPPDATA%\壁纸助手; 老目录第一次启动时整体**复制**过来
@@ -385,12 +394,21 @@ def migrate_from_legacy_appdata(dst):
 
 def data_dir():
     """数据放哪, 按这个顺序定:
+       0) 演练隔离: 环境变量 MWA_DATA 直接指定数据目录 (优先于下面一切; 不设时行为不变) ——
+          2026-10-16 加, 类比狐径 FOXPATH_DATA: 发版前升级演练用独立目录, 绝不碰用户真实数据
        1) 便携模式: exe 旁边的「壁纸助手数据」(或老名「微软壁纸助手数据」)里放着 portable.txt -> 跟着 exe 走
        2) 正常:     %LOCALAPPDATA%\\壁纸助手  (老名目录第一次启动时复制迁移, 老目录保留)
                     —— 程序爱放哪放哪 (Program Files 也行), 旁边不会多出任何东西
        3) LOCALAPPDATA 写不进去 (极罕见) -> 才退回 exe 旁边
        发现 exe 旁边有旧数据 -> 自动搬进 2), 校验通过后再删掉旧的。
     """
+    _ov = (os.environ.get('MWA_DATA') or '').strip()
+    if _ov:
+        try:
+            os.makedirs(_ov, exist_ok=True)
+        except Exception:
+            pass
+        return _ov
     h = here()
     pd = os.path.join(h, DATA_DIR_NAME)
     if os.path.isfile(os.path.join(pd, 'portable.txt')) and writable(pd):
@@ -842,8 +860,67 @@ def mode_stop(d):
     return 0
 
 
+def mode_verify_update(argv):
+    """只读子命令: 壁纸助手.exe --verify-update <version.json> <version.json.sig>
+
+    给 core.ps1 的升级流程在「相信 version.json 之前」调用的验签闸门:
+      · 用内置公钥 UPDATE_PUBKEY 对 version.json 的**原始字节**验签;
+      · 通过退出 0, 缺失 / 格式错 / 不匹配打印人话并退出非 0;
+      · 纯读纯计算 —— 不联网、不写文件、不改任何状态(所以必须在 sync_payload 之前执行)。
+    import _ed25519 用 try/except 包住, 失败也走拒绝(fail-closed)。
+    """
+    idx = -1
+    for _i, _a in enumerate(argv):
+        if _a.lower().lstrip('-').lstrip('/') == 'verify-update':
+            idx = _i
+            break
+    if idx < 0:
+        return 2
+    _paths = [a for a in argv[idx + 1:] if not a.startswith(('-', '/'))]
+    if len(_paths) != 2:
+        say('用法: 壁纸助手.exe --verify-update <version.json> <version.json.sig>')
+        return 2
+    vj_path, sig_path = _paths[0], _paths[1]
+    try:
+        import _ed25519
+    except Exception as _e:
+        say('验签失败: 验签模块缺失(%s), 拒绝信任升级源' % type(_e).__name__)
+        return 1
+    try:
+        with open(vj_path, 'rb') as _f:
+            raw = _f.read()
+    except Exception as _e:
+        say('验签失败: 读不到 version.json (%s)' % type(_e).__name__)
+        return 1
+    try:
+        with open(sig_path, 'rb') as _f:
+            sig_hex = _f.read().decode('utf-8', 'replace').strip()
+    except Exception as _e:
+        say('验签失败: 读不到签名文件 (%s)' % type(_e).__name__)
+        return 1
+    if not re.fullmatch(r'[0-9a-fA-F]{128}', sig_hex):
+        say('验签失败: 签名格式不对(应为 128 个十六进制字符, 实际 %d 个字符)' % len(sig_hex))
+        return 1
+    try:
+        _pub = bytes.fromhex(UPDATE_PUBKEY)
+        _sig = bytes.fromhex(sig_hex)
+    except Exception as _e:
+        say('验签失败: 公钥/签名不是合法十六进制 (%s)' % type(_e).__name__)
+        return 1
+    if _ed25519.checkvalid(_sig, raw, _pub):
+        say('验签通过')
+        return 0
+    say('验签失败: 签名与 version.json 不匹配, 拒绝信任升级源')
+    return 1
+
+
 def main():
-    args = set(a.lower().lstrip('-').lstrip('/') for a in sys.argv[1:])
+    argv = sys.argv[1:]
+    # 2026-10-16: --verify-update 是纯读纯计算子命令, 必须在 sync_payload(会写数据目录)之前处理,
+    # 否则"验签"这个只读动作也会去释放脚本/写 launcher.txt, 违背"绝不写文件/改状态"。
+    if any(a.lower().lstrip('-').lstrip('/') == 'verify-update' for a in argv):
+        return mode_verify_update(argv)
+    args = set(a.lower().lstrip('-').lstrip('/') for a in argv)
     d, _ = sync_payload(data_dir())
     if args & {'daemon', 'd'}:
         return mode_daemon(d)

@@ -16,7 +16,7 @@
    ├─ 首次运行：把内嵌的 core.ps1 / menu.ps1 释放到 %LOCALAPPDATA%\壁纸助手 并记版本
    ├─ 双击      ：开控制台 → 调 menu.ps1（菜单）
    ├─ 定时/后台  ：调 core.ps1 -Cycle（换下一张壁纸，不建任何窗口）
-   └─ 升级      ：读线上 version.json → 比对 → 下载并校验 sha256 → 换 exe / 热更脚本
+   └─ 升级      ：读线上 version.json → **Ed25519 验签** → 比对 → 下载并校验 sha256 → 换 exe / 热更脚本
 ```
 
 ---
@@ -28,9 +28,9 @@
 | `launcher.py` | 唯一入口：落地、数据目录、菜单/后台调度、热更新与升级校验、自启 | 改升级流程、启动行为、数据目录规则 |
 | `core.ps1` | 核心库：图源下载、保存位置、库上限与清理、设壁纸 | 改图源、改换图逻辑、改清理规则 |
 | `menu.ps1` | 交互菜单（状态、换位置、看日志 `[L]`、检查更新…） | 改菜单文案与选项 |
-| `version.json` | **升级源**：版本号 + `core.ps1`/`menu.ps1` 的 sha256 + `launcher` 指纹 | 发版脚本自动生成，**不要手改** |
+| `version.json` | **升级源**：版本号 + `core.ps1`/`menu.ps1` 的 sha256 + `launcher` 指纹；同目录还有 `version.json.sig`（Ed25519 签名） | 发版脚本自动生成，**不要手改** |
 | `build-exe.py` | 打包（PyInstaller 6.22.3，产物 `壁纸助手.exe`） | 改打包参数、内嵌资源 |
-| `tools/make_version_json.py` | 生成 `version.json`（脚本指纹） | 发版链路 |
+| `tools/make_version_json.py` | 生成 `version.json`（脚本指纹），并用私钥签出 `version.json.sig` | 发版链路 |
 | `tools/publish.py` | 一键发布：改版本号 → 打包 → 生成升级源 → 双平台提交/发行版 → 验真 | 发版链路 |
 | `tools/preflight_release.py` | **发版前自检闸门**（版本一致性、冷启动、完整升级演练、失败分支、还原） | 发版前必跑；新增检查项 |
 | `tests/test_all.py`、`tests/syn.ps1`、`tests/gen_ps_test.py` | 端到端与菜单层测试、脚本同步 | 改逻辑后回归 |

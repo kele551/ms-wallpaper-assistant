@@ -126,6 +126,13 @@ powershell -NoProfile -Command "[void][System.Management.Automation.Language.Par
 不全绿不许发布**；红项（`[FAIL]`）一条都不许发，`[SKIP]` 是本机条件不满足
 （没装依赖 / 没有成品 exe / 没联网），不算失败但要在发布记录里写明原因。
 
+升级源现在带 **Ed25519 公钥验签 + sha256**，两道都过才替换，**验不过一律拒绝**：
+`version.json` 旁边必须有一份 `version.json.sig`（由私钥签名），客户端（`launcher.py --verify-update`）
+用内置公钥验签。发版时 `tools/make_version_json.py` 会自动签出 `.sig`；私钥取值：
+环境变量 `MWA_ED25519_KEY` → `~/.mwa-publish.json` 的 `"ed25519_key"` → 找不到就报错。
+**私钥只在维护者机器上、绝不入库**（公钥公开无妨）。能力边界：防升级源被篡改 / 中间人换包，
+防不了维护者私钥被偷，也不等于 Windows 代码签名证书。
+
 ### 测试程序时的两条安全线
 
 - 程序会用 `SystemParametersInfo(SPI_SETDESKWALLPAPER)` 换你的**真实桌面壁纸**，并把填充方式写进

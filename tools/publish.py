@@ -308,10 +308,18 @@ def gitee_release(ver, token, assets, notes):
 
 
 def make_version_json():
-    """生成升级源 version.json（要提交到 main，并作为发行版附件上传）。"""
+    """生成升级源 version.json + version.json.sig（要提交到 main，并作为发行版附件上传）。"""
     out = run([PY, os.path.join('tools', 'make_version_json.py')])
     print('   升级源 version.json 已生成:', out.strip().splitlines()[-1] if out.strip() else '')
-    return REPO_DIR / 'version.json'
+    vj = REPO_DIR / 'version.json'
+    sig = Path(str(vj) + '.sig')
+    txt = sig.read_text(encoding='utf-8').strip() if sig.is_file() else ''
+    if not re.fullmatch(r'[0-9a-fA-F]{128}', txt):
+        sys.exit('version.json.sig 没生成或格式不对（应为 128 个十六进制字符，实际 %d 个）—— 拒绝发布。\n'
+                 '客户端只认验过签的升级源，发一份没签名的出去会让已装用户一律被拒绝。' % len(txt))
+    print('   升级源 Ed25519 签名: %s（%d 个十六进制字符，前 16 位 %s…）'
+          % (sig.name, len(txt), txt[:16]))
+    return vj, sig
 
 
 def sync_github(ver, assets, notes_file):
@@ -421,6 +429,64 @@ def verify(ver, assets, gh_assets=None):
     return ok
 
 
+def _client_pubkey():
+    """从**客户端源码** launcher.py 里解析出内置公钥 UPDATE_PUBKEY。
+
+    故意解析源码、而不是在这里另写一份常量：签名的公钥和客户端内置的那把必须是同一把，
+    解析得到就天然一致；哪天换了钥匙却忘了改客户端，这里当场就对不上。
+    """
+    src = (REPO_DIR / 'launcher.py').read_text(encoding='utf-8')
+    m = re.search(r"""UPDATE_PUBKEY\s*=\s*['"]([0-9a-fA-F]{64})['"]""", src)
+    if not m:
+        sys.exit('从 launcher.py 里解析不到内置公钥 UPDATE_PUBKEY —— 拒绝发布')
+    return m.group(1)
+
+
+def verify_signature(vj, vsig):
+    """回读两平台线上的 version.json + version.json.sig，用客户端内置公钥**真验一遍**。
+
+    这一步验的是"用户点检查更新时到底能不能过"：
+      · 线上 version.json 的原始字节 → 与本地发布的那份一致；
+      · 同目录的 version.json.sig 拿得到、且用客户端内置公钥验得过。
+    任何一条不过就返回 False（发版算失败，别让用户自己发现升级通道是断的）。
+    """
+    print('⑧ 线上升级源验签（用客户端内置公钥，两个平台各一次）:')
+    if str(REPO_DIR) not in sys.path:
+        sys.path.insert(0, str(REPO_DIR))
+    try:
+        import _ed25519
+    except Exception as e:
+        sys.exit('加载 _ed25519.py 失败(%s) —— 拒绝发布（没法自证签名可用）' % type(e).__name__)
+    pub = bytes.fromhex(_client_pubkey())
+    local_raw = open(str(vj), 'rb').read()
+    ok = True
+    for label, base in (
+            ('Gitee ', '%s/%s/%s/raw/%s' % (GITEE_WEB, OWNER, REPO, BRANCH)),
+            ('GitHub', 'https://raw.githubusercontent.com/%s/%s/%s'
+             % (OWNER, REPO, BRANCH))):
+        try:
+            raw = _download(base + '/version.json')
+            sig_raw = _download(base + '/version.json.sig')
+        except Exception:
+            raw = sig_raw = None
+        if raw is None or sig_raw is None:
+            print('  [FAIL] %s 线上 version.json / .sig 取不到（Gitee 与 GitHub 都必须能取到）' % label)
+            ok = False
+            continue
+        same_bytes = raw == local_raw
+        sig_txt = sig_raw.decode('utf-8', 'replace').strip()
+        sig_ok = False
+        if re.fullmatch(r'[0-9a-fA-F]{128}', sig_txt):
+            try:
+                sig_ok = bool(_ed25519.checkvalid(bytes.fromhex(sig_txt), raw, pub))
+            except Exception:
+                sig_ok = False
+        ok = ok and same_bytes and sig_ok
+        print('  [%s] %s 线上 version.json 与本地一致=%s，Ed25519 验签=%s（公钥 %s…）'
+              % ('PASS' if (same_bytes and sig_ok) else 'FAIL', label, same_bytes, sig_ok, pub[:16]))
+    return ok
+
+
 # ---------- 入口 ----------
 def cmd_set_token(tok):
     save_token(tok)
@@ -463,8 +529,8 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
     tagged_exe = REPO_DIR / ('%s-v%s.exe' % (APP_NAME, ver))
     if not skip_build and not plain_exe.exists():
         sys.exit('找不到 %s' % plain_exe)
-    vj = make_version_json()
-    assets = [zip_path, vj] + [p for p in (plain_exe, tagged_exe) if p.exists()]
+    vj, vsig = make_version_json()
+    assets = [zip_path, vj, vsig] + [p for p in (plain_exe, tagged_exe) if p.exists()]
 
     # 2026-10-05 踩的坑: GitHub 会把中文附件名里的汉字**直接削掉** ——
     #   微软壁纸助手.exe      -> default.exe
@@ -473,7 +539,7 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
     ascii_exe = REPO_DIR / ('MSWallpaperAssistant-v%s.exe' % ver)
     if plain_exe.exists():
         shutil.copy2(str(plain_exe), str(ascii_exe))
-    gh_assets = [zip_path, vj] + ([ascii_exe] if ascii_exe.exists() else [])
+    gh_assets = [zip_path, vj, vsig] + ([ascii_exe] if ascii_exe.exists() else [])
 
     # README 必须在**提交之前**改好, 否则本次推送里 README 还是旧版本号 ——
     # 2026-10-05 就是这么把「点这里下载 v2.0.7」推到线上的。
@@ -497,13 +563,16 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
                      % (REPO_DIR.parent / 'tools' / 'preflight_release.py',
                         REPO_DIR / 'tools' / 'preflight_release.py'))
         print('   ── 发版前自检（必须全绿）──')
-        r = subprocess.run([PY, str(pf)], cwd=str(pf.parent.parent))
+        # 发版时带 --no-links：README 的下载链接指向"本次要发的 vX.Y.Z"，发版前它必然 404
+        # （还没传附件），属于预期、不是死链；其余链接与徽章在每次改 README 后单独跑自检即可。
+        r = subprocess.run([PY, str(pf), '--no-links'], cwd=str(pf.parent.parent))
         if r.returncode != 0:
             sys.exit('❌ 发版前自检未通过，已中止发布。修好再发（或 --skip-preflight 紧急跳过）')
         print('   ✅ 自检全绿，继续发布')
 
     git_commit_push(ver, ['docs/CHANGELOG.md', 'README.md', 'core.ps1', 'menu.ps1',
-                          'launcher.py', '使用说明.txt', 'version.json'])
+                          'launcher.py', '_ed25519.py', '使用说明.txt',
+                          'version.json', 'version.json.sig'])
     gitee_release(ver, token, assets, notes)
     if with_github:
         nf = notes_file or (REPO_DIR / '_notes.md')
@@ -515,6 +584,7 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
     else:
         print('⑥ 跳过 GitHub (默认只发 Gitee; 加 --github 才同步)')
     ok = verify(ver, assets, gh_assets)
+    ok = verify_signature(vj, vsig) and ok
     # 2026-10-05 修: 这一步原来只是打印, 验真失败也照样 exit 0 —— 于是
     # 「GitHub 附件没换成新的」被当成发布成功。现在验真不过就是**失败退出**。
     if not ok:
