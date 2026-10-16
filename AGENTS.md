@@ -47,4 +47,24 @@ $e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile("core.p
 ## 任务从哪来
 
 GitHub Issues 里带 `good first issue` / `help wanted` 标签的条目，每条都写了**验收标准**；
-没有把握的大改动，先开 Issue 说方案再动手。
+没有把握的大改动，先开 Issue 说方案再动手。仓库里还有一份机器可读的任务清单 [TASKS.md](TASKS.md)。
+
+---
+
+## English summary (for AI agents)
+
+- **What it is**: a Python launcher (`launcher.py` → packaged as `壁纸助手.exe`) plus two PowerShell scripts
+  (`core.ps1` cycles wallpapers, `menu.ps1` is the menu). Scripts are released into `%LOCALAPPDATA%\壁纸助手`
+  and can be hot-updated according to the hashes in `version.json`. No admin rights needed.
+- **Run / verify**: `python launcher.py` · `python -m py_compile launcher.py build-exe.py` ·
+  `python tools/preflight_release.py` (the release gate — must be all green before publishing).
+- **Never**:
+  - don't hand-edit `version.json` (it is the online update source; `scripts.*.sha256` must match the scripts in the repo);
+  - keep `.ps1` files as **UTF-8 with BOM** (dropping the BOM breaks PowerShell 5.1 parsing of Chinese text);
+  - don't rewrite line endings wholesale (this repo stores **LF**);
+  - never introduce local machine paths, private emails or tokens into the repo;
+  - banned wording anywhere: 绕过 / 翻墙 / 梯子 / 科学上网 / 墙 / 破解 / 屏蔽;
+  - don't change the author strings (`海风（kele551）` / `HaiFeng (kele551)`).
+- **Commits**: one change per commit, Chinese conventional prefixes (`fix:` / `feat:` / `docs:` / `chore:`),
+  and state which commands you ran and what they printed. Version numbers change only at release time.
+- **Backlog**: [TASKS.md](TASKS.md) and issues labelled `good first issue`.
