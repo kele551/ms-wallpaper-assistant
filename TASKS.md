@@ -10,10 +10,10 @@
 | W-01 | 英文说明（`docs/README_EN.md`）与中文 README 门面/内容对齐 | ★ | `docs/README_EN.md` | 徽章逐个 200 且是图片；文件内章节引用都有效；按键说明与中文一致 | #2 | open |
 | W-02 | 核对 CHANGELOG 里「未发布」那段与 README 的口径矛盾，并清掉仓库外路径引用 | ★ | `docs/CHANGELOG.md`、`README.md` | `git grep -n "未发布" -- docs/CHANGELOG.md README.md` 两处口径一致；`git grep -n "logs\\\\" -- docs/CHANGELOG.md` 无命中 | #3 | open |
 | W-03 | README 接上演示页，并在页面上标注录制版本 | ★ | `README.md`、`docs/demo/index.html` | `git grep -n "docs/demo" -- README.md` 有命中；页面出现「录制于 …」 | #4 | open |
-| W-04 | 修 `tools/publish.py` 的版本号改写规则：`core.ps1` 那条正则匹配不到内容（死配置），README 那条也已失效 | ★★ | `tools/publish.py` | 在临时副本上跑一次「改版本号」逻辑，三处版本常量 + README 当前版本文字都被改到 | — | open |
-| W-05 | `docs/CONTRIBUTING.md` 里"禁用词"那段三句话互相打架，统一成一处口径 | ★ | `docs/CONTRIBUTING.md` | 段落里不再出现"清单见维护者本地章程"这类指向仓库外的说法 | — | open |
-| W-06 | `tests/gen_ps_test.py` 模板里仍写死 `F:\wp-src` 与旧图标名，改成中性占位符 | ★★ | `tests/gen_ps_test.py` | 把仓库整份复制到别处后按 README 跑测试，能直接跑通 | — | open |
-| W-07 | 给 README 补一节独立的「从源码构建」（现在只指向 CONTRIBUTING 第四节） | ★ | `README.md` | README 里能直接看到构建命令与产物名 | — | open |
+| W-04 | 修 `tools/publish.py` 的版本号改写规则：`core.ps1` 那条正则匹配不到内容（死配置），README 那条也已失效 | ★★ | `tools/publish.py` | 在临时副本上跑一次「改版本号」逻辑，三处版本常量 + README 当前版本文字都被改到 | #5 | open |
+| W-05 | `docs/CONTRIBUTING.md` 里"禁用词"那段三句话互相打架，统一成一处口径 | ★ | `docs/CONTRIBUTING.md` | 段落里不再出现"清单见维护者本地章程"这类指向仓库外的说法 | #6 | open |
+| W-06 | `tests/gen_ps_test.py` 模板里仍写死 `F:\wp-src` 与旧图标名，改成中性占位符 | ★★ | `tests/gen_ps_test.py` | 把仓库整份复制到别处后按 README 跑测试，能直接跑通 | #7 | open |
+| W-07 | 给 README 补一节独立的「从源码构建」（现在只指向 CONTRIBUTING 第四节） | ★ | `README.md` | README 里能直接看到构建命令与产物名 | #8 | open |
 
 ## 验收时请顺手遵守的约定
 
