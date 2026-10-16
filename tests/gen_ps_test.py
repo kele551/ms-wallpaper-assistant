@@ -11,14 +11,16 @@ import sys
 sys.stdout.reconfigure(encoding='utf-8')
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)      # 仓库根：core.ps1 / menu.ps1 / 微软壁纸助手.ico 都在这里
+ROOT = os.path.dirname(HERE)      # 仓库根：core.ps1 / menu.ps1 / 壁纸助手.ico 都在这里
 T = os.path.join(HERE, '_t2')
 if os.path.isdir(T):
     shutil.rmtree(T, ignore_errors=True)
 os.makedirs(T, exist_ok=True)
 
+# 模板里**不写任何本机绝对路径**：仓库根用占位符 @ROOT@ 表示，末尾统一替换成实际位置
+# （换台机器、换个盘符都不会找不到 core.ps1 / menu.ps1 / 图标）。
 PS = r'''
-$T = 'F:\wp-src\tests\_t2'
+$T = '@ROOT@\tests\_t2'
 $out = @()
 function chk($n, $c, $x) {
   if ($c) { $script:out += ('  [通过] ' + $n) }
@@ -32,9 +34,9 @@ $before = @(Get-ChildItem -LiteralPath $realDesk -File -Filter '*.lnk' -ErrorAct
 # ---- 搭一个假的"程序目录": core.ps1 / menu.ps1(去掉主菜单) / ico / 假 exe ----
 $data = Join-Path $T 'data'
 New-Item -ItemType Directory -Force -Path $data | Out-Null
-Copy-Item 'F:\wp-src\core.ps1' (Join-Path $data 'core.ps1') -Force
-Copy-Item 'F:\wp-src\微软壁纸助手.ico' (Join-Path $data '微软壁纸助手.ico') -Force
-$menuSrc = Get-Content -LiteralPath 'F:\wp-src\menu.ps1' -Raw -Encoding UTF8
+Copy-Item '@ROOT@\core.ps1' (Join-Path $data 'core.ps1') -Force
+Copy-Item '@ROOT@\壁纸助手.ico' (Join-Path $data '壁纸助手.ico') -Force
+$menuSrc = Get-Content -LiteralPath '@ROOT@\menu.ps1' -Raw -Encoding UTF8
 $cut = $menuSrc.IndexOf('# ---------- 主菜单 ----------')
 if ($cut -lt 1) { $cut = $menuSrc.Length }
 $menuSrc.Substring(0, $cut) | Set-Content -LiteralPath (Join-Path $data 'menu_test.ps1') -Encoding UTF8
@@ -54,7 +56,7 @@ chk '桌面已被测试接管' ((Get-BwDesktopDir) -eq $desk) (Get-BwDesktopDir)
 
 # ---- 图标来源 ----
 $ico = Get-BwIconLocation $fakeExe
-chk '图标取自独立的 .ico 文件' ($ico -like '*微软壁纸助手.ico*') $ico
+chk '图标取自独立的 .ico 文件' ($ico -like '*壁纸助手.ico*') $ico
 
 # ---- 场景1: 从没建过 -> 建一次 ----
 Ensure-BwConfig | Out-Null
@@ -68,7 +70,7 @@ chk '快捷方式建在桌面上' (Test-Path -LiteralPath $lnk) $lnk
 if (Test-Path -LiteralPath $lnk) {
   $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
   chk '目标指向 exe' ($sc.TargetPath -eq $fakeExe) $sc.TargetPath
-  chk '图标指向 .ico' ($sc.IconLocation -like '*微软壁纸助手.ico*') $sc.IconLocation
+  chk '图标指向 .ico' ($sc.IconLocation -like '*壁纸助手.ico*') $sc.IconLocation
   chk '描述里带版本号' ($sc.Description -like ('*v' + $global:BWVersion + '*')) $sc.Description
 }
 $i1 = Get-BwDeskInfo
@@ -152,10 +154,10 @@ chk '真实桌面一个快捷方式都没多/没少' ($before -eq $after) "$befo
 Set-Content -LiteralPath (Join-Path $T 'out.txt') -Value $out -Encoding UTF8
 '''
 
-# 2026-10-10: 模板里的绝对路径原本写死作者机器的 F:\wp-src，换台机器必然找不到
-# core.ps1 / menu.ps1 / ico。现在模板里只留这一个根，在这里统一换成实际仓库根
-# （tests 的上一级）—— 注意替换后 $T 正好等于上面算出来的 <仓库>\tests\_t2。
-PS = PS.replace(r'F:\wp-src', ROOT)
+# 2026-10-10: 模板里原本写死作者机器上的仓库绝对路径，换台机器必然找不到
+# core.ps1 / menu.ps1 / 壁纸助手.ico。现在模板里只留 @ROOT@ 这一个占位符，在这里统一
+# 换成实际仓库根（tests 的上一级）—— 注意替换后 $T 正好等于 <仓库>\tests\_t2。
+PS = PS.replace('@ROOT@', ROOT)
 
 p = os.path.join(T, 'run.ps1')
 with open(p, 'w', encoding='utf-8-sig') as f:

@@ -363,6 +363,12 @@ if _dl:
 else:
     check('README 的「点这里下载」文案带当前版本号', True, '（没有该文案，跳过）')
 
+# 「当前最新：vX.Y.Z」这句正文是发版时会一起改的版本字样（tools/publish.py 的 VER_FILES 里那条
+# README 规则就照它改）；它一旦落后，读者看到的就是旧号 —— 2026-10-16 加这条断言，让漏改变红。
+_CUR = re.findall(r'\*\*当前最新：v([0-9.]+)\*\*', _rm)
+check('README「当前最新：vX.Y.Z」== v%s' % VER, _CUR == [VER],
+      '实际=%s' % ('、'.join(_CUR) if _CUR else '没找到（发版时不会被 publish.py 改到）'))
+
 # 使用说明.txt：里面提到的最高版本号必须就是当前版本（停在上一版就是没跟上）。
 _man = read(MANUAL) or ''
 _man_all = re.findall(r'v([0-9]+\.[0-9]+\.[0-9]+)', _man)
@@ -504,10 +510,17 @@ for _f, _t in sorted(_texts.items()):
     check('%s 里没有私人邮箱（已归一化空格/全角；允许 GitHub noreply 与签名服务域名）' % _f,
           not _mails, str(_mails[:3]))
 _bare = []
+# ⚠ 这里必须用「@ 紧跟域名」的正则，不能用 `_k in 文本` 的裸子串匹配 ——
+#   本文件自己就定义着 MAIL_BARE_KEYWORDS = ('qq.com', …) 这串字面量，2026-10-16 把
+#   tools/*.py 纳入扫描范围后，裸子串匹配立刻**自己抓自己**：自检每次必红
+#   （对外文档里没有私人邮箱域名关键字 -> tools/preflight_release.py: qq.com），
+#   把发版闸门堵死。要求 `@` 在前，既躲开自己的清单，也**仍能抓到**
+#   `someone@某域名`、`someone @ 某域名`（@ 被空格拆开）这两种真实形态。
+_BARE_RX = re.compile('@(%s)' % '|'.join(re.escape(_k) for _k in MAIL_BARE_KEYWORDS))
 for _f, _t in sorted(_texts.items()):
-    for _k in MAIL_BARE_KEYWORDS:
-        if _k in flatten(_t).lower():
-            _bare.append('%s: %s' % (_f, _k))
+    _hit = _BARE_RX.search(flatten(_t).lower())
+    if _hit:
+        _bare.append('%s: @%s' % (_f, _hit.group(1)))
 check('对外文档里没有私人邮箱域名关键字（连 @ 被拆掉也躲不过）', not _bare,
       '；'.join(_bare[:3]))
 
@@ -539,9 +552,13 @@ check('docs/CONTRIBUTING.md 写明发版前必须跑本自检（tools/preflight_
       'preflight_release.py' in (_texts.get('docs/CONTRIBUTING.md') or ''),
       '（贡献指南里要有这条，别人才知道有门可跑）')
 skip('对外文案红线词 0 命中',
-     'CONTRIBUTING「对外文案有禁用词清单」一节明确要求**不在仓库里逐词列举**'
-     '（清单自身会被内容扫描命中），所以这条判据不放进仓库脚本；'
-     '维护者工作区有专门的检查清单')
+     '这条不做成"全仓库关键词搜索"：**合规清单本身就是那串词**，仓库里有 5 处必须原样披露它'
+     '（`AGENTS.md` 禁区、`TASKS.md` 自查清单、`docs/ARCHITECTURE.md`、`docs/CONTRIBUTING.md` 的'
+     '「对外文案禁用词」一节 —— 该节是本仓库的唯一出处），全仓库搜索会把清单自己搜出来。'
+     '已人工确认：对外门面（README / 使用说明.txt / docs/README_EN.md / COMPLIANCE / SECURITY /'
+     'CODE_OF_CONDUCT / CODE_SIGNING_POLICY / CHANGELOG / .github）**一个词都没有**；'
+     '另一处命中是 `core.ps1` 的一条中文注释（说的是内部过滤逻辑，与对外文案无关）。'
+     '提交前自查：按 CONTRIBUTING 那一节列出的七个词搜一遍再提交')
 
 # ══════════════════════════════════════════════════════════════════════════
 # ⑦ 测试套件（需要已打包的成品 exe）
