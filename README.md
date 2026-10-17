@@ -3,7 +3,7 @@
 
 <h1>桌面壁纸</h1>
 
-href="https://gitcode.com/kele551/ms-wallpaper-assistant/releases" title="点击去下载（GitHub + GitCode 合计，每天自动更新）"><img alt="Downloads" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkele551%2Fms-wallpaper-assistant%2Fmain%2Fdocs%2Fdownloads.json&style=flat-square" height="30"></a>
+<a href="https://gitcode.com/kele551/ms-wallpaper-assistant/releases" title="点击去下载（GitHub + GitCode 合计，每天自动更新）"><img alt="Downloads" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkele551%2Fms-wallpaper-assistant%2Fmain%2Fdocs%2Fdownloads.json&style=flat-square" height="30"></a>
 <a href="https://gitcode.com/kele551/ms-wallpaper-assistant" title="浏览量 · Gitee + GitCode 合计 · 每天自动更新"><img alt="浏览量" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkele551%2Fms-wallpaper-assistant%2Fmain%2Fdocs%2Fviews.json&style=flat-square" height="30"></a>
 
 <a href="https://github.com/kele551/ms-wallpaper-assistant/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
