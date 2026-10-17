@@ -45,7 +45,7 @@ import time
 import datetime
 import ctypes
 
-VERSION = '2.3.0'
+VERSION = '2.3.1'
 # 【2026-10-16 升级通道加固】内置的 Ed25519 **公钥**（离线生成，公开无妨、本来就要随程序分发）。
 # 升级源 version.json 必须带一份同目录的 `version.json.sig`（128 个十六进制字符 = 64 字节签名），
 # 用这把公钥验过才认；验不过 / 没签名 / 签名格式不对，一律**拒绝**（fail-closed，见 mode_verify_update）。
