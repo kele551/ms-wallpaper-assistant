@@ -4,7 +4,7 @@
 <h1>桌面壁纸</h1>
 
 <a href="https://github.com/kele551/ms-wallpaper-assistant/releases" title="点击去下载"><img alt="Downloads" src="https://img.shields.io/github/downloads/kele551/ms-wallpaper-assistant/total?style=flat-square&label=GitHub%E4%B8%8B%E8%BD%BD&color=brightgreen" height="30"></a>
-<a href="https://gitee.com/kele551/ms-wallpaper-assistant/access" title="Gitee 仓库访问统计 · 实时计数"><img alt="Gitee 访问" src="https://hits.sh/gitee.com/kele551/ms-wallpaper-assistant.svg?label=Gitee%E8%AE%BF%E9%97%AE&color=c71d24&style=flat-square" height="30"></a>
+<a href="https://gitcode.com/kele551/ms-wallpaper-assistant" title="GitCode 仓库访问统计 · 实时计数"><img alt="GitCode 访问" src="https://hits.sh/gitcode.com/kele551/ms-wallpaper-assistant.svg?label=GitCode%E8%AE%BF%E9%97%AE&color=c71d24&style=flat-square" height="30"></a>
 
 <a href="https://github.com/kele551/ms-wallpaper-assistant/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
 <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square">
