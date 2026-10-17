@@ -87,7 +87,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 下载
 
-### 👉 [点这里下载 v2.3.0 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.3.0/MSWallpaperAssistant-v2.3.0.zip)
+### 👉 [点这里下载 v2.3.1 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.3.1/MSWallpaperAssistant-v2.3.1.zip)
 
 > **三个平台代码一致**：[Gitee](https://gitee.com/kele551/ms-wallpaper-assistant)（主源）· [GitHub](https://github.com/kele551/ms-wallpaper-assistant)（镜像）· [AtomGit](https://atomgit.com/kele551/ms-wallpaper-assistant)（代码镜像，只提供源码归档）。
 > **二进制发行包请从 Gitee（主）或 GitHub（镜像）下载**；三个平台都收 Issue / PR。
@@ -138,7 +138,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ```
   ============================================================
-   桌面壁纸 v2.3.0    作者: 海风（kele551）
+   桌面壁纸 v2.3.1    作者: 海风（kele551）
    gitee.com/kele551/ms-wallpaper-assistant
   ============================================================
 
@@ -255,7 +255,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 好不好用、哪儿别扭、还想要什么功能 —— 都欢迎说，一句两句也行：**提 Issue**（推荐）[GitHub Issues](https://github.com/kele551/ms-wallpaper-assistant/issues)　·　[Gitee Issues](https://gitee.com/kele551/ms-wallpaper-assistant/issues)，或直接在 [Gitee 仓库](https://gitee.com/kele551/ms-wallpaper-assistant) 留言。
 
-顺手带上这几样能省一轮来回：**Windows 版本**（设置 → 系统 → 关于）· **程序版本号**（菜单标题上就有，比如 `v2.3.0`）· **`wallpaper.log` 末尾十几行**（菜单 `[L]` 能看到）。
+顺手带上这几样能省一轮来回：**Windows 版本**（设置 → 系统 → 关于）· **程序版本号**（菜单标题上就有，比如 `v2.3.1`）· **`wallpaper.log` 末尾十几行**（菜单 `[L]` 能看到）。
 
 ---
 
@@ -271,7 +271,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 版本迭代
 
-**当前最新：v2.3.0**（2026-10-12；安装包曾在版本号不变的前提下更新过一次，内容见「下载」一节）。最近三代改了什么：
+**当前最新：v2.3.1**（2026-10-12；安装包曾在版本号不变的前提下更新过一次，内容见「下载」一节）。最近三代改了什么：
 
 - **v2.2.x**：产品更名「桌面壁纸」；升级可靠性、轮换顺序（永远按最旧优先）、硬盘占用（两个库都设上限 + 按屏幕挑画质）。
 - **v2.1.0**：显示名与合规调整；修真机上「升级后起不来」的事故。

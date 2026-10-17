@@ -2252,8 +2252,23 @@ function Set-BwWall([string]$path) {
   $target = Get-BwArtFitWall $path
   if (-not $target) { $target = $path }
   $cur = (Get-ItemProperty 'HKCU:\Control Panel\Desktop' -ErrorAction SilentlyContinue).Wallpaper
-  if ($cur -and ($cur -eq $target)) { return $true }
+  if ($cur -and ($cur -eq $target)) {
+    # 2026-10-17: 图没变, 但“填充方式”可能在开机/重启后被系统重置成居中 ——
+    # 必须顺手校对一遍, 否则开机第一张壁纸会一直显示成居中(桌面没铺满)。
+    # 老代码直接 return, 漏了这一步(用户反馈“每天开机第一张是居中”)。
+    if (-not (Test-BwStyleOk)) { return (Set-BwDesktopWallpaper $target) }
+    return $true
+  }
   return (Set-BwDesktopWallpaper $target)
+}
+
+# 2026-10-17: 系统里的填充方式 == 程序该设的值? (开机后被系统重置时, 用它判断要不要重设)
+function Test-BwStyleOk {
+  try {
+    $w = Get-BwWallStyle
+    $c = Get-ItemProperty 'HKCU:\Control Panel\Desktop' -ErrorAction SilentlyContinue
+    return [bool](((-not $w.Style) -or ([string]$c.WallpaperStyle -eq $w.Style)) -and ((-not $w.Tile) -or ([string]$c.TileWallpaper -eq $w.Tile)))
+  } catch { return $false }
 }
 # ---- 聚焦库 ----
 # 一律返回"普通数组"。不要写 `return ,@(...)` —— 它在 @(f).Count / f | Where-Object
@@ -4934,6 +4949,16 @@ function Invoke-BwCycle {
     try { $boot = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime.ToString('yyyy-MM-dd HH:mm:ss') } catch {}
     $rebooted = [bool]($boot -and $s.last_boot -and ($s.last_boot -ne $boot))
     if ($boot) { $s.last_boot = $boot }
+    # 2026-10-17: 开机/重启后, Windows 常把“壁纸填充方式”重置回居中 —— 这里按配置校对一遍,
+    # 避免开机第一张壁纸显示成居中。只在确实被改掉时才重设(不白重绘)。试运行不碰。
+    if (-not $global:BWDry) {
+      if (-not (Test-BwStyleOk)) {
+        try {
+          [void](Apply-BwWallStyle)
+          Log ('开机校对填充方式: 已被系统重置, 已恢复为 ' + (Get-BwWallStyle).Label)
+        } catch { Log ('开机校对填充方式失败: ' + $_.Exception.Message) 'WARN' }
+      }
+    }
     $last = Get-BwTime $s.last_swap
     $due = $true
     if ($last) { $due = ((($now - $last).TotalMinutes) -ge $gap) }
