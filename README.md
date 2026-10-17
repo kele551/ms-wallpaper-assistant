@@ -34,13 +34,6 @@
 <p>作者 <b>海风（kele551）</b>　·　<a href="https://gitee.com/kele551/ms-wallpaper-assistant">Gitee（主）</a>　·　<a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub（镜像）</a>　·　<a href="https://atomgit.com/kele551/ms-wallpaper-assistant">AtomGit（镜像）</a>　·　<a href="docs/README_EN.md">English</a></p>
 </div>
 
-> **📦 已迁移到 GitCode，本仓库（Gitee）停止更新（2026-10-17）**
->
-> **Gitee 最后一版是 v2.3.2（2026-10-17）**；以后的更新只在 [GitCode](https://gitcode.com/kele551/ms-wallpaper-assistant/releases)（主源）与 [GitHub](https://github.com/kele551/ms-wallpaper-assistant)（镜像）发布。
->
-> - **为什么迁**：Gitee 不公开发行版附件的下载数，统计不到真实下载量；GitCode（=AtomGit）能放 exe 附件、有准确的下载数接口，API 也更全。
-> - **老用户怎么过渡**：照常从本仓库升级即可，升到 **v2.3.2** 后客户端会自动切到 GitCode，不用重装、不用改配置。
-> - **三平台关系**：GitCode（主源）· Gitee（历史 + 旧入口）· GitHub（镜像），代码逐字节一致。
 
 <details>
 <summary>📊 <b>仓库数据一览</b>（点击展开）</summary>
