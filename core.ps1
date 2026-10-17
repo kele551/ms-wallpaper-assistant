@@ -743,6 +743,8 @@ function Repair-BwConfig([psobject]$c) {
 # 下载后**必须校验 SHA256**: 对不上就整批放弃, 继续用旧脚本(绝不半个包)。
 $global:BWUpdateFile = Join-Path $global:BWRoot 'update.json'
 $global:BWUpdateUrls = @(
+  # 2026-10-17: 主源切到 GitCode（国内、快、下载数可统计）；Gitee / GitHub 保留兜底。
+  'https://gitcode.com/api/v5/repos/kele551/ms-wallpaper-assistant/raw/version.json?ref=main',
   'https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/version.json',
   'https://raw.githubusercontent.com/kele551/ms-wallpaper-assistant/main/version.json'
 )
@@ -918,7 +920,14 @@ function Test-BwUpdateSignature([byte[]]$rawBytes, [string]$source) {
   if (-not $exe) { Log '升级验签: 找不到主程序路径(launcher.txt), 无法验签, 拒绝这次升级信息' 'WARN'; return $false }
   $sigText = ''
   if ($source -match '^https://' -or (Test-BwIsLoopbackHttp $source)) {
-    $sigText = Get-BwText ($source + '.sig') 10
+    # 2026-10-17: 升级源可能带查询串（GitCode 的 ?ref=main），.sig 要插在 ? 之前。
+    if ($source -match '\?') {
+      $pp = $source.Substring(0, $source.IndexOf('?'))
+      $qq = $source.Substring($source.IndexOf('?') + 1)
+      $sigText = Get-BwText ($pp + '.sig?' + $qq) 10
+    } else {
+      $sigText = Get-BwText ($source + '.sig') 10
+    }
   } elseif ($source -match '^http://') {
     Log ('升级验签: 拒绝非回环 http:// 升级源(只允许 https 或回环 http): ' + $source) 'WARN'
     return $false

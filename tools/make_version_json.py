@@ -84,7 +84,8 @@ def main():
     with io.open(os.path.join(REPO, 'launcher.py'), encoding='utf-8') as f:
         ver = re.search(r"^VERSION\s*=\s*'([^']+)'", f.read(), re.M).group(1)
     raw = 'https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/'
-    rel = 'https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v%s/' % ver
+    # 2026-10-17: launcher(exe) 下载源切到 GitCode（国内、快、下载数可统计）；脚本仍走 Gitee raw（稳）。
+    rel = 'https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v%s/' % ver
     out = {
         'version': ver,
         'min_launcher': ver,
