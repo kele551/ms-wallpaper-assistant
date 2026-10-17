@@ -12,7 +12,6 @@
 <img alt="Last Commit" src="https://img.shields.io/github/last-commit/kele551/ms-wallpaper-assistant?style=flat-square&label=last%20commit&color=blue">
 
 <a href="https://github.com/kele551/ms-wallpaper-assistant/stargazers"><img alt="GitHub Star" src="https://img.shields.io/github/stars/kele551/ms-wallpaper-assistant?style=flat-square&logo=github&label=GitHub%20Star&color=gold"></a>
-<a href="https://gitee.com/kele551/ms-wallpaper-assistant"><img alt="Gitee Star" src="https://gitee.com/kele551/ms-wallpaper-assistant/badge/star.svg"></a>
 <a href="https://github.com/kele551/ms-wallpaper-assistant/network/members"><img alt="GitHub Fork" src="https://img.shields.io/github/forks/kele551/ms-wallpaper-assistant?style=flat-square&label=GitHub%20Fork&color=blue"></a>
 <a href="https://github.com/kele551"><img alt="Follow Author" src="https://img.shields.io/github/followers/kele551?style=flat-square&logo=github&label=follow%20author&color=blue"></a>
 
@@ -21,7 +20,7 @@
 <img alt="Local Only" src="https://img.shields.io/badge/图片-只存本机-brightgreen?style=flat-square">
 <img alt="4K" src="https://img.shields.io/badge/画质-4K-blue?style=flat-square">
 
-<a href="https://gitee.com/kele551/ms-wallpaper-assistant/releases"><img alt="Download from Gitee" src="https://img.shields.io/badge/%F0%9F%93%A5_%E4%B8%8B%E8%BD%BD-Gitee%E4%B8%BB%E6%BA%90-c71d24?style=flat-square&logo=gitee&logoColor=white&labelColor=3d4552"></a>
+<a href="https://gitcode.com/kele551/ms-wallpaper-assistant/releases"><img alt="Download from GitCode" src="https://img.shields.io/badge/%F0%9F%93%A5_%E4%B8%8B%E8%BD%BD-GitCode%E4%B8%BB%E6%BA%90-c71d24?style=flat-square&logo=gitee&logoColor=white&labelColor=3d4552"></a>
 <a href="https://github.com/kele551/ms-wallpaper-assistant"><img alt="GitHub mirror" src="https://img.shields.io/badge/%F0%9F%90%99_%E6%BA%90%E7%A0%81-GitHub%E9%95%9C%E5%83%8F-24292f?style=flat-square&logo=github&logoColor=white&labelColor=3d4552"></a>
 <a href="https://www.bilibili.com/video/BV1Tupx6kEBe"><img alt="Bilibili demo" src="https://img.shields.io/badge/%F0%9F%93%BA_%E6%BC%94%E7%A4%BA-B%E7%AB%99%E8%A7%86%E9%A2%91-00a1d6?style=flat-square&logo=bilibili&logoColor=white&labelColor=3d4552"></a>
 <a href="https://github.com/kele551/ms-wallpaper-assistant/issues"><img alt="Issues" src="https://img.shields.io/badge/%F0%9F%90%9E_%E5%8F%8D%E9%A6%88-%E6%8F%90Issue-0969da?style=flat-square&labelColor=3d4552"></a>
@@ -31,7 +30,7 @@
 
 <p><sub>2026-10-12 产品更名：「微软壁纸助手」→「壁纸助手」（仓库名与下载地址不变；界面显示名一直是「桌面壁纸」）</sub></p>
 
-<p>作者 <b>海风（kele551）</b>　·　<a href="https://gitee.com/kele551/ms-wallpaper-assistant">Gitee（主）</a>　·　<a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub（镜像）</a>　·　<a href="https://atomgit.com/kele551/ms-wallpaper-assistant">AtomGit（镜像）</a>　·　<a href="docs/README_EN.md">English</a></p>
+<p>作者 <b>海风（kele551）</b>　·　<a href="https://gitcode.com/kele551/ms-wallpaper-assistant">GitCode（主）</a>　·　<a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub（镜像）</a>　·　<a href="https://atomgit.com/kele551/ms-wallpaper-assistant">AtomGit（镜像）</a>　·　<a href="docs/README_EN.md">English</a></p>
 </div>
 
 
@@ -44,7 +43,6 @@
 <img alt="Contributors" src="https://img.shields.io/github/contributors/kele551/ms-wallpaper-assistant?style=flat-square&label=contributors">
 <a href="https://github.com/kele551/ms-wallpaper-assistant/issues"><img alt="Issues" src="https://img.shields.io/github/issues/kele551/ms-wallpaper-assistant?style=flat-square&label=issues"></a>
 <img alt="Resolved" src="https://img.shields.io/github/issues-closed/kele551/ms-wallpaper-assistant?style=flat-square&label=resolved">
-<img alt="Gitee Fork" src="https://gitee.com/kele551/ms-wallpaper-assistant/badge/fork.svg">
 <img alt="Language" src="https://img.shields.io/github/languages/top/kele551/ms-wallpaper-assistant?style=flat-square">
 <img alt="Code Size" src="https://img.shields.io/github/languages/code-size/kele551/ms-wallpaper-assistant?style=flat-square&label=code%20size">
 <a href="https://github.com/kele551/ms-wallpaper-assistant/blob/main/docs/CONTRIBUTING.md"><img alt="PRs Welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square"></a>
@@ -88,7 +86,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 下载
 
-### 👉 [点这里下载 v2.3.2 安装包](https://gitee.com/kele551/ms-wallpaper-assistant/releases/download/v2.3.2/MSWallpaperAssistant-v2.3.2.zip)
+### 👉 [点这里下载 v2.3.2 安装包](https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v2.3.2/MSWallpaperAssistant-v2.3.2.zip)
 
 > **三个平台代码一致**：[Gitee](https://gitee.com/kele551/ms-wallpaper-assistant)（主源）· [GitHub](https://github.com/kele551/ms-wallpaper-assistant)（镜像）· [AtomGit](https://atomgit.com/kele551/ms-wallpaper-assistant)（代码镜像，只提供源码归档）。
 > **二进制发行包请从 Gitee（主）或 GitHub（镜像）下载**；三个平台都收 Issue / PR。
@@ -382,4 +380,4 @@ python tools/preflight_release.py        # 发版前自检：全绿才算可用
 
 ---
 
-<p align="center"><sub>© 2026 海风（kele551） · MIT License · <a href="https://gitee.com/kele551/ms-wallpaper-assistant">Gitee 主仓库</a> · <a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub 镜像</a></sub></p>
+<p align="center"><sub>© 2026 海风（kele551） · MIT License · <a href="https://gitcode.com/kele551/ms-wallpaper-assistant">GitCode 主仓库</a> · <a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub 镜像</a></sub></p>
