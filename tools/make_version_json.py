@@ -83,16 +83,19 @@ def main():
     a = ap.parse_args()
     with io.open(os.path.join(REPO, 'launcher.py'), encoding='utf-8') as f:
         ver = re.search(r"^VERSION\s*=\s*'([^']+)'", f.read(), re.M).group(1)
-    raw = 'https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/'
-    # 2026-10-17: launcher(exe) 下载源切到 GitCode（国内、快、下载数可统计）；脚本仍走 Gitee raw（稳）。
+    # 2026-10-20: Gitee 自 v2.3.2 起停止更新（主源搬到 GitCode），脚本地址**不能再指 Gitee raw**
+    # —— 那边停在旧版，热更时 sha256 必然对不上，等于把升级通道堵死。
+    # 这里改成 GitCode 的 raw API（与 core.ps1 的 BWUpdateUrls 同一种地址；实测匿名可取、
+    # 返回的就是文件原始字节），末尾必须带 ?ref=main，否则取到的是网页。
+    raw = 'https://gitcode.com/api/v5/repos/kele551/ms-wallpaper-assistant/raw/'
     rel = 'https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v%s/' % ver
     out = {
         'version': ver,
         'min_launcher': ver,
         'notes': '',
         'scripts': {
-            'core.ps1': {'sha256': sha256(os.path.join(REPO, 'core.ps1')), 'url': raw + 'core.ps1'},
-            'menu.ps1': {'sha256': sha256(os.path.join(REPO, 'menu.ps1')), 'url': raw + 'menu.ps1'},
+            'core.ps1': {'sha256': sha256(os.path.join(REPO, 'core.ps1')), 'url': raw + 'core.ps1?ref=main'},
+            'menu.ps1': {'sha256': sha256(os.path.join(REPO, 'menu.ps1')), 'url': raw + 'menu.ps1?ref=main'},
         },
         'launcher': {'sha256': sha256(a.exe), 'url': rel + '壁纸助手.exe',
                      'size': os.path.getsize(a.exe)},

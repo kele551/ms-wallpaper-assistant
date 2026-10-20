@@ -541,6 +541,9 @@ function Get-BwConfig {
   if (-not $c.wallpaper_style) { Add-Member -InputObject $c NoteProperty wallpaper_style 'fill' -Force }
   # 只在收藏里轮换。默认关。
   if (-not $c.fav_only) { Add-Member -InputObject $c NoteProperty fav_only $false -Force }
+  # 必应模式: 只换必应(每天一张), 不轮换聚焦。默认关。
+  # 2026-10-20 用户要求(与 GitHub #1 用户爱卡生同一诉求): 只想每天看必应当日图。
+  if (-not $c.PSObject.Properties['bing_only']) { Add-Member -InputObject $c NoteProperty bing_only $false -Force }
   if (-not $c.PSObject.Properties['desktop_shortcut']) { Add-Member -InputObject $c NoteProperty desktop_shortcut 'on' -Force }
   # 图库上限: 聚焦库最多留多少张。超了就把**已经看过**的最老的几张移进回收站。
   # 没看过的一律不动 —— 那是等着换的, 删了就得重新下载。
@@ -5031,6 +5034,37 @@ function Invoke-BwCycle {
       }
       Log '必应元数据取不到, 15 分钟后再试'
       # 故意不 return: 继续往下走, 免得整条节奏卡在这里
+    }
+
+    # ---- 必应模式: 只换必应、每天一张 (2026-10-20 用户要求) ----
+    # 规则 1 已经负责"每天第一次换成必应当日图"; 这里只额外处理"重启后把当天那张贴回去",
+    # 然后直接收工 —— 不做半小时轮换、不抓聚焦。
+    if ([bool]$c.bing_only) {
+      if ($rebooted) {
+        $bwp = ''
+        try {
+          $bmeta = Get-BwMeta 0
+          if ($bmeta) {
+            $bdt = Get-BwDisplayDate $bmeta
+            $bpp = Get-BwTargetPath $bdt (Get-BwName $bmeta)
+            if (Test-Path -LiteralPath $bpp) { $bwp = $bpp }
+          }
+        } catch {}
+        if (-not $bwp -and $s.last_wall -and (Test-Path -LiteralPath $s.last_wall)) { $bwp = $s.last_wall }
+        if ($bwp) {
+          if ($global:BWDry) {
+            Log ('试运行: 必应模式重启后本应贴回 ' + (Split-Path $bwp -Leaf))
+          } else {
+            [void](Set-BwWall $bwp)
+            $s.last_wall = $bwp
+            Log ('必应模式: 重启后贴回 ' + (Split-Path $bwp -Leaf))
+          }
+        } else {
+          Log '必应模式: 重启后没找到当日必应图, 等下一轮再试'
+        }
+      }
+      Save-BwStateKeepFav $s
+      return
     }
 
     # ---- 规则 2: 重启电脑 -> 立刻换一张聚焦 ----
