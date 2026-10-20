@@ -475,8 +475,11 @@ for _fname in ('core.ps1', 'menu.ps1'):
           str(_node.get('sha256') or '').upper() == _real,
           'json=%s 实际=%s' % (str(_node.get('sha256'))[:12], _real[:12]))
     _su = str(_node.get('url') or '')
+    # 2026-10-20: 升级源可能带查询串（GitCode raw API 必须写 ?ref=main）。
+    # 判定要按"路径最后一段"比，不能把 ?ref=main 也算进文件名里，否则真对了也报红。
+    _su_path = urllib.parse.urlparse(_su).path if _su else ''
     check('version.json 里 %s 的 url 文件名 == %s' % (_fname, _fname),
-          bool(_su) and _su.split('/')[-1] == _fname, _su[-32:] if _su else '空')
+          bool(_su) and _su_path.split('/')[-1] == _fname, _su[-32:] if _su else '空')
 
 # 附件名必须就是本次成品名 —— 改名发布最容易出的错：打包改了名、version.json 还指老附件名，
 # 全体老用户静默 404。
@@ -805,12 +808,13 @@ else:
         check_warn('GitHub main 的 version.json 版本 == 本地 v%s' % VER,
                    str(_ghv).lstrip('v') == VER,
                    '线上=%s 本地=%s（发布前"仓库更新"属正常）' % (_ghv, VER))
-    time.sleep(3.0)   # Gitee 限速：任何两次请求之间 ≥3 秒
-    _gtv = _remote_ver('Gitee(main)',
-                       'https://gitee.com/api/v5/repos/kele551/ms-wallpaper-assistant/contents/version.json?ref=main')
-    if _gtv:
-        check_warn('Gitee main 的 version.json 版本 == 本地 v%s' % VER,
-                   str(_gtv).lstrip('v') == VER, '线上=%s 本地=%s' % (_gtv, VER))
+    # 2026-10-20: 主源已迁到 GitCode（Gitee 自 v2.3.2 起停止更新）。
+    # 再拿 Gitee 比对只会永远"线上=旧版"，把真信号淹掉；这里改成查主源 GitCode。
+    _gcv = _remote_ver('GitCode(主源)',
+                       'https://gitcode.com/api/v5/repos/kele551/ms-wallpaper-assistant/raw/version.json?ref=main')
+    if _gcv:
+        check_warn('GitCode 主源的 version.json 版本 == 本地 v%s' % VER,
+                   str(_gcv).lstrip('v') == VER, '线上=%s 本地=%s' % (_gcv, VER))
 
 # ══════════════════════════════════════════════════════════════════════════
 # ⑩ 升级源 Ed25519 验签（纯读文件 + 纯计算，--offline / --dry-run 也照跑）

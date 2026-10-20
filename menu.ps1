@@ -5,7 +5,7 @@
 param([switch]$DryRun)
 . (Join-Path $PSScriptRoot 'core.ps1') -DryRun:$DryRun
 
-$global:BWVersion = '2.3.2'
+$global:BWVersion = '2.3.3'
 
 # 显示名(2026-10-09 合规要求: 产品名不带他人商标): 界面上就叫「桌面壁纸」。
 # 2026-10-12 产品改名「微软壁纸助手」->「壁纸助手」: exe 文件名/数据目录/图标都换新名。
@@ -634,6 +634,10 @@ function Show-BwSettings {
     $toSecShow = 20
     try { $toSecShow = Get-BwSrcTimeoutSec $c } catch { $toSecShow = 20 }
     Write-Host ('  [t] 单张下载超时    ' + $toSecShow + ' 秒  · 慢图床到点就放弃、换下一张(图源用)')
+    # 必应模式: 只换必应(每天一张), 不抓聚焦。2026-10-20 新增。
+    $bingOnlyTxt = '关'
+    if ([bool]$c.bing_only) { $bingOnlyTxt = '开' }
+    Write-Host ('  [e] 必应模式        ' + $bingOnlyTxt + '  · 开 = 只换必应、每天一张(不抓聚焦, 不半小时轮换)')
     Write-Host ''
     # 源池状态 + 三道闸门(用户要求: 菜单里能看出当前处于哪种模式, 别让人以为程序坏了)
     try {
@@ -1001,6 +1005,17 @@ function Show-BwSettings {
         } else { Write-Host '  没改。' }
         Pause-Bw
       }
+      'e' {
+        $c.bing_only = -not ([bool]$c.bing_only)
+        Save-BwConfig $c
+        if ([bool]$c.bing_only) {
+          Write-Host '  已开启必应模式: 每天只换成必应当日图, 不再半小时轮换、不抓聚焦。' -ForegroundColor Green
+        } else {
+          Write-Host '  已关闭必应模式: 恢复「每天必应一张 + 每 30 分钟轮换聚焦」。'
+        }
+        Log ('设置: 必应模式 -> ' + [bool]$c.bing_only)
+        Pause-Bw
+      }
       'q' { $back = $true }
       default { }
     }
@@ -1361,12 +1376,27 @@ function Test-BwAutoStart {
 # 其实这次开机压根没后台进程, 那个 15:52 永远不会兑现 —— 这就是「时间不会变」的由来。
 # 认进程命令行里带 --daemon 的那个, 那是真正在按节拍换图的那个。
 function Test-BwDaemonRunning {
+  # 2026-10-20 提速: 原来用 Get-CimInstance Win32_Process 扫命令行, 每进一次菜单要 ~500ms
+  # (WMI 查询本来就慢, 机器上 WMI 再慢一点就是一秒)。守护进程 mode_daemon 启动时会
+  # 一直持有命名互斥体 Local\MSWallpaperAssistantDaemon (launcher.py 的 MUTEX_NAME),
+  # 直接探测它在不在就行 —— 实测 14ms, 判定结果与原来一致。
   try {
-    # 2026-10-12 改名双名兼容: 老用户进程还顶着旧文件名跑, 新装是新名
-    $ps = @(Get-CimInstance Win32_Process -Filter "Name='$($global:BWExeName)' OR Name='$($global:BWExeNameLegacy)'" -ErrorAction SilentlyContinue |
-            Where-Object { $_.CommandLine -and ($_.CommandLine -like '*--daemon*') })
-    return ($ps.Count -gt 0)
-  } catch { return $false }
+    $mtx = [System.Threading.Mutex]::OpenExisting('Local\MSWallpaperAssistantDaemon')
+    $mtx.Dispose()
+    return $true
+  } catch [System.Threading.WaitHandleCannotBeOpenedException] {
+    return $false
+  } catch [System.UnauthorizedAccessException] {
+    # 名字存在、只是打不开 —— 说明确实有人持有它
+    return $true
+  } catch {
+    # 兜底: 互斥体探测意外失败时退回老办法, 宁可慢也别误报"后台没跑"
+    try {
+      $ps = @(Get-CimInstance Win32_Process -Filter "Name='$($global:BWExeName)' OR Name='$($global:BWExeNameLegacy)'" -ErrorAction SilentlyContinue |
+              Where-Object { $_.CommandLine -and ($_.CommandLine -like '*--daemon*') })
+      return ($ps.Count -gt 0)
+    } catch { return $false }
+  }
 }
 # 立刻把后台拉起来(不等下次开机)。开机自启的快捷方式照建, 两件事一起办。
 function Start-BwDaemonNow([string]$exe) {
@@ -1465,22 +1495,61 @@ if (-not (Test-Path -LiteralPath $global:CfgPath)) { Invoke-BwFirstRun }
 # 进菜单先把两个库目录立起来: 用户手滑删了文件夹很正常, 程序自己建回来,
 # 不用他先去手动新建一个空文件夹。
 $null = Ensure-BwDirs
-# 进菜单时认一遍: 库里哪些图不是本程序下载的。只打记号, 不动文件
-[void](Update-BwStrangers)
+# 进菜单时认一遍: 库里哪些图不是本程序下载的。只打记号, 不动文件。
+# 2026-10-20 提速: 这步要遍历两个库(上千张)取文件名, 实测 ~400ms。改成
+# 24 小时最多跑一次(记在 strangers.stamp), 其余时候沿用上次的记号。
+$stampFile = Join-Path $global:BWRoot 'strangers.stamp'
+$needStrangers = $true
+if (Test-Path -LiteralPath $stampFile) {
+  try {
+    $ageMin = ((Get-Date) - (Get-Item -LiteralPath $stampFile).LastWriteTime).TotalMinutes
+    if ($ageMin -lt 1440) { $needStrangers = $false }
+  } catch { $needStrangers = $true }
+}
+if ($needStrangers) {
+  [void](Update-BwStrangers)
+  if (-not $global:BWDry) {
+    try { Set-Content -LiteralPath $stampFile -Value ([string]::Format('{0:o}', (Get-Date))) -Encoding UTF8 } catch {}
+  }
+}
 # 进菜单顺手扫一遍库: 截断/损坏的图隔离进「坏图」文件夹, 图库里散落的
 # .meta.json 元数据搬去数据目录 —— 图库里以后只有能用的图 (坏图那次教训)。
+# 2026-10-20 提速(实测): 原先用 Start-Job 起后台作业, PS 5.1 每次要 ~800ms
+# —— 这是"菜单打开变慢"的最大单项。改成: 结果落 badsweep.json(张数+时间),
+# 菜单只读文件; 扫描本身用分离式进程(Start-Process 立刻返回), 12 小时内只跑一次。
 $global:BwBadSwept = 0
 $global:BwSweepJob = $null
-# 坏图扫描(逐张用 GDI+ 解码验证)原本同步跑在菜单显示之前 —— 耗时与图库张数成正比,
-# 库里图一多就累积好几秒, 表现为"菜单打开后好一会儿才出字"。2.0 加这套扫描后才有的问题。
-# 改成后台作业: 菜单先显示, 扫描在后台跑, 扫完再在菜单上提示「已隔离 N 张」。
 try {
-  $corePath = Join-Path $PSScriptRoot 'core.ps1'
-  $global:BwSweepJob = Start-Job -ScriptBlock {
-    param($p)
-    . $p
-    return (Sweep-BwBadImages)
-  } -ArgumentList $corePath
+  $sweepFile = Join-Path $global:BWRoot 'badsweep.json'
+  $sweepShown = Join-Path $global:BWRoot 'badsweep.shown'
+  $sj = $null
+  $needSweep = $true
+  if (Test-Path -LiteralPath $sweepFile) {
+    try { $sj = Get-Content -LiteralPath $sweepFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $sj = $null }
+  }
+  if ($sj -and $sj.ts) {
+    try {
+      $ageMin = ((Get-Date) - ([datetime]::FromFileTime([int64]$sj.ts))).TotalMinutes
+      if ($ageMin -lt 720) { $needSweep = $false }
+    } catch { $needSweep = $true }
+  }
+  # 有扫描结果、且"被隔离 N 张"这次还没提示过 -> 提示一次(只读文件, 不阻塞)
+  if ($sj -and [int]$sj.count -gt 0) {
+    $shownTs = ''
+    if (Test-Path -LiteralPath $sweepShown) { try { $shownTs = ([string](Get-Content -LiteralPath $sweepShown -Raw -Encoding UTF8)).Trim() } catch {} }
+    if (([string]$sj.ts) -ne $shownTs) {
+      $global:BwBadSwept = [int]$sj.count
+      try { Set-Content -LiteralPath $sweepShown -Value ([string]$sj.ts) -Encoding UTF8 } catch {}
+    }
+  }
+  if ($needSweep -and -not $global:BWDry) {
+    $corePath = Join-Path $PSScriptRoot 'core.ps1'
+    $escCore = $corePath.Replace("'", "''")
+    $escOut = $sweepFile.Replace("'", "''")
+    $sweepCode = "& { . '" + $escCore + "'; `$n = 0; try { `$n = [int](Sweep-BwBadImages) } catch {}; try { [ordered]@{ count = `$n; ts = (Get-Date).ToFileTime() } | ConvertTo-Json -Compress | Set-Content -LiteralPath '" + $escOut + "' -Encoding UTF8 } catch {} }"
+    $b64 = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($sweepCode))
+    try { Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-EncodedCommand',$b64) -WindowStyle Hidden | Out-Null } catch {}
+  }
 } catch { $global:BwSweepJob = $null }
 # 聚焦库整个没了 (目录被删后刚重建, 0 张) -> 进菜单就自动补一批, 不等后台巡检。
 # 必应库不这么干: 每日一张、历史是用户自己挑着下的 (菜单 [4] 里的「补齐」/「补漏」),
@@ -1497,7 +1566,11 @@ try {
 # 用户得自己动手。现在进菜单就先检查一次: 有新版本**直接升**, 不用按任何键。
 # [U] 保留成手动重试(比如上次联网失败)。脚本升级下次启动生效; 需要换主程序时程序会自己重启。
 try {
-  $up0 = Get-BwUpdateInfo
+  # 2026-10-20 提速: 只读本地缓存, 开菜单不再联网。缓存由后台守护进程每天刷新一次
+  # (core.ps1 Invoke-BwCycle: 距上次检查 >=20 小时就再查), [U] 仍是强制联网检查。
+  # 原先这里每次都联网 —— 缓存 6 小时失效、守护进程 20 小时才刷新, 中间那 14 小时
+  # 每次开菜单都要等网络(断网/网络差时最明显), 这是"打开变慢"的另一个大头。
+  $up0 = Get-BwUpdateInfo -Offline
   if ($up0 -and ((Compare-BwVer ([string]$up0.version) (Get-BwLocalScriptVer)) -gt 0)) {
     Write-Host ('  检测到新版本 v' + $up0.version + ', 正在自动升级...') -ForegroundColor Cyan
     $did = [bool](Invoke-BwScriptUpdate -Animated -ReopenMenu)
@@ -1559,21 +1632,11 @@ do {
   $bingN = Count-Jpg $c0.bing_save_dir
   $spotN = Count-Jpg $c0.spotlight_save_dir
   Clear-Host
-  # 后台坏图扫描若已完成, 取回结果 (菜单显示不阻塞, 扫完才提示)
-  if ($global:BwSweepJob) {
-    if ($global:BwSweepJob.State -eq 'Completed') {
-      try { $global:BwBadSwept = [int](Receive-Job $global:BwSweepJob) } catch {}
-      Remove-Job $global:BwSweepJob -Force -ErrorAction SilentlyContinue
-      $global:BwSweepJob = $null
-    } elseif ($global:BwSweepJob.State -in ('Failed', 'Stopped')) {
-      Remove-Job $global:BwSweepJob -Force -ErrorAction SilentlyContinue
-      $global:BwSweepJob = $null
-    }
-  }
+  # 坏图扫描已改成"分离式进程 + badsweep.json"(见上方启动块), 这里不再等作业。
   Write-Host ''
   Write-Host '  ============================================================' -ForegroundColor DarkCyan
   Write-Host ('   桌面壁纸 v' + $global:BWVersion + '    作者: 海风（kele551）') -ForegroundColor Cyan
-  Write-Host '   gitee.com/kele551/ms-wallpaper-assistant' -ForegroundColor DarkGray
+  Write-Host '   github.com/kele551/ms-wallpaper-assistant' -ForegroundColor DarkGray
   Write-Host '  ============================================================' -ForegroundColor DarkCyan
   Write-Host ''
   # 下面这几个状态量必须留在这里算好, 后面所有显示都靠它们:
@@ -1597,6 +1660,7 @@ do {
   $swap2 = '--:--'
   if ($running) { $swap2 = $next }
   Write-Host ('  换图  下次自动换 ' + $swap2 + '  ·  每 ' + (Get-BwCycleMinutes $c0) + ' 分钟  ·  ' + $runTxt + '  ·  今日必应 ' + $bingDone) -ForegroundColor Gray
+  if ([bool]$c0.bing_only) { Write-Host '  模式  必应模式: 只换必应、每天一张 (设置 [S]→[e] 可关)' -ForegroundColor Cyan }
   # 2026-10-09: 各图源各有多少张 —— 首页一眼看全
   $srcTxt = ''
   try {
@@ -1696,7 +1760,7 @@ do {
   }
   Write-Host '   [S] 设置    [U] 检查更新'
   Write-Host '  ------------------------ 其它 ------------------------' -ForegroundColor DarkCyan
-  Write-Host '   [L] 查看日志    [R] 刷新    [Q] 退出'
+  Write-Host '   [L] 查看日志    [R] 刷新    [G] 打开主页    [Q] 退出'
   Write-Host ''
   $k = Normalize-BwKey (Read-Host '请选择')
   $quit = $false
@@ -1712,6 +1776,12 @@ do {
     'a' { [void](Enable-BwAutoStart); Pause-Bw }
     'b' { [void](Disable-BwAutoStart); Pause-Bw }
     'l' { Get-Content -LiteralPath $global:BWLog -Tail 40 -Encoding UTF8 -ErrorAction SilentlyContinue; Pause-Bw }
+    'g' {
+      # 2026-10-20: 控制台菜单里的地址没法直接点, 加一个按键用默认浏览器打开项目主页。
+      try { Start-Process 'https://github.com/kele551/ms-wallpaper-assistant' }
+      catch { Write-Host ('  打不开浏览器: ' + $_.Exception.Message) -ForegroundColor Yellow }
+      Start-Sleep -Milliseconds 700
+    }
     # [R] 什么都不做, 只是让 do-while 重画一遍菜单 —— 上面那些数字(下次自动换的
     # 时刻、库里几张、队列剩几张)都是进菜单那一刻的快照, 窗口一直开着不会自己更新。
     'u' {
