@@ -220,7 +220,7 @@
       </div>
       <div class="rows">
         <div class="row">
-          <div class="k">常用档位<small>点一下切换</small></div>
+          <div class="k">常用档位<small id="cycHint">点一下切换</small></div>
           <div class="v chips" id="cycChips">
             <span class="chip" data-v="10">10 分</span>
             <span class="chip" data-v="30">30 分</span>
@@ -530,11 +530,18 @@ function render(s){
   var cyc = parseInt(cfg.cycle_minutes, 10);
   if (!isNaN(cyc)){
     $("cyc").value = Math.min(240, Math.max(5, cyc));
-    $("cycNum").textContent = cyc + " 分钟";
+    $("cycNum").textContent = cyc >= 1440 ? "24 小时（每天一张）" : (cyc + " 分钟");
     var chips = $("cycChips").children;
     for (var i = 0; i < chips.length; i++){
       chips[i].classList.toggle("on", parseInt(chips[i].dataset.v, 10) === cyc);
     }
+    /* 必应模式：间隔固定 24 小时，控件锁住（避免用户以为还能改成 30 分钟） */
+    var lockCyc = !!cfg.bing_only;
+    $("cyc").disabled = lockCyc;
+    $("cycChips").classList.toggle("locked", lockCyc);
+    $("cycHint").textContent = lockCyc
+      ? "必应模式下固定 24 小时（每天一张）；切回聚焦模式会还原原来的间隔"
+      : "点一下直接切";
   }
   $("nextTip").textContent = fmtNext(s);
 

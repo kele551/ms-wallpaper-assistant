@@ -4,7 +4,7 @@
   "notes": "",
   "scripts": {
     "core.ps1": {
-      "sha256": "80C900FC69D59649FFF235032DF5B8F34F20D7843FFA0E631A2FCF6E996C236A",
+      "sha256": "E63F3BE3F274E5E887A3D63D3924D4198B3C6A692D4DA8596590A49DB8059239",
       "url": "https://gitcode.com/api/v5/repos/kele551/ms-wallpaper-assistant/raw/core.ps1?ref=main"
     },
     "menu.ps1": {
@@ -13,8 +13,8 @@
     }
   },
   "launcher": {
-    "sha256": "23EAD3FE70DB966D5487F514E013E3EC77CF27F3C4020BA43F91A3930A632B29",
+    "sha256": "FCD42880E3FBCC0405FEF4505A32408B2D34B9E38087B140ECF29832CE829943",
     "url": "https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v2.4.0/壁纸助手.exe",
-    "size": 7736017
+    "size": 7737504
   }
 }

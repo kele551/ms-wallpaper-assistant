@@ -5346,7 +5346,7 @@ $global:BwPanelHtml = @'
       </div>
       <div class="rows">
         <div class="row">
-          <div class="k">常用档位<small>点一下切换</small></div>
+          <div class="k">常用档位<small id="cycHint">点一下切换</small></div>
           <div class="v chips" id="cycChips">
             <span class="chip" data-v="10">10 分</span>
             <span class="chip" data-v="30">30 分</span>
@@ -5656,11 +5656,18 @@ function render(s){
   var cyc = parseInt(cfg.cycle_minutes, 10);
   if (!isNaN(cyc)){
     $("cyc").value = Math.min(240, Math.max(5, cyc));
-    $("cycNum").textContent = cyc + " 分钟";
+    $("cycNum").textContent = cyc >= 1440 ? "24 小时（每天一张）" : (cyc + " 分钟");
     var chips = $("cycChips").children;
     for (var i = 0; i < chips.length; i++){
       chips[i].classList.toggle("on", parseInt(chips[i].dataset.v, 10) === cyc);
     }
+    /* 必应模式：间隔固定 24 小时，控件锁住（避免用户以为还能改成 30 分钟） */
+    var lockCyc = !!cfg.bing_only;
+    $("cyc").disabled = lockCyc;
+    $("cycChips").classList.toggle("locked", lockCyc);
+    $("cycHint").textContent = lockCyc
+      ? "必应模式下固定 24 小时（每天一张）；切回聚焦模式会还原原来的间隔"
+      : "点一下直接切";
   }
   $("nextTip").textContent = fmtNext(s);
 
@@ -6815,6 +6822,13 @@ function Invoke-BwPanelSet([string]$key, $value) {
                'fetch_day_cap','recycle_min_days','src_timeout_sec')
   if ($numKeys -contains $key) {
     $n = Limit-BwNum $value $key
+    # 2026-10-23 用户要求：「必应模式下其他时间段应该锁死」。
+    # 光把界面控件 disable 不够 —— 旧标签页 / 手工调接口都能绕过，所以服务端也钉住：
+    # 必应模式期间 cycle_minutes 只能等于 24 小时。
+    if ($key -eq 'cycle_minutes' -and [bool]$c.bing_only -and $n -ne 1440) {
+      Log ('面板: 必应模式期间不接受把间隔改成 ' + $n + ' 分钟, 已钉住 24 小时')
+      $n = 1440
+    }
     $c | Add-Member -NotePropertyName $key -NotePropertyValue $n -Force
   } elseif ($key -eq 'auto_fetch' -or $key -eq 'fav_only' -or $key -eq 'bing_only') {
     # 注意: [bool]"false" 在 PowerShell 里是 $true(非空字符串), 直接转会把开关"关不掉"。
@@ -6856,6 +6870,31 @@ function Invoke-BwPanelSet([string]$key, $value) {
   # 必应模式一打开就立刻换成"今天这张": 用户在面板上开它, 期待的是当场看到今天的图,
   # 而不是等到下一个轮换周期(最多 30 分钟)才动。用独立进程跑, 不占住面板的请求。
   if ($key -eq 'bing_only') {
+    # 2026-10-23 用户要求：「必应模式以后，更换节奏应该变成 24 小时」。
+    # 必应模式本来就一天一张，间隔再留着 30 分钟会自相矛盾（界面上还会显示"约 30 分钟后换"）。
+    # 进必应 -> 固定 1440 分钟；退出必应 -> 还原进之前的值（缺省 30）。
+    if ([bool]$c.bing_only) {
+      $prev = 30
+      try { if ($c.PSObject.Properties['cycle_minutes']) { $prev = [int]$c.cycle_minutes } } catch {}
+      if ($prev -ne 1440) {
+        $c | Add-Member -NotePropertyName cycle_before_bing -NotePropertyValue $prev -Force
+      }
+      $c | Add-Member -NotePropertyName cycle_minutes -NotePropertyValue 1440 -Force
+      Log '面板: 必应模式开启 -> 更换节奏固定 24 小时'
+    } else {
+      $restore = 30
+      try {
+        if ($c.PSObject.Properties['cycle_before_bing']) {
+          $r = [int]$c.cycle_before_bing
+          if ($r -ge 5 -and $r -le 1440) { $restore = $r }
+        }
+      } catch {}
+      $c | Add-Member -NotePropertyName cycle_minutes -NotePropertyValue $restore -Force
+      Log ('面板: 必应模式关闭 -> 更换节奏还原为 ' + $restore + ' 分钟')
+    }
+    # 注意：Save-BwConfig 在这段之前已经执行过了（在开关解析之后），
+    # 所以这里改的 cycle_minutes 必须再存一次盘，否则只改了内存、下次读回来还是旧值。
+    Save-BwConfig $c
     $jobName = 'normalnow'
     if ([bool]$c.bing_only) { $jobName = 'bingnow' }
     try {
