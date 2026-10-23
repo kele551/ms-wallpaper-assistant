@@ -3327,6 +3327,78 @@ function Get-BwBalancedOrder([string[]]$names, [int]$turn) {
   return @($order)
 }
 
+# 2026-10-23 用户要求: 「现在必应和聚焦的新图片比较多, 是否轮换切换?」-> 「改」。
+# 改之前: 队列是**全局**按"最旧优先"排的, 于是 1109 张 2020-2023 的必应老图全排在前面,
+# 205 张 2026 年的聚焦新图要等约 23 天才轮到 —— 库越大越明显。
+# 现在: **每个来源内部仍按原来的"最旧优先"**, 来源之间**按各自张数比例均匀穿插**
+# (1109 : 205 ≈ 每 6 张里 1 张聚焦)。这样两边的完整轮回时长也基本一样(都约 3 周),
+# 既不会"新图老也轮不到", 也不会让某一个来源霸屏。
+# 算法用"平滑加权轮转"(smooth weighted round-robin): 每步给每个还没出完的组加上它自己的
+# 权重, 取权重最大的那组出一张, 再减掉总权重 —— 出来的比例平稳, 不会成段扎堆。
+function Merge-BwQueueBySource([string[]]$ordered) {
+  $list = @($ordered | Where-Object { $_ })
+  if ($list.Count -le 2) { return @($list) }
+  $c = $null
+  try { $c = Get-BwConfig } catch { $c = $null }
+  # 每张图属于哪个来源 —— 认不出来的一律算 other(照原顺序排在最后)
+  $srcOf = @{}
+  try {
+    foreach ($f in @(Get-BwSpotlightAll)) { $srcOf[[string]$f.Name] = 'spot' }
+    foreach ($def in @(Get-BwSourceDefs)) {
+      $d = Get-BwSrcDir $c $def.Key
+      if (-not $d) { continue }
+      foreach ($f in @(Get-BwSrcFiles $d)) { $srcOf[[string]$f.Name] = [string]$def.Key }
+    }
+    foreach ($f in @(Get-BwBingAll)) { $srcOf[[string]$f.Name] = 'bing' }
+  } catch { }
+  $keys = @('spot', 'bing', 'other')
+  try { foreach ($def in @(Get-BwSourceDefs)) { if ($keys -notcontains [string]$def.Key) { $keys += [string]$def.Key } } } catch { }
+  $bucket = @{}
+  foreach ($k in $keys) { $bucket[$k] = New-Object System.Collections.ArrayList }
+  foreach ($n in $list) {
+    $k = 'other'
+    if ($srcOf.ContainsKey([string]$n)) { $k = [string]$srcOf[[string]$n] }
+    if (-not $bucket.ContainsKey($k)) { $bucket[$k] = New-Object System.Collections.ArrayList; $keys += $k }
+    [void]$bucket[$k].Add([string]$n)
+  }
+  $groups = @()
+  foreach ($k in $keys) {
+    $arr = @($bucket[$k] | Where-Object { $_ })
+    if ($arr.Count -eq 0) { continue }
+    $groups += ,@{ K = [string]$k; Items = $arr; Next = 0; Weight = $arr.Count; Credit = 0.0 }
+  }
+  if ($groups.Count -le 1) { return @($list) }
+  $totalW = 0
+  foreach ($g in $groups) { $totalW += [int]$g.Weight }
+  $out = New-Object System.Collections.ArrayList
+  while ($out.Count -lt $list.Count) {
+    $pick = -1
+    $best = -1.0e18
+    for ($i = 0; $i -lt $groups.Count; $i++) {
+      $g = $groups[$i]
+      if ($g.Next -ge $g.Items.Count) { continue }
+      $g.Credit = [double]$g.Credit + [double]$g.Weight
+      if ($g.Credit -gt $best) { $best = $g.Credit; $pick = $i }
+    }
+    if ($pick -lt 0) { break }
+    $pg = $groups[$pick]
+    [void]$out.Add([string]$pg.Items[$pg.Next])
+    $pg.Next = [int]$pg.Next + 1
+    $pg.Credit = [double]$pg.Credit - [double]$totalW
+  }
+  if ($out.Count -lt $list.Count) {
+    # 理论上不该发生(每个名字都在某个组里); 真漏了就照原顺序补在队尾, 一张都不能丢
+    $got = @{}
+    foreach ($o in $out) { $got[[string]$o] = $true }
+    foreach ($n in $list) { if (-not $got.ContainsKey([string]$n)) { [void]$out.Add([string]$n) } }
+  }
+  # 一行日志, 日后翻日志就能确认"到底怎么穿插的"
+  $sumTxt = ''
+  foreach ($g in $groups) { $sumTxt += (' / ' + $g.K + ' ' + @($g.Items).Count + ' 张') }
+  Log ('队列按来源交错: 共 ' + $list.Count + ' 张' + $sumTxt)
+  return @($out)
+}
+
 # 把库里的图洗一次牌。
 # 注意: 光"洗牌"只能保证**一轮之内**不重复 —— 队列发完再洗一轮时, 库里所有图
 # (包括上一轮全看过的)都会被重新洗进来, 客户就会又看到昨天那张。
@@ -3513,11 +3585,11 @@ function Get-BwFreshQueue($s) {
       $keep = @($pool | Where-Object { -not $mark.ContainsKey((Get-BwNameKey $_)) })
       if ($keep.Count -gt 0) { $pool = $keep }
     }
-    return @(Get-BwOldestFirst $s $pool $now2)
+    return @(Merge-BwQueueBySource (Get-BwOldestFirst $s $pool $now2))
   }
   if ($oldestFirst) {
     # 「历史清零重来」那条分支: 整库按"最早看过"优先排, 不走洗牌
-    return @(Get-BwOldestFirst $s $names $now2)
+    return @(Merge-BwQueueBySource (Get-BwOldestFirst $s $names $now2))
   }
   return @(Get-BwBalancedOrder $names $turn)
 }
@@ -6912,6 +6984,38 @@ function Invoke-BwPanelSet([string]$key, $value) {
   return $true
 }
 
+# 2026-10-23 用户报:「打开数据目录, 怎么是网页背后跳出」。
+# 原因: 面板的服务进程是隐藏窗口的后台 PowerShell, 它起的资源管理器窗口没有前台权,
+# 于是常常在浏览器**后面**开出来 —— 用户看不到, 以为"点了没反应"。
+# 做法: 打开目录之后主动把新冒出来的窗口激活到最前(按窗口标题试, 提不到就按目录名再试),
+# 最多等 2 秒; 提窗口失败也不影响"目录已经打开"这件事。
+function Open-BwFolderFront([string]$path) {
+  if (-not $path) { return $false }
+  if (-not (Test-Path -LiteralPath $path)) { return $false }
+  $sh = $null
+  try { $sh = New-Object -ComObject WScript.Shell } catch { $sh = $null }
+  $before = @{}
+  if ($sh) {
+    try { foreach ($w in @(Get-Process | Where-Object { $_.MainWindowTitle })) { $before[[string]$w.MainWindowTitle] = $true } } catch {}
+  }
+  try { Start-Process 'explorer.exe' -ArgumentList ('"{0}"' -f $path) | Out-Null } catch {}
+  if (-not $sh) { return $true }
+  $leaf = ''
+  try { $leaf = [string](Split-Path $path -Leaf) } catch { $leaf = '' }
+  for ($i = 1; $i -le 8; $i++) {
+    Start-Sleep -Milliseconds 250
+    $titles = @()
+    try { $titles = @(Get-Process | Where-Object { $_.MainWindowTitle } | Select-Object -ExpandProperty MainWindowTitle) } catch { $titles = @() }
+    $fresh = @($titles | Where-Object { $_ -and (-not $before.ContainsKey([string]$_)) })
+    foreach ($t in $fresh) {
+      try { if ($sh.AppActivate([string]$t)) { return $true } } catch {}
+    }
+    if ($leaf) { try { if ($sh.AppActivate($leaf)) { return $true } } catch {} }
+  }
+  try { [void]$sh.AppActivate($path) } catch {}
+  return $true
+}
+
 function Invoke-BwPanelAction($req) {
   $do = ''
   try { $do = ([string]$req.do).Trim().ToLower() } catch {}
@@ -7082,7 +7186,8 @@ function Invoke-BwPanelAction($req) {
     if ($which -eq 'spotlight') { $p = [string]$c.spotlight_save_dir }
     elseif ($which -eq 'data') { $p = [string]$global:BWRoot }
     if ($p -and (Test-Path -LiteralPath $p)) {
-      try { Start-Process 'explorer.exe' -ArgumentList ('"{0}"' -f $p) | Out-Null } catch {}
+      # 2026-10-23: 打开后把窗口提到最前 —— 不然它总在浏览器后面出来, 看着像没反应
+      [void](Open-BwFolderFront $p)
     }
     return [ordered]@{ ok = $true; path = $p }
   }
