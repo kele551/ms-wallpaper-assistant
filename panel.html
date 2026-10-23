@@ -117,6 +117,9 @@
   input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;border-radius:50%;background:#fff;cursor:pointer}
   .num{font-variant-numeric:tabular-nums;font-size:13.5px;min-width:70px;text-align:right}
   .chips{display:flex;gap:6px;flex-wrap:wrap}
+  /* 必应模式: 整个档位组锁死(变灰 + 点不动) */
+  .chips.locked{opacity:.5;pointer-events:none;filter:grayscale(.4)}
+  input[type=range]:disabled{opacity:.45;cursor:not-allowed}
   .chip{font-size:11.5px;padding:4px 9px;border-radius:8px;border:1px solid var(--line-2);
         color:var(--ink-2);cursor:pointer;transition:.16s}
   .chip:hover{color:var(--ink)}
