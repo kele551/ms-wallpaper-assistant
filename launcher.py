@@ -763,90 +763,108 @@ def mode_daemon(d):
     hold_until = 0.0     # 这轮没换成图时的兜底: 至少等到这个时刻, 免得空转
     away_logged = False  # "用户离开"这条日志只写一次, 免得刷屏
     lock_warned = False  # "锁屏判定不可用"也只写一次
+    # 2026-10-23: 起来/收工都留一行日志。以前后台被 --stop 停掉时**一行都没有**,
+    # 事后没法区分"它自己崩了"和"有人叫它停" —— 用户看到的现象却完全一样:
+    # 到点不换图, 日志里最后那句"下次 xx:xx"永远不兑现。
+    _note(d, '守护进程: 已启动 (PID %d, 每 %d 分钟换一张)' % (os.getpid(), read_interval(d)))
     while True:
-        if os.path.isfile(stop_file):
-            try:
-                os.remove(stop_file)
-            except Exception:
-                pass
-            return 0
+        # 2026-10-23: 整轮包一层兜底。以前主循环没有任何 try —— 一个没预料到的异常
+        # 就把整个后台静默带走: 壁纸从此不再自动换, 而没有任何人能把它拉回来
+        # (开机自启只在登录时生效一次)。现在出错只丢这一轮, 睡一分钟接着跑。
+        try:
+            if os.path.isfile(stop_file):
+                try:
+                    os.remove(stop_file)
+                except Exception:
+                    pass
+                _note(d, '守护进程: 收到停止信号, 已退出')
+                return 0
 
-        gap = read_interval(d)
-        ls = read_last_swap(d)
-        if ls is not None and (prev is None or ls != prev):
-            # 换过图了 (自己换的、菜单里手动换的、重启换的都算) -> 从这一刻重新计时
-            hold_until = 0.0
-            prev = ls
-        # 注意 hold_until 必须参与, 不能写成 `0.0 if ls is None else ...`:
-        # 全新安装(或 state.json 刚被重置)时 last_swap 是空的, 而这时若"人不在",
-        # 每轮都会 due -> 安静 -> hold_until = now+300 -> 回到这里又被算成 0.0 ->
-        # 又是一轮 due …… 中间一次 sleep 都没有, 就是 100% CPU 空转一整夜。
-        base = 0.0 if ls is None else (ls.timestamp() + gap * 60)
-        target = max(base, hold_until)
+            gap = read_interval(d)
+            ls = read_last_swap(d)
+            if ls is not None and (prev is None or ls != prev):
+                # 换过图了 (自己换的、菜单里手动换的、重启换的都算) -> 从这一刻重新计时
+                hold_until = 0.0
+                prev = ls
+            # 注意 hold_until 必须参与, 不能写成 `0.0 if ls is None else ...`:
+            # 全新安装(或 state.json 刚被重置)时 last_swap 是空的, 而这时若"人不在",
+            # 每轮都会 due -> 安静 -> hold_until = now+300 -> 回到这里又被算成 0.0 ->
+            # 又是一轮 due …… 中间一次 sleep 都没有, 就是 100% CPU 空转一整夜。
+            base = 0.0 if ls is None else (ls.timestamp() + gap * 60)
+            target = max(base, hold_until)
 
-        # 分片睡到目标时刻。**人不在/锁屏时就睡大觉**（5 分钟一次），
-        # 人在时才用 CHECK_S（30 秒）保持灵敏 —— 既少打扰系统，退出/改设置又不迟钝。
-        due = False
-        while True:
-            left = target + LEAD_S - time.time()
-            if left <= 0:
-                due = True
-                break
-            step = AWAY_RECHECK_S if stay_quiet(idle_seconds(), session_locked()) else CHECK_S
-            # 分片睡: 停止信号每一片都看(1 秒粒度); state.json / config.json 的重读
-            # 仍按原来的节拍(30 秒 / 5 分钟)发生, 不会整夜每秒去读盘。
-            if sleep_watching_stop(stop_file, min(step, left)):
+            # 分片睡到目标时刻。**人不在/锁屏时就睡大觉**（5 分钟一次），
+            # 人在时才用 CHECK_S（30 秒）保持灵敏 —— 既少打扰系统，退出/改设置又不迟钝。
+            due = False
+            while True:
+                left = target + LEAD_S - time.time()
+                if left <= 0:
+                    due = True
+                    break
+                step = AWAY_RECHECK_S if stay_quiet(idle_seconds(), session_locked()) else CHECK_S
+                # 分片睡: 停止信号每一片都看(1 秒粒度); state.json / config.json 的重读
+                # 仍按原来的节拍(30 秒 / 5 分钟)发生, 不会整夜每秒去读盘。
+                if sleep_watching_stop(stop_file, min(step, left)):
+                    try:
+                        os.remove(stop_file)
+                    except Exception:
+                        pass
+                    _note(d, '守护进程: 收到停止信号, 已退出')
+                    return 0
+                if read_last_swap(d) != prev:
+                    # 有人换过图了 (多半是用户在菜单里按了 [1]):
+                    # 这时候**不能**跟着换一张 —— 那会把人家刚挑的图顶掉。
+                    # 什么都不做, 回到外层按新的换图时刻重新算。
+                    break
+                # 间隔被改了(设置 [1] 换图间隔): 回外层按新间隔重算目标时刻。
+                # 以前这里只盯 last_swap / 停止信号, 不看 config, 于是:
+                #   把 30 分钟改小成 5 分钟, 还得按旧的 30 分钟睡满这一觉才轮到下一次判断,
+                #   体感就是"改了半天一点反应都没有"。改大同理, 要白跑一轮才纠正过来。
+                if read_interval(d) != gap:
+                    break
+
+            if not due:
+                continue
+
+            # 人不在 / 锁屏就不换图（2026-10-07 用户反馈「无法进入睡眠/休眠」）：
+            # 换图会拉起 PowerShell、下载、并向所有窗口广播设置变更 ——
+            # 别在系统准备休眠的节骨眼上插一脚。人一回来（或解锁）立刻补上。
+            idle = idle_seconds()
+            locked = session_locked()
+            if lock_check_degraded() and not lock_warned:
+                _note(d, '锁屏判定不可用（OpenInputDesktop 连续 %d 次取不到句柄），已降级为'
+                         '"当作没锁屏"，不再因此停摆；"人不在就不换图"仍由空闲检测兜底'
+                         % LOCK_PROBE_FAILS)
+                lock_warned = True
+            if stay_quiet(idle, locked):
+                if not away_logged:
+                    if locked:
+                        _note(d, '屏幕已锁，暂停换图，解锁后立刻换')
+                    else:
+                        _note(d, '用户离开（已空闲 %.0f 分钟），暂停换图，回来再换'
+                                 % (idle / 60.0))
+                    away_logged = True
+                hold_until = time.time() + AWAY_RECHECK_S
+                continue
+            if away_logged:
+                _note(d, '用户回来了（已解锁/有操作），恢复换图')
+                away_logged = False
+
+            run_cycle(d)
+            after = read_last_swap(d)
+            if after is None or after == ls:
+                # 这轮没换成 (网络不通 / 库是空的 / 必应还没发新图):
+                # 不空转, 隔一整轮再试
+                hold_until = time.time() + gap * 60
+            prev = after
+        except Exception as e:
+            _note(d, '守护进程: 这一轮出错, 已自动继续 (%s: %s)' % (type(e).__name__, e))
+            if sleep_watching_stop(stop_file, 60):
                 try:
                     os.remove(stop_file)
                 except Exception:
                     pass
                 return 0
-            if read_last_swap(d) != prev:
-                # 有人换过图了 (多半是用户在菜单里按了 [1]):
-                # 这时候**不能**跟着换一张 —— 那会把人家刚挑的图顶掉。
-                # 什么都不做, 回到外层按新的换图时刻重新算。
-                break
-            # 间隔被改了(设置 [1] 换图间隔): 回外层按新间隔重算目标时刻。
-            # 以前这里只盯 last_swap / 停止信号, 不看 config, 于是:
-            #   把 30 分钟改小成 5 分钟, 还得按旧的 30 分钟睡满这一觉才轮到下一次判断,
-            #   体感就是"改了半天一点反应都没有"。改大同理, 要白跑一轮才纠正过来。
-            if read_interval(d) != gap:
-                break
-
-        if not due:
-            continue
-
-        # 人不在 / 锁屏就不换图（2026-10-07 用户反馈「无法进入睡眠/休眠」）：
-        # 换图会拉起 PowerShell、下载、并向所有窗口广播设置变更 ——
-        # 别在系统准备休眠的节骨眼上插一脚。人一回来（或解锁）立刻补上。
-        idle = idle_seconds()
-        locked = session_locked()
-        if lock_check_degraded() and not lock_warned:
-            _note(d, '锁屏判定不可用（OpenInputDesktop 连续 %d 次取不到句柄），已降级为'
-                     '"当作没锁屏"，不再因此停摆；"人不在就不换图"仍由空闲检测兜底'
-                     % LOCK_PROBE_FAILS)
-            lock_warned = True
-        if stay_quiet(idle, locked):
-            if not away_logged:
-                if locked:
-                    _note(d, '屏幕已锁，暂停换图，解锁后立刻换')
-                else:
-                    _note(d, '用户离开（已空闲 %.0f 分钟），暂停换图，回来再换'
-                             % (idle / 60.0))
-                away_logged = True
-            hold_until = time.time() + AWAY_RECHECK_S
-            continue
-        if away_logged:
-            _note(d, '用户回来了（已解锁/有操作），恢复换图')
-            away_logged = False
-
-        run_cycle(d)
-        after = read_last_swap(d)
-        if after is None or after == ls:
-            # 这轮没换成 (网络不通 / 库是空的 / 必应还没发新图):
-            # 不空转, 隔一整轮再试
-            hold_until = time.time() + gap * 60
-        prev = after
 
 
 def mode_once(d):
