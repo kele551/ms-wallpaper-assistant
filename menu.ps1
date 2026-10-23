@@ -12,7 +12,7 @@ param([switch]$DryRun)
 . (Join-Path $PSScriptRoot 'core.ps1') -DryRun:$DryRun
 
 # 版本常量: 发版脚本与发版自检都认这一行, 不要挪走、不要改格式。
-$global:BWVersion = '2.4.0'
+$global:BWVersion = '2.4.1'
 
 # 隐藏自己的控制台窗口: 界面已经是网页了，再留一个黑框就不伦不类。
 # 隐藏失败也不要紧 —— 功能不受影响，只是那个窗口还在。

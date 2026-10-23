@@ -86,7 +86,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 下载
 
-### 👉 [点这里下载 v2.4.0 安装包](https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v2.4.0/MSWallpaperAssistant-v2.4.0.zip)
+### 👉 [点这里下载 v2.4.1 安装包](https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v2.4.1/MSWallpaperAssistant-v2.4.1.zip)
 
 > **三个平台代码一致**：[GitCode](https://gitcode.com/kele551/ms-wallpaper-assistant)（主源）· [GitHub](https://github.com/kele551/ms-wallpaper-assistant)（镜像）· [AtomGit](https://atomgit.com/kele551/ms-wallpaper-assistant)（代码镜像）。
 > **二进制发行包请从 GitCode（主源）或 GitHub（镜像）下载**；三个平台都收 Issue / PR。
@@ -139,7 +139,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 
 ```
-┌ 桌面壁纸 · 控制台 ─────────────────────── 脚本 v2.4.0 · 主程序 v2.4.0 ┐
+┌ 桌面壁纸 · 控制台 ─────────────────────── 脚本 v2.4.1 · 主程序 v2.4.1 ┐
 │                                                                        │
 │  当前壁纸                      更换节奏                                │
 │   [大图]                        ── 间隔滑块（5~1440 分钟）+ 常用档位   │
@@ -278,7 +278,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 版本迭代
 
-**当前最新：v2.4.0**（2026-10-23；界面从文本菜单改成本机网页控制台，内容见 [CHANGELOG](docs/CHANGELOG.md)）。最近三代改了什么：
+**当前最新：v2.4.1**（2026-10-23；界面从文本菜单改成本机网页控制台，内容见 [CHANGELOG](docs/CHANGELOG.md)）。最近三代改了什么：
 
 - **v2.3.x**：菜单打开提速约三分之一；新增「必应模式」（只换必应当日图、一天一张）；面板仓库地址换成 GitHub 可点链接。
 - **v2.2.x**：产品更名「桌面壁纸」；升级可靠性、轮换顺序（永远按最旧优先）、硬盘占用（两个库都设上限 + 按屏幕挑画质）。
