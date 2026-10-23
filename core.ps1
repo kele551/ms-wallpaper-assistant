@@ -1,7 +1,7 @@
 ﻿# 桌面壁纸 - 核心库
-# 作者: 海风（kele551）   https://gitee.com/kele551/ms-wallpaper-assistant
+# 作者: 海风（kele551）   https://gitcode.com/kele551/ms-wallpaper-assistant
 # 协作: Cindy（只在源码里留档，不出现在界面上）
-param([switch]$Update, [switch]$Cycle, [switch]$DryRun)
+param([switch]$Update, [switch]$Cycle, [switch]$DryRun, [string]$PanelReq, [string]$PanelOut, [string]$PanelExport, [string]$PanelJob, [string]$PanelJobArg)
 $global:BWRoot = $PSScriptRoot
 $global:CfgPath = Join-Path $global:BWRoot 'config.json'
 $global:BWLog = Join-Path $global:BWRoot 'wallpaper.log'
@@ -579,7 +579,10 @@ function Get-BwConfig {
   # 到了满屏线才裁剪铺满, 卡在中间的走"不放大"。0 = 不限(那一道门槛不生效)。
   # 不放大显示(默认开): 不到满屏线的图**绝不拉大** —— 糊的唯一来源就是拉大。
   # 关掉它就退回老样子(一律 fill, 小图会被放大), 留给"我就爱铺满"的用户。
-  if (-not $c.PSObject.Properties['art_fit_mode']) { Add-Member -InputObject $c NoteProperty art_fit_mode 'on' -Force }
+  # 2026-10-23 用户要求: 桌面壁纸就是要满屏 —— 默认改成 'off'(拉大铺满)。
+# 原来默认 'on' = 比屏幕小的图 1:1 居中 + 四周同图模糊; 1920 宽的图放到 2560 屏上
+# 看着像"没铺满"。想要旧观感的人可以在控制台把「小图不放大」打开。
+if (-not $c.PSObject.Properties['art_fit_mode']) { Add-Member -InputObject $c NoteProperty art_fit_mode 'off' -Force }
   # 单张图下载超时(秒)。实测有的图床能慢到 ~130 秒/张: 硬等一张就把整轮补货拖成几十分钟,
   # 后面排队的源全被挡住。20 秒下不完就放弃、记一次失败、换下一张; 同一个源连着两张超时就
   # 本轮不再取它(见 Invoke-BwSrcFetch)。改大/改小都在 [S] 里。
@@ -748,7 +751,6 @@ $global:BWUpdateFile = Join-Path $global:BWRoot 'update.json'
 $global:BWUpdateUrls = @(
   # 2026-10-17: 主源切到 GitCode（国内、快、下载数可统计）；Gitee / GitHub 保留兜底。
   'https://gitcode.com/api/v5/repos/kele551/ms-wallpaper-assistant/raw/version.json?ref=main',
-  'https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/version.json',
   'https://raw.githubusercontent.com/kele551/ms-wallpaper-assistant/main/version.json'
 )
 function Get-BwVerTuple([string]$v) {
@@ -1324,7 +1326,7 @@ if ($Animated) { Show-BwUpGradeStep 1 3 '连接升级源' $true ('升级源: ' +
     try { if ($info.scripts -and $info.scripts.PSObject.Properties[$nm]) { $node = $info.scripts.PSObject.Properties[$nm].Value } } catch {}
     if (-not $node) { continue }
     $url = [string]$node.url
-    if (-not $url) { $url = 'https://gitee.com/kele551/ms-wallpaper-assistant/raw/main/' + $nm }
+    if (-not $url) { $url = 'https://raw.githubusercontent.com/kele551/ms-wallpaper-assistant/main/' + $nm }
     # 2026-10-09 (审查 H-9): fail-closed —— 先确认"该有的校验信息"齐全, 再下载。
     # 原来是 $want 为空就整段短路 = 不校验直接装, 升级源少一个字段就静默降级成
     # "无校验安装", 而且用户端既没提示也没日志。
@@ -2253,6 +2255,13 @@ function Get-BwArtFitWall([string]$path) {
 function Set-BwWall([string]$path) {
   # 已经是这张就不重复调 API, 少一次桌面重绘
   if (-not (Test-Path -LiteralPath $path)) { return $false }
+  # MWA_NO_SETWALL=1: 只给自检/演练用 —— 只写日志, 不真的改桌面壁纸。
+  # 起因(2026-10-23): 自检里点了"必应模式", 把用户桌面壁纸切成了测试目录里的图;
+  # 数据目录能隔离, "改系统壁纸"这个动作隔离不了, 所以给一个显式的闸。
+  if ($env:MWA_NO_SETWALL -eq '1') {
+    Log ('自检: 本应设为壁纸 -> ' + $path + ' (MWA_NO_SETWALL=1, 未动桌面)')
+    return $true
+  }
   if ($global:BWDry) {
     # 试运行: 连"要不要合成"都只算不画 —— 不然试运行也会往数据目录写 PNG。
     $why = ''
@@ -5102,6 +5111,2092 @@ function Invoke-BwCycle {
     Write-BwHeartbeat
   }
 }
+# ==================== 网页控制台接口 (V2.4.0) ====================
+# 为什么面板 HTML 内嵌在本文件里:
+#   升级只替换 core.ps1 / menu.ps1 两个文件 —— 老客户端的升级循环里**写死了这两个名字**,
+#   多放一个 panel.html 老用户永远收不到。所以 HTML 跟着脚本走, 由 launcher 释放成
+#   数据目录里的 panel.html, 再交给浏览器。
+# 为什么用"请求文件 / 结果文件"而不是命令行参数 / stdout:
+#   PS 5.1 传中文参数、抓 stdout 都踩过编码坑(ANSI 乱码、BOM 混入)。写文件 + 明确 UTF-8 最省事。
+# 为什么不在本文件里开端口:
+#   本文件会被计划任务、菜单、面板同时调用, 每次都是独立进程, 活不长。端口、令牌、浏览器
+#   都归 launcher.py 管; 这里只负责"读一个请求 → 干活 → 写一个结果"。
+
+# >>> PANEL_HTML_BEGIN（本段由 tools/embed_panel.py 从 panel.html 生成，勿手改）
+$global:BwPanelHtml = @'
+<!DOCTYPE html>
+<!--
+  桌面壁纸 · 控制台
+  作者: 海风（kele551）   https://gitcode.com/kele551/ms-wallpaper-assistant
+  说明: 由 menu.ps1 起本地服务后打开; 只与本机 127.0.0.1 通信, 不联网。
+        页面里的 {{BWPANEL_TOKEN}} 由脚本在返回时替换成一次性令牌。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0a0c11">
+<title>桌面壁纸 · 控制台</title>
+<style>
+  :root{
+    --bg:#0a0c11; --card:#12161f; --card-2:#161b26;
+    --ink:#eef2f8; --ink-2:#a3adbe; --ink-3:#697385;
+    --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.14);
+    --brand:#6ee7a8; --brand-2:#3ddc97; --warn:#f0b95b; --bad:#ff7b7b;
+    --r:16px; --sh:0 18px 50px rgba(0,0,0,.5);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;min-height:100vh;color:var(--ink);
+    background:
+      radial-gradient(1100px 620px at 82% -14%, rgba(61,220,151,.14), transparent 58%),
+      radial-gradient(820px 520px at 4% 104%, rgba(88,140,255,.12), transparent 60%),
+      var(--bg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;
+    -webkit-font-smoothing:antialiased;
+    padding:22px clamp(14px,3vw,30px) 28px;
+  }
+  .wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+
+  header{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+  .brand{display:flex;align-items:center;gap:11px}
+  .logo{width:32px;height:32px;border-radius:10px;background:linear-gradient(140deg,var(--brand),#4aa8ff);
+        box-shadow:0 8px 22px rgba(61,220,151,.35);position:relative;flex:none}
+  .logo::after{content:"";position:absolute;inset:8px;border-radius:4px;background:var(--bg);opacity:.7}
+  .brand h1{margin:0;font-size:17px;letter-spacing:.4px}
+  .brand small{display:block;color:var(--ink-3);font-size:12px;font-weight:500;margin-top:3px}
+  .status{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--ink-2);flex-wrap:wrap}
+  .live{width:8px;height:8px;border-radius:50%;background:var(--brand);box-shadow:0 0 0 4px rgba(110,231,168,.16);flex:none}
+  .live.off{background:var(--bad);box-shadow:0 0 0 4px rgba(255,123,123,.16)}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:900px){ .grid{grid-template-columns:1fr} }
+
+  .card{background:linear-gradient(170deg,var(--card-2),var(--card));border:1px solid var(--line);
+        border-radius:var(--r);box-shadow:var(--sh);overflow:hidden}
+  .card-h{display:flex;align-items:center;justify-content:space-between;gap:10px;
+          padding:14px 18px;border-bottom:1px solid var(--line)}
+  .card-h h2{margin:0;font-size:14px;letter-spacing:.3px}
+  .card-h .tag{font-size:11.5px;color:var(--ink-3)}
+
+  /* 当前壁纸那张卡片: 和右边等高, 多出来的高度给图片 —— 既对齐又不会留一片空白 */
+  /* 等高卡片: 缩略图区吃掉剩余高度（内容本身对齐到顶部），底部说明贴底 */
+  .card.fillcol{display:flex;flex-direction:column}
+  .card.fillcol .thumbs{flex:1 1 auto;min-height:0;align-content:start}
+  .card-hint{margin-top:auto;padding:2px 18px 14px;font-size:11.5px;color:var(--ink-3)}
+  .grid.tight{align-items:start}
+  .grid.equal{grid-template-columns:1fr 1fr}
+  /* 和图库并排时: 卡片填满这一行的高度, 缩略图在卡片内部滚动 —— 行不会被撑高 */
+  .card.lib{display:flex;flex-direction:column;overflow:hidden}
+  /* flex-basis 必须是 0: 用 auto 的话缩略图的内容高度会把整行撑高（行高就不再由「高级」决定） */
+  .card.lib{min-height:0}
+  .card.lib .thumbs{flex:1 1 0;min-height:0;overflow:auto;align-content:start}
+  .card.fill{display:flex;flex-direction:column}
+  .card.fill .hero{flex:1 1 auto;aspect-ratio:auto;min-height:240px}  .hero{position:relative;aspect-ratio:16/9;background:#0e1219;overflow:hidden}
+  .hero img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .5s ease}
+  .hero img.ready{opacity:1}
+  .hero .veil{position:absolute;inset:0;pointer-events:none;
+    background:linear-gradient(to top,rgba(6,8,12,.92),rgba(6,8,12,.35) 42%,rgba(6,8,12,.05) 70%)}
+  .hero .meta{position:absolute;left:18px;right:18px;bottom:14px;display:flex;align-items:flex-end;
+              justify-content:space-between;gap:12px}
+  .hero .meta h3{margin:0 0 5px;font-size:18px;letter-spacing:.3px;line-height:1.32;
+                 text-shadow:0 2px 18px rgba(0,0,0,.6);word-break:break-all}
+  .hero .meta p{margin:0;font-size:12.5px;color:var(--ink-2)}
+  .hero .badge{font-size:11.5px;padding:4px 10px;border-radius:999px;white-space:nowrap;
+    border:1px solid rgba(110,231,168,.4);color:var(--brand);background:rgba(110,231,168,.12)}
+  .hero .empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--ink-3);font-size:13px}
+  .actions{display:flex;gap:9px;flex-wrap:wrap;padding:14px 18px}
+
+  .btn{padding:9px 15px;border-radius:11px;font-size:13.5px;border:1px solid var(--line-2);
+       background:rgba(255,255,255,.05);color:var(--ink);cursor:pointer;transition:.16s ease}
+  .btn:hover{background:rgba(255,255,255,.1)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .btn.pri{background:linear-gradient(140deg,var(--brand),var(--brand-2));color:#07230f;font-weight:700;
+           border-color:transparent;box-shadow:0 10px 24px rgba(61,220,151,.25)}
+  .btn.pri:hover{transform:translateY(-1px)}
+  .btn.ghost{background:transparent}
+  .btn.on{border-color:rgba(110,231,168,.55);color:var(--brand);background:rgba(110,231,168,.12)}
+
+  .rows{display:flex;flex-direction:column}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 18px;
+       border-bottom:1px solid var(--line)}
+  .row:last-child{border-bottom:0}
+  .row .k{font-size:13.5px}
+  .row .k small{display:block;color:var(--ink-3);font-size:11.5px;margin-top:3px;line-height:1.5}
+  .row .v{display:flex;align-items:center;gap:9px;flex:none}
+  /* 档位这种"一排按钮"的行: 说明文字别和按钮抢宽度, 直接上下排 */
+  .row.stacked{display:block}
+  .row.stacked .v{margin-top:9px;justify-content:flex-start}
+
+  .sw{width:42px;height:24px;border-radius:99px;background:rgba(255,255,255,.13);position:relative;
+      cursor:pointer;border:0;flex:none;transition:.18s}
+  .sw::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;
+             background:#fff;transition:.18s}
+  .sw.on{background:linear-gradient(140deg,var(--brand),var(--brand-2))}
+  .sw.on::after{left:21px}
+
+  .slider{display:flex;align-items:center;gap:12px;padding:15px 18px;border-bottom:1px solid var(--line)}
+  input[type=range]{-webkit-appearance:none;appearance:none;flex:1;height:6px;border-radius:99px;
+    background:rgba(255,255,255,.12);outline:none}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;
+    background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.5);cursor:pointer}
+  input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;border-radius:50%;background:#fff;cursor:pointer}
+  .num{font-variant-numeric:tabular-nums;font-size:13.5px;min-width:70px;text-align:right}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{font-size:11.5px;padding:4px 9px;border-radius:8px;border:1px solid var(--line-2);
+        color:var(--ink-2);cursor:pointer;transition:.16s}
+  .chip:hover{color:var(--ink)}
+  .chip.on{border-color:rgba(110,231,168,.5);color:var(--brand);background:rgba(110,231,168,.1)}
+
+  select{background:rgba(255,255,255,.06);color:var(--ink);border:1px solid var(--line-2);
+         border-radius:9px;padding:6px 9px;font-size:13px;font-family:inherit}
+  select:focus{outline:2px solid rgba(110,231,168,.5);outline-offset:1px}
+
+  .thumbs{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:14px 18px 16px}
+  @media(max-width:520px){ .thumbs{grid-template-columns:repeat(3,1fr)} }
+  .th{aspect-ratio:16/10;border-radius:10px;overflow:hidden;border:1px solid var(--line);
+      position:relative;cursor:pointer;background:#0e1219}
+  .th img{width:100%;height:100%;object-fit:cover;display:block;opacity:.86;transition:.18s}
+  .th:hover img{opacity:1}
+  .th.on{border-color:var(--brand);box-shadow:0 0 0 2px rgba(110,231,168,.35)}
+  .th .d{position:absolute;left:6px;bottom:5px;font-size:10.5px;color:#fff;background:rgba(0,0,0,.55);
+         padding:1px 6px;border-radius:5px}
+  .th .fav{position:absolute;right:5px;top:5px;font-size:11px;line-height:1;color:#ffd479;
+           background:rgba(0,0,0,.55);padding:3px 5px;border-radius:6px}
+  .none{padding:16px 18px;color:var(--ink-3);font-size:12.5px}
+
+  .log{padding:12px 18px 16px;font-size:11.5px;color:var(--ink-3);line-height:1.95;
+       font-family:ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-all;
+       max-height:132px;overflow:auto}
+  .log .hit{color:var(--ink-2)}
+
+  /* 页脚居中（用户 2026-10-23 要求）：署名一行、底部按钮一行，都居中 */
+  footer{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;
+         text-align:center;font-size:12px;color:var(--ink-3);padding:10px 2px 6px}
+  footer .links{display:flex;gap:16px;flex-wrap:wrap;justify-content:center}
+  footer .repo{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:center;
+               font-family:ui-monospace,Consolas,monospace;font-size:11.5px;color:var(--ink-3)}
+  footer .repo a{color:var(--ink-2);text-decoration:none;border-bottom:1px dotted rgba(255,255,255,.25)}
+  footer .repo a:hover{color:var(--brand);border-bottom-color:rgba(110,231,168,.6)}
+  footer .repo .sep{opacity:.5}
+  footer .repo .tagline{opacity:.75}
+  footer button.link{border:0;background:none;color:var(--ink-3);font-size:12px;cursor:pointer;padding:0;
+                     font-family:inherit;border-bottom:1px dotted rgba(255,255,255,.22)}
+  footer button.link:hover{color:var(--ink-2)}
+
+  .toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,18px);
+         background:rgba(16,20,28,.96);border:1px solid var(--line);color:var(--ink);
+         padding:10px 16px;border-radius:12px;font-size:13px;opacity:0;pointer-events:none;
+         transition:.24s ease;z-index:9;box-shadow:var(--sh);max-width:min(520px,90vw)}
+  .toast.show{opacity:1;transform:translate(-50%,0)}
+  .toast.bad{border-color:rgba(255,123,123,.5);color:#ffd7d7}
+  .skeleton{background:linear-gradient(100deg,#141a24 20%,#1d2431 38%,#141a24 56%);
+            background-size:220% 100%;animation:sk 1.4s linear infinite}
+  @keyframes sk{to{background-position:-120% 0}}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <i class="logo"></i>
+      <div>
+        <h1>桌面壁纸 · 控制台</h1>
+        <small id="versionLine">正在读取本机状态…</small>
+      </div>
+    </div>
+    <div class="status">
+      <i class="live" id="liveDot"></i>
+      <span id="statusLine">连接中…</span>
+    </div>
+  </header>
+
+  <div class="grid">
+    <section class="card fill">
+      <div class="card-h">
+        <h2>当前壁纸</h2>
+        <span class="tag" id="curDate">—</span>
+      </div>
+      <div class="hero" id="hero">
+        <img id="heroImg" alt="">
+        <div class="veil"></div>
+        <div class="empty" id="heroEmpty" style="display:none">还没有设置过壁纸</div>
+        <div class="meta">
+          <div>
+            <h3 id="heroTitle">—</h3>
+            <p id="heroSub">—</p>
+          </div>
+          <span class="badge" id="heroBadge">—</span>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn pri" id="btnSwap">立即换一张</button>
+        <button class="btn" id="btnFav">收藏这张</button>
+        <button class="btn ghost" id="btnOpenImg">看原图</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-h"><h2>更换节奏</h2><span class="tag" id="nextTip">—</span></div>
+      <div class="slider">
+        <input type="range" id="cyc" min="5" max="240" step="5" value="30" aria-label="换图间隔（分钟）">
+        <div class="num" id="cycNum">30 分钟</div>
+      </div>
+      <div class="rows">
+        <div class="row">
+          <div class="k">常用档位<small>点一下切换</small></div>
+          <div class="v chips" id="cycChips">
+            <span class="chip" data-v="10">10 分</span>
+            <span class="chip" data-v="30">30 分</span>
+            <span class="chip" data-v="60">1 小时</span>
+            <span class="chip" data-v="240">4 小时</span>
+            <span class="chip" data-v="720">12 小时</span>
+            <span class="chip" data-v="1440">24 小时</span>
+          </div>
+        </div>
+        <div class="row">
+          <div class="k">自动补新图<small>关掉就只在现有这些图里轮换</small></div>
+          <div class="v"><button class="sw" id="swAuto" aria-label="自动补新图"></button></div>
+        </div>
+        <div class="row">
+          <div class="k">只在收藏里轮换<small>只挑你收藏过的图来换</small></div>
+          <div class="v"><button class="sw" id="swFav" aria-label="只在收藏里轮换"></button></div>
+        </div>
+        <div class="row">
+          <div class="k">下载画质<small>自动 = 1080p 屏只下 1080p，省一半空间</small></div>
+          <div class="v">
+            <select id="selRes">
+              <option value="auto">按屏幕自动</option>
+              <option value="uhd">固定 4K</option>
+            </select>
+          </div>
+        </div>
+        <div class="row">
+          <div class="k">壁纸填充方式<small>跟系统"填充/适应"等价</small></div>
+          <div class="v">
+            <select id="selStyle">
+              <option value="fill">填充</option>
+              <option value="fit">适应</option>
+              <option value="stretch">拉伸</option>
+              <option value="center">居中</option>
+              <option value="tile">平铺</option>
+              <option value="span">跨区</option>
+              <option value="keep">跟随系统（不改）</option>
+            </select>
+          </div>
+        </div>
+        <div class="row">
+          <div class="k">小图不放大<small>开 = 1:1 居中 + 同图模糊底；关 = 拉大铺满（会糊）</small></div>
+          <div class="v"><button class="sw" id="swFit" aria-label="小图不放大"></button></div>
+        </div>
+        <div class="row stacked">
+          <div class="k">更换模式<small id="modeHint">—</small></div>
+          <div class="v chips">
+            <span class="chip" id="modeFocus" data-mode="focus">聚焦模式</span>
+            <span class="chip" id="modeBing" data-mode="bing">必应模式</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="grid">
+    <section class="card fillcol">
+      <div class="card-h"><h2>最近用过的</h2><span class="tag">点一下设为壁纸</span></div>
+      <div class="thumbs" id="hist"></div>
+      <div class="none" id="histNone" style="display:none">还没有换过图</div>
+      <div class="card-hint">最多显示最近 12 张；想找更早的，用右边的「浏览图库」</div>
+    </section>
+
+    <section class="card fillcol">
+      <div class="card-h"><h2>收藏</h2><span class="tag" id="favTag">0 张</span></div>
+      <div class="thumbs" id="favs"></div>
+      <div class="none" id="favNone" style="display:none">还没有收藏，看中哪张点上面的「收藏这张」</div>
+      <div class="card-hint">最多显示 24 张；打开「只在收藏里轮换」后，自动换图只从这些里挑</div>
+    </section>
+  </div>
+
+  <div class="grid equal">
+    <section class="card">
+      <div class="card-h"><h2>高级</h2><span class="tag">改错了可以点下面的"打开数据目录"手动还原</span></div>
+      <div class="rows">
+        <div class="row">
+          <div class="k">开机自动换<small id="autoHint">关 = 登录后不会自己换</small></div>
+          <div class="v"><button class="sw" id="swAutoStart" aria-label="开机自动换"></button></div>
+        </div>
+        <div class="row">
+          <div class="k">桌面快捷方式（也可放进工具栏文件夹）<small id="deskHint">关掉会删掉那个图标</small></div>
+          <div class="v"><button class="sw" id="swDesk" aria-label="桌面快捷方式"></button></div>
+        </div>
+        <div class="row">
+          <div class="k">图库上限<small>0 = 不限；超了会淘汰最老的</small></div>
+          <div class="v"><input type="number" id="numLib" min="0" max="2000" step="10"
+                 style="width:86px;background:rgba(255,255,255,.06);color:var(--ink);border:1px solid var(--line-2);border-radius:9px;padding:6px 9px;font-family:inherit;font-size:13px"></div>
+        </div>
+        <div class="row">
+          <div class="k">必应库上限<small>0 = 不限</small></div>
+          <div class="v"><input type="number" id="numBing" min="0" max="2000" step="10"
+                 style="width:86px;background:rgba(255,255,255,.06);color:var(--ink);border:1px solid var(--line-2);border-radius:9px;padding:6px 9px;font-family:inherit;font-size:13px"></div>
+        </div>
+        <div class="row">
+          <div class="k">每轮抓几张<small>一轮补几张聚焦图（1–50）</small></div>
+          <div class="v"><input type="number" id="numRound" min="1" max="50" step="1"
+                 style="width:86px;background:rgba(255,255,255,.06);color:var(--ink);border:1px solid var(--line-2);border-radius:9px;padding:6px 9px;font-family:inherit;font-size:13px"></div>
+        </div>
+        <div class="row">
+          <div class="k">单张下载超时<small>秒；慢图床到点就放弃、换下一张</small></div>
+          <div class="v"><input type="number" id="numTimeout" min="0" max="300" step="5"
+                 style="width:86px;background:rgba(255,255,255,.06);color:var(--ink);border:1px solid var(--line-2);border-radius:9px;padding:6px 9px;font-family:inherit;font-size:13px"></div>
+        </div>
+        <div class="row">
+          <div class="k">队列剩余<small>还能按顺序换多少张；剩 2 张时会自动补</small></div>
+          <div class="v" id="queueNum" style="color:var(--ink-2);font-size:13px">—</div>
+        </div>
+        <div class="row">
+          <div class="k">累计下载<small>从装上这个程序那天算起</small></div>
+          <div class="v" id="dlTotal" style="color:var(--ink-2);font-size:13px">—</div>
+        </div>
+        <div class="row">
+          <div class="k">不是程序下载的图<small>你自己放进库的；只做记号，不会换到桌面上</small></div>
+          <div class="v" id="strangers" style="color:var(--ink-2);font-size:13px">—</div>
+        </div>
+        <div class="row">
+          <div class="k">库里有多少<small>必应库 / 聚焦库</small></div>
+          <div class="v" id="poolCounts" style="color:var(--ink-2);font-size:13px">—</div>
+        </div>
+        <div class="row">
+          <div class="k">源池状态<small>取图池还剩多少新图</small></div>
+          <div class="v" id="poolLine" style="color:var(--ink-2);font-size:12.5px;text-align:right;max-width:62%">—</div>
+        </div>
+        <div class="row">
+          <div class="k">补货 / 补齐<small>在后台跑，进度看右下角"最近动作"</small></div>
+          <div class="v chips">
+            <span class="chip" id="jobRefill">补几张新图</span>
+            <span class="chip" id="jobBackfill">补漏必应</span>
+            <span class="chip" id="jobArchive">补齐某月</span>
+          </div>
+        </div>
+        <div class="row">
+          <div class="k">重置源池记录<small>只清下载记录，不动图片文件；之后可能重复下到看过的图</small></div>
+          <div class="v"><span class="chip" id="jobReset">清空记录</span></div>
+        </div>
+        <div class="row">
+          <div class="k">壁纸保存位置<small>改到别的盘会把「必应」「聚焦」两个库搬过去</small></div>
+          <div class="v chips">
+            <span class="chip" id="btnMoveBase">换位置…</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card lib">
+    <div class="card-h">
+      <h2>浏览图库</h2>
+      <span class="tag" id="libTag">—</span>
+    </div>
+    <div style="display:flex;gap:8px;padding:12px 18px 0;flex-wrap:wrap">
+      <span class="chip on" id="libBing" data-src="bing">必应库</span>
+      <span class="chip" id="libSpot" data-src="spotlight">聚焦库</span>
+      <span class="chip" id="libMore" style="margin-left:auto">加载更多</span>
+    </div>
+    <div class="thumbs" id="lib" style="padding-top:12px"></div>
+    <div class="none" id="libNone" style="display:none">
+      <span id="libNoneText">这个库里还没有图</span>
+      <span class="chip" id="libOpenDir" style="margin-left:8px">打开这个库的文件夹</span>
+    </div>
+  </section>
+  </div>
+
+  <section class="card">
+    <div class="card-h"><h2>最近动作</h2><span class="tag">只在本机</span></div>
+    <div class="log" id="logBox">—</div>
+  </section>
+
+
+
+  <footer>
+    <span>海风（kele551）　·　图片版权归原提供方，仅个人桌面使用</span>
+    <div class="repo">
+      项目地址
+      <a href="https://gitcode.com/kele551/ms-wallpaper-assistant" target="_blank" rel="noopener">gitcode.com/kele551/ms-wallpaper-assistant</a>
+      <span class="tagline">（主源）</span>
+    </div>
+    <div class="repo">
+      镜像
+      <a href="https://github.com/kele551/ms-wallpaper-assistant" target="_blank" rel="noopener">github.com/kele551/ms-wallpaper-assistant</a>
+      <span class="sep">·</span>
+      <a href="https://atomgit.com/kele551/ms-wallpaper-assistant" target="_blank" rel="noopener">atomgit.com/kele551/ms-wallpaper-assistant</a>
+    </div>
+    <div class="links">
+      <button class="link" id="btnCheckUpd">检查更新</button>
+      <button class="link" id="btnOpenDir">打开数据目录</button>
+      <button class="link" id="btnRefresh">刷新状态</button>
+      <button class="link" id="btnQuit">退出控制台</button>
+    </div>
+  </footer>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+var TOKEN = "{{BWPANEL_TOKEN}}";
+var S = null;          /* 最近一次状态 */
+var busy = false;
+
+function $(id){ return document.getElementById(id); }
+function esc(s){ return String(s == null ? "" : s); }
+
+function toast(msg, bad){
+  var t = $("toast");
+  t.textContent = msg;
+  t.className = "toast show" + (bad ? " bad" : "");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(function(){ t.className = "toast"; }, 2800);
+}
+
+function api(doName, extra){
+  var q = "/api/do?t=" + encodeURIComponent(TOKEN) + "&do=" + encodeURIComponent(doName);
+  if (extra){
+    for (var k in extra){
+      if (extra[k] === undefined || extra[k] === null) continue;
+      q += "&" + k + "=" + encodeURIComponent(extra[k]);
+    }
+  }
+  return fetch(q, {cache:"no-store"}).then(function(r){ return r.json(); })
+    .then(function(j){
+      if (!j) throw new Error("空响应");
+      if (j.ok === false && j.error) toast(j.error, true);
+      if (j && j.scriptVer !== undefined) render(j);
+      return j;
+    })
+    .catch(function(e){ toast("本机服务没响应：" + e.message, true); throw e; });
+}
+
+function wallUrl(p){
+  return p ? ("/api/wall?t=" + encodeURIComponent(TOKEN) + "&p=" + encodeURIComponent(p)) : "";
+}
+
+function baseName(p){
+  if (!p) return "";
+  var i = Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"));
+  return i >= 0 ? p.slice(i + 1) : p;
+}
+
+/* 文件名形如 2026-10-22_标题_地点.jpg —— 拆成日期与说明 */
+function parseName(name){
+  var out = { date: "", title: name || "", place: "" };
+  if (!name) return out;
+  var core = name.replace(/\.[a-z0-9]+$/i, "");
+  var m = core.match(/^(\d{4}-\d{2}-\d{2})_(.*)$/);
+  if (!m) return out;
+  out.date = m[1];
+  var rest = m[2].split("_").filter(function(x){ return x; });
+  out.title = rest[0] || "";
+  out.place = rest.length > 1 ? rest.slice(1).join("，") : "";
+  if (!out.title) out.title = core;
+  return out;
+}
+
+function fmtNext(s){
+  if (!s || !s.st || !s.cfg || !s.st.lastSwap) return "—";
+  var t = Date.parse(String(s.st.lastSwap).replace(/-/g, "/"));
+  if (isNaN(t)) return "—";
+  var cyc = parseInt(s.cfg.cycle_minutes, 10);
+  if (!cyc || cyc <= 0) return "—";
+  if (s.cfg.bing_only) return "每天换一张（跨天时自动换成当天的必应图）";
+  if (s.cfg.auto_fetch === false) return "不会自动换（可以手动换）";
+  var next = new Date(t + cyc * 60000);
+  var left = Math.round((next.getTime() - Date.now()) / 60000);
+  if (left <= 0) return "随时会换（下一轮检查时）";
+  if (left < 60) return "约 " + left + " 分钟后换";
+  return "约 " + (left / 60).toFixed(1) + " 小时后换";
+}
+
+/* ── 渲染 ── */
+function render(s){
+  S = s;
+  var cfg = s.cfg || {}, st = s.st || {};
+
+  $("liveDot").className = "live";
+  $("statusLine").textContent = (cfg.bing_only ? "必应模式 · 每天一张" : "聚焦模式 · 自动更换中") + " · " + fmtNext(s);
+  $("versionLine").textContent = "脚本 v" + (s.scriptVer || "?") + "　·　主程序 v" + (s.launcherVer || "?")
+    + "　·　数据目录 " + ((s.dirs && s.dirs.base) || "");
+
+  /* 当前壁纸 */
+  var p = st.lastWall || "";
+  if (p){
+    var bn = parseName(baseName(p));
+    var img = $("heroImg");
+    var src = wallUrl(p);
+    if (img.getAttribute("src") !== src){
+      img.classList.remove("ready");
+      img.onload = function(){ img.classList.add("ready"); $("heroEmpty").style.display = "none"; };
+      img.onerror = function(){ img.classList.remove("ready"); $("heroEmpty").style.display = "grid";
+        $("heroEmpty").textContent = "这张图打不开了（可能刚被清理）"; };
+      img.src = src;
+    }
+    $("heroTitle").textContent = bn.title || baseName(p);
+    $("heroSub").textContent = (bn.place || baseName(p)) + (st.lastSwap ? ("　·　" + st.lastSwap + " 换上") : "");
+    $("curDate").textContent = bn.date || "—";
+    $("heroBadge").textContent = st.shown ? ("已换 " + st.shown + " 次") : "当前壁纸";
+    $("btnOpenImg").style.display = "";
+  } else {
+    $("heroImg").classList.remove("ready");
+    $("heroEmpty").style.display = "grid";
+    $("heroEmpty").textContent = "还没有设置过壁纸，点「立即换一张」";
+    $("heroTitle").textContent = "—";
+    $("heroSub").textContent = "—";
+    $("curDate").textContent = "—";
+    $("btnOpenImg").style.display = "none";
+  }
+
+  /* 节奏 */
+  var cyc = parseInt(cfg.cycle_minutes, 10);
+  if (!isNaN(cyc)){
+    $("cyc").value = Math.min(240, Math.max(5, cyc));
+    $("cycNum").textContent = cyc + " 分钟";
+    var chips = $("cycChips").children;
+    for (var i = 0; i < chips.length; i++){
+      chips[i].classList.toggle("on", parseInt(chips[i].dataset.v, 10) === cyc);
+    }
+  }
+  $("nextTip").textContent = fmtNext(s);
+
+  $("swAuto").className = "sw" + (cfg.auto_fetch === false ? "" : " on");
+  $("swFav").className = "sw" + (cfg.fav_only ? " on" : "");
+  $("swFit").className = "sw" + (cfg.art_fit_mode === "off" ? "" : " on");
+  var dk = s.desktop || {};
+  var dkOn = cfg.desktop_shortcut !== "off";
+  $("swDesk").className = "sw" + (dkOn ? " on" : "");
+  $("deskHint").textContent = !dkOn
+    ? "当前：没有桌面图标（打开会在原来的位置重建）"
+    : (dk.exists ? ("当前：图标在 " + (dk.path || "")) : "配置是开，但桌面上找不到图标 —— 关一次再开就会重建");
+  var isBing = !!cfg.bing_only;
+  $("modeFocus").classList.toggle("on", !isBing);
+  $("modeBing").classList.toggle("on", isBing);
+  $("modeHint").textContent = isBing
+    ? "当前是必应模式：只换必应每日一图，一天一张；不抓聚焦、不按间隔轮换"
+    : "当前是聚焦模式：按间隔换「Windows 聚焦」图库里的图（和必应图混着轮换）";
+  $("selRes").value = (cfg.resolution_mode === "uhd") ? "uhd" : "auto";
+  $("selStyle").value = cfg.wallpaper_style || "fill";
+
+  if (document.activeElement !== $("numLib")) $("numLib").value = cfg.lib_cap == null ? 200 : cfg.lib_cap;
+  if (document.activeElement !== $("numBing")) $("numBing").value = cfg.bing_cap == null ? 200 : cfg.bing_cap;
+  if (document.activeElement !== $("numRound")) $("numRound").value = cfg.spotlight_per_cycle == null ? 6 : cfg.spotlight_per_cycle;
+  if (document.activeElement !== $("numTimeout")) $("numTimeout").value = cfg.src_timeout_sec == null ? 20 : cfg.src_timeout_sec;
+
+  $("queueNum").textContent = (st.queue == null ? "—" : (st.queue + " 张"));
+
+  var cnt = s.counts || {};
+  $("poolCounts").textContent = "必应 " + (cnt.bing || 0) + " 张　·　聚焦 " + (cnt.spotlight || 0) + " 张";
+  $("poolLine").textContent = (s.pool && s.pool.line) ? s.pool.line : "—";
+
+  var au = s.auto || {};
+  $("swAutoStart").className = "sw" + (au.startup ? " on" : "");
+  $("autoHint").textContent = au.startup
+    ? (au.daemon ? "开着 · 后台正在跑" : "开着 · 这次开机没跑起来，点一下会拉起来")
+    : "关 = 登录后不会自己换";
+  $("dlTotal").textContent = (au.dlTotal || 0) + " 张";
+  $("strangers").textContent = (au.strangers || 0) + " 张";
+
+  /* 收藏状态 */
+  var favNames = (s.favorites || []).map(function(x){ return x.name; });
+  var curName = baseName(p);
+  var isFav = favNames.indexOf(curName) >= 0;
+  $("btnFav").textContent = isFav ? "已收藏 ✓" : "收藏这张";
+  $("btnFav").classList.toggle("on", isFav);
+
+  /* 缩略图 */
+  renderThumbs("hist", s.history || [], {}, curName);
+  renderThumbs("favs", s.favorites || [], {fav: true}, curName);
+  $("histNone").style.display = (s.history && s.history.length) ? "none" : "";
+  $("favNone").style.display = (s.favorites && s.favorites.length) ? "none" : "";
+  $("favTag").textContent = (s.favCount || 0) + " 张";
+
+  /* 日志 */
+  var lg = $("logBox");
+  lg.innerHTML = "";
+  (s.log || []).forEach(function(line){
+    var d = document.createElement("div");
+    d.textContent = line;
+    lg.appendChild(d);
+  });
+  if (!s.log || !s.log.length) lg.textContent = "—";
+}
+
+function renderThumbs(boxId, list, opt, curName, append){
+  var box = $(boxId);
+  if (!append) box.innerHTML = "";
+  list.forEach(function(it){
+    var b = document.createElement("button");
+    b.className = "th" + (it.name === curName ? " on" : "");
+    b.type = "button";
+    b.title = it.name;
+    b.setAttribute("aria-label", "设为壁纸：" + it.name);
+    var im = document.createElement("img");
+    im.loading = "lazy";
+    im.alt = "";
+    im.src = wallUrl(it.path);
+    b.appendChild(im);
+    var bn = parseName(it.name);
+    var d = document.createElement("span");
+    d.className = "d";
+    d.textContent = bn.date ? bn.date.slice(5) : "";
+    b.appendChild(d);
+    if (opt && opt.fav){
+      var f = document.createElement("span");
+      f.className = "fav";
+      f.textContent = "★";
+      b.appendChild(f);
+    }
+    b.addEventListener("click", function(){
+      api("use", {name: it.name}).then(function(){ toast("已设为壁纸"); });
+    });
+    box.appendChild(b);
+  });
+}
+
+/* ── 操作绑定 ── */
+function run(fn){
+  if (busy) return;
+  busy = true;
+  fn().then(function(){ busy = false; }, function(){ busy = false; });
+}
+
+$("btnSwap").addEventListener("click", function(){
+  run(function(){
+    $("btnSwap").disabled = true;
+    return api("swap").then(function(j){
+      $("btnSwap").disabled = false;
+      toast(j && j.ok ? "换好了" : "这一轮没换成，稍后再试", !(j && j.ok));
+    }, function(){ $("btnSwap").disabled = false; });
+  });
+});
+
+$("btnFav").addEventListener("click", function(){
+  run(function(){
+    var isFav = $("btnFav").classList.contains("on");
+    return api(isFav ? "unfav" : "fav").then(function(){
+      toast(isFav ? "已取消收藏" : "已收藏");
+    });
+  });
+});
+
+$("btnOpenImg").addEventListener("click", function(){
+  if (S && S.st && S.st.lastWall) window.open(wallUrl(S.st.lastWall), "_blank", "noopener");
+});
+
+$("cyc").addEventListener("input", function(){
+  $("cycNum").textContent = this.value + " 分钟";
+});
+$("cyc").addEventListener("change", function(){
+  run(function(){ return api("set", {key:"cycle_minutes", value:this.value}).then(function(){ toast("间隔已改成 " + $("cyc").value + " 分钟"); }); }.bind(this));
+});
+
+Array.prototype.forEach.call($("cycChips").children, function(chip){
+  chip.addEventListener("click", function(){
+    run(function(){ return api("set", {key:"cycle_minutes", value:chip.dataset.v}).then(function(){ toast("间隔已改成 " + chip.dataset.v + " 分钟"); }); });
+  });
+});
+
+function bindSw(id, key, getVal){
+  $(id).addEventListener("click", function(){
+    run(function(){ return api("set", {key:key, value:getVal()}).then(function(){ toast("已保存"); }); });
+  });
+}
+bindSw("swAuto", "auto_fetch", function(){ return S && S.cfg && S.cfg.auto_fetch === false ? "true" : "false"; });
+bindSw("swFav", "fav_only", function(){ return S && S.cfg && S.cfg.fav_only ? "false" : "true"; });
+bindSw("swFit", "art_fit_mode", function(){ return S && S.cfg && S.cfg.art_fit_mode === "off" ? "on" : "off"; });
+/* 桌面快捷方式：真建/真删，并把结果回执给用户。
+   关闭 = 把那个 .lnk 从它所在的文件夹里删掉 —— 如果你把这个文件夹挂成了任务栏「工具栏」，
+   工具栏上的入口也会一起消失，所以关闭前必须问一句。 */
+$("swDesk").addEventListener("click", function(){
+  var on = !!(S && S.cfg && S.cfg.desktop_shortcut !== "off");
+  var dk = (S && S.desktop) || {};
+  if (on) {
+    var where = dk.path ? dk.path : "桌面";
+    if (!confirm("关掉桌面快捷方式会把文件删掉：\n\n" + where +
+                 "\n\n如果你把这个文件夹挂在任务栏的「工具栏」上，那个入口也会一起消失。\n确定要关吗？")) return;
+  }
+  run(function(){
+    return api("set", {key: "desktop_shortcut", value: on ? "off" : "on"}).then(function(j){
+      toast((j && j.note) ? j.note : (on ? "已关闭桌面快捷方式" : "已打开桌面快捷方式"));
+    });
+  });
+});
+
+$("selRes").addEventListener("change", function(){
+  run(function(){ return api("set", {key:"resolution_mode", value:this.value}).then(function(){ toast("画质档已保存"); }); }.bind(this));
+});
+$("selStyle").addEventListener("change", function(){
+  run(function(){ return api("set", {key:"wallpaper_style", value:this.value}).then(function(){ toast("填充方式已保存"); }); }.bind(this));
+});
+
+function bindNum(id, key){
+  $(id).addEventListener("change", function(){
+    run(function(){ return api("set", {key:key, value:$(id).value}).then(function(){ toast("已保存"); }); });
+  });
+}
+bindNum("numLib", "lib_cap");
+bindNum("numBing", "bing_cap");
+bindNum("numRound", "spotlight_per_cycle");
+bindNum("numTimeout", "src_timeout_sec");
+
+$("btnCheckUpd").addEventListener("click", function(){
+  run(function(){
+    toast("正在检查更新…");
+    return api("update").then(function(j){
+      toast(j && j.updated ? "已升级，重新打开控制台生效" : "已是最新版");
+    });
+  });
+});
+$("btnOpenDir").addEventListener("click", function(){ api("openDir", {name:"data"}); });
+$("btnRefresh").addEventListener("click", function(){ refresh(true); });
+$("btnQuit").addEventListener("click", function(){
+  api("quit").then(function(){
+    $("liveDot").className = "live off";
+    $("statusLine").textContent = "已退出，可以直接关掉这个标签页";
+    toast("控制台已退出");
+  });
+});
+
+function refresh(showTip){
+  return fetch("/api/state?t=" + encodeURIComponent(TOKEN), {cache:"no-store"})
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (j && j.error && !j.cfg) throw new Error(j.error);
+      render(j);
+      if (showTip) toast("已刷新");
+    })
+    .catch(function(e){
+      $("liveDot").className = "live off";
+      $("statusLine").textContent = "连不上本机服务（可能已退出）";
+      if (showTip) toast("刷新失败：" + e.message, true);
+    });
+}
+
+/* ── 图库浏览 ── */
+var libState = { src: "bing", skip: 0 };
+
+function loadLib(src, more){
+  if (!more){ libState.src = src; libState.skip = 0; $("lib").innerHTML = ""; }
+  libState.src = src || libState.src;
+  return api("list", {name: libState.src, value: libState.skip}).then(function(j){
+    if (!j || !j.items) return;
+    if (j.items.length) libState.skip = libState.skip + j.items.length;
+    $("libTag").textContent = "共 " + (j.total || 0) + " 张";
+    var cur = baseName(S && S.st ? S.st.lastWall : "");
+    renderThumbs("lib", j.items, {}, cur, more);
+    $("libNone").style.display = (j.total > 0) ? "none" : "";
+    $("libNoneText").textContent = "这个库里还没有图（" + (j.dir || "") + "）";
+  });
+}
+
+$("libBing").addEventListener("click", function(){
+  $("libBing").classList.add("on"); $("libSpot").classList.remove("on");
+  loadLib("bing", false);
+});
+$("libSpot").addEventListener("click", function(){
+  $("libSpot").classList.add("on"); $("libBing").classList.remove("on");
+  loadLib("spotlight", false);
+});
+$("libMore").addEventListener("click", function(){ loadLib(libState.src, true); });
+$("libOpenDir").addEventListener("click", function(){
+  api("openDir", {name: libState.src === "spotlight" ? "spotlight" : "bing"});
+});
+
+/* ── 后台任务 ── */
+function startJob(name, arg, tip){
+  return api("job", {name: name, value: arg}).then(function(){
+    toast(tip || "已在后台开始，进度看「最近动作」");
+    setTimeout(function(){ refresh(false); }, 1200);
+  });
+}
+$("jobRefill").addEventListener("click", function(){ startJob("refill", "", "开始补新图（后台）"); });
+$("jobBackfill").addEventListener("click", function(){ startJob("backfill", "", "开始补漏必应（后台）"); });
+$("jobArchive").addEventListener("click", function(){
+  var ym = prompt("补齐哪个月？写成 2024-08 这种样子", "");
+  if (!ym) return;
+  if (!/^\d{4}-\d{2}$/.test(ym.trim())) { toast("年月格式不对，要 2024-08 这样", true); return; }
+  startJob("archive", ym.trim(), "开始补齐 " + ym.trim() + "（后台）");
+});
+$("jobReset").addEventListener("click", function(){
+  if (!confirm("只清下载记录，不动图片文件。\n之后可能重复下到以前看过的图，确定吗？")) return;
+  startJob("resetpool", "", "已清空源池记录");
+});
+$("btnMoveBase").addEventListener("click", function(){
+  var p = prompt("要搬到哪个目录？（会把「必应」「聚焦」两个库搬过去）\n例如 D:\\我的图片\\壁纸", "");
+  if (!p) return;
+  if (!confirm("确定搬到：\n" + p + "\n\n图多的时候会跑一会儿，搬完看日志确认。")) return;
+  startJob("setbase", p, "开始迁移库（后台）");
+});
+
+/* 更换模式：两个按钮直接切（后端会立刻动作，不是等下一轮）
+   切到必应模式 -> 当场换成"今天这张"必应图，之后一天一换；
+   切回聚焦模式 -> 当场按轮换换一张「聚焦」图，恢复按间隔轮换。 */
+function setMode(bing){
+  var cur = !!(S && S.cfg && S.cfg.bing_only);
+  if (cur === bing) { toast(bing ? "已经是必应模式" : "已经是聚焦模式"); return; }
+  run(function(){
+    return api("set", {key: "bing_only", value: bing ? "true" : "false"}).then(function(){
+      toast(bing ? "已切到必应模式：正在换成今天的必应图…" : "已切到聚焦模式：正在按轮换换一张…");
+      setTimeout(function(){ refresh(false); }, 7000);
+    });
+  });
+}
+$("modeFocus").addEventListener("click", function(){ setMode(false); });
+$("modeBing").addEventListener("click", function(){ setMode(true); });
+
+/* 开机自动换：不是改配置，是建/删启动项 + 拉后台，所以走单独的动作 */
+$("swAutoStart").addEventListener("click", function(){
+  var on = !!(S && S.auto && S.auto.startup);
+  run(function(){
+    return api("autostart", {value: on ? "off" : "on"}).then(function(j){
+      toast((j && j.note) || "已处理", !(j && j.ok));
+    });
+  });
+});
+
+/* 启动：先拉一次，之后每 20 秒刷新一次（页面没焦点时跳过，省得白跑） */
+refresh(false);
+loadLib("bing", false);
+setInterval(function(){ if (!document.hidden) refresh(false); }, 20000);
+</script>
+</body>
+</html>
+
+'@
+# <<< PANEL_HTML_END
+
+# 把内嵌的面板 HTML 释放成真文件。不带 BOM: 浏览器读 HTML 不需要它。
+function Write-BwPanelHtml([string]$path) {
+  if (-not $path) { return $false }
+  try {
+    $enc = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($path, [string]$global:BwPanelHtml, $enc)
+    return $true
+  } catch { return $false }
+}
+
+# ---- 快捷方式与开机自启（V2.4.0 从 menu.ps1 搬来） ----
+# 为什么搬: 界面改成网页控制台之后, 「开机自动换」和「桌面快捷方式」要由面板通过接口改,
+# 而它们以前写在 menu.ps1 里。menu.ps1 现在只剩"起服务 + 开浏览器"几十行。
+# 这几个全局常量原来也定义在 menu.ps1, 一并搬过来(注意: 这里**不放**版本号常量,
+# 版本只在 launcher.py 与 menu.ps1 定义 —— 发版自检会查这一点)。
+$global:BWLnkName       = '桌面壁纸.lnk'
+$global:BWLnkNameLegacy = '微软壁纸助手.lnk'
+$global:BWExeName       = '壁纸助手.exe'
+$global:BWExeNameLegacy = '微软壁纸助手.exe'
+
+# ---------- 开机自动换壁纸 (绿色做法: 往「启动」文件夹放个快捷方式, 不需要管理员) ----------
+# 快捷方式指向固定名 exe(壁纸助手.exe, 老用户还是旧名) --daemon。exe 是 GUI 子系统程序, 后台模式
+# 一个控制台都不建, 所以开机拉起时不会闪任何窗口。
+function Get-BwStartupLnk {
+  # MWA_STARTUP_DIR: 只给自检/演练用（把启动项目录指到临时目录），
+  # 免得测试往用户真正的「启动」文件夹里放/删快捷方式。
+  $d = [string]$env:MWA_STARTUP_DIR
+  if (-not $d) { $d = [Environment]::GetFolderPath('Startup') }
+  return (Join-Path $d $global:BWLnkName)
+}
+# 老名字的启动项(从旧版升上来的用户那儿还留着)。只用来"搬一次家":
+# 存在就把它改成新名字, 不让新旧两份同时躺在启动文件夹里。
+function Get-BwStartupLnkLegacy {
+  $d = [string]$env:MWA_STARTUP_DIR
+  if (-not $d) { $d = [Environment]::GetFolderPath('Startup') }
+  return (Join-Path $d $global:BWLnkNameLegacy)
+}
+# 快捷方式要指向**固定名**那份 exe (壁纸助手.exe, 老用户原地保留旧名), 而不是 壁纸助手-v2.2.1.exe。
+# 指到带版本号的名字上, 下一次升级换了文件名, 开机自动换就无声失效了 ——
+# 用户不打开菜单根本看不出来 (v1.3.0 就是这么断的: CHANGELOG 说了要用固定名,
+# 但部署时只拷了带版本号的那份, 于是建快捷方式时直接用了当前 exe 路径)。
+# 所以: 固定名存在就用它; 不存在就自己复制一份出来, 再不行才退回当前 exe。
+function Get-BwFixedExe {
+  $cur = ''
+  $p = Join-Path $global:BWRoot 'launcher.txt'
+  if (Test-Path -LiteralPath $p) { $cur = (Get-Content -LiteralPath $p -Raw -Encoding UTF8).Trim() }
+  if (-not $cur) { return '' }
+  if (-not (Test-Path -LiteralPath $cur)) { return '' }
+  # 2026-10-12 改名双名兼容: 老用户原位覆盖后文件名还是老名, 新装是新名 ——
+  # 哪个真实存在用哪个; 都不在(当前 exe 是带版本号的名字)就回新名, 由 Ensure 复制出一份。
+  $dir = Split-Path $cur -Parent
+  foreach ($nm in @($global:BWExeName, $global:BWExeNameLegacy)) {
+    $cand = Join-Path $dir $nm
+    if (Test-Path -LiteralPath $cand) { return $cand }
+  }
+  return (Join-Path $dir $global:BWExeName)
+}
+function Ensure-BwFixedExe {
+  $fixed = Get-BwFixedExe
+  if (-not $fixed) { return '' }
+  if (Test-Path -LiteralPath $fixed) { return $fixed }
+  # 固定名那份还没拷过来 —— 从当前 exe 复制一份, 内容一模一样。
+  # 只在本程序自己所在目录里操作, 不碰系统, 复制失败也无所谓(下面会退回当前 exe)。
+  $cur = (Get-Content -LiteralPath (Join-Path $global:BWRoot 'launcher.txt') -Raw -Encoding UTF8).Trim()
+  try { Copy-Item -LiteralPath $cur -Destination $fixed -Force; return $fixed } catch { return '' }
+}
+function Get-BwLauncherPath {
+  $fixed = Ensure-BwFixedExe
+  if ($fixed -and (Test-Path -LiteralPath $fixed)) { return $fixed }
+  $p = Join-Path $global:BWRoot 'launcher.txt'
+  if (Test-Path -LiteralPath $p) { return (Get-Content -LiteralPath $p -Raw -Encoding UTF8).Trim() }
+  return ''
+}
+# exe 换个地方放之后, 启动文件夹里的快捷方式还指着老位置 ——
+# 菜单上却照样显示"开", 用户根本看不出来开机后其实什么都没拉起来。
+# 所以每次进菜单都核对一下, 指错了就重新指到当前这份 exe。
+# 顺带把老版本"指向带版本号文件名"的快捷方式也修正成固定名。
+function Repair-BwAutoStart {
+  # 老名字的启动项(旧版留下的)先搬成新名字, 再照原来的逻辑核对指向
+  $legacyLnk = Get-BwStartupLnkLegacy
+  if (Test-Path -LiteralPath $legacyLnk) { [void](Move-BwLnkToNewName $legacyLnk) }
+  $lnk = Get-BwStartupLnk
+  if (-not (Test-Path -LiteralPath $lnk)) { return $false }
+  $want = Get-BwLauncherPath
+  if ((-not $want) -or (-not (Test-Path -LiteralPath $want))) { return $false }
+  $sh = $null
+  $cur = ''
+  try {
+    $sh = New-Object -ComObject WScript.Shell
+    $cur = $sh.CreateShortcut($lnk).TargetPath
+  } catch { return $false }
+  if ($cur -and (Test-Path -LiteralPath $cur) -and ($cur -eq $want)) { return $false }
+  try {
+    $sc = $sh.CreateShortcut($lnk)
+    $sc.TargetPath       = $want
+    $sc.Arguments        = '--daemon'
+    $sc.WorkingDirectory = (Split-Path $want -Parent)
+    $sc.Description      = '桌面壁纸 - 开机自动换壁纸'
+    $sc.IconLocation     = (Get-BwIconLocation $want)
+    $sc.Save()
+    Log ('开机自动换: 快捷方式原先指向 [' + $cur + '], 已改指 [' + $want + ']')
+    return $true
+  } catch { return $false }
+}
+# ---------- 桌面快捷方式 ----------
+# 桌面上要一直有一个能双击打开菜单的快捷方式, 不用用户自己动手建:
+# 在设置 [6] 里关掉之后就完全不动, 也不再自动建。
+#   · 没有 -> 建一个, **只建这一次** (首次运行就会有)
+#   · exe 换了地方 -> 改指过去 (挪到哪个盘都跟着)
+#   · exe 被新版本覆盖过 (文件比快捷方式新) -> 重写一遍, 顺带把图标刷新成新版的
+#
+# 关键一条: **它建在哪儿, 以后就认哪儿**。
+# 用户把快捷方式收进桌面上的文件夹 (比如「图标」) 是常事, 不能因为他挪了一下,
+# 程序就在桌面根再冒一个出来 —— 那样每次打开菜单桌面上都会多一个。
+# 所以位置记在 config.json 里; 记的位置没了, 先去桌面和一层子目录里找,
+# 找不着且从来没建过才建; 建过又被删掉的, 就不建了 (尊重用户删掉它的决定)。
+# 想重建: 设置 [6] 里关一次再开。
+# 快捷方式的"建在哪儿 / 建没建过"单独存一个小文件, **不写进 config.json**。
+# 理由: 主菜单靠"config.json 在不在"来判断要不要走首次运行向导。
+# 要是建快捷方式时顺手把 config.json 也写了, 用户还没选保存目录, 向导就被跳过,
+# 壁纸会默默存到默认位置 —— 那是替用户做了决定, 不能这么干。
+function Get-BwDeskInfo {
+  $p = Join-Path $global:BWRoot 'desktop_shortcut.json'
+  $o = $null
+  if (Test-Path -LiteralPath $p) {
+    try { $o = Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $o = $null }
+  }
+  if (-not $o) { $o = New-Object PSObject }
+  if (-not $o.PSObject.Properties['path'])    { Add-Member -InputObject $o NoteProperty path '' -Force }
+  if (-not $o.PSObject.Properties['created']) { Add-Member -InputObject $o NoteProperty created '' -Force }
+  return $o
+}
+function Save-BwDeskInfo($o) {
+  $p = Join-Path $global:BWRoot 'desktop_shortcut.json'
+  try { [System.IO.File]::WriteAllText($p, ($o | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false))) } catch {}
+}
+function Get-BwDesktopLnk {
+  $i = Get-BwDeskInfo
+  if ($i.path) { return $i.path }
+  return (Join-Path (Get-BwDesktopDir) $global:BWLnkName)
+}
+# 桌面在哪。抽成一个函数是因为测试要能把它换成临时目录 ——
+# 不然"首次自动建快捷方式"那条分支只能往真桌面上建, 测试就没法隔离了。
+function Get-BwDesktopDir {
+  # MWA_DESKTOP_DIR: 只给自检/演练用。
+  # 2026-10-23 真事故: 自检的"关掉桌面快捷方式"这一步, 找的是**真桌面**,
+  # 把用户放在「桌面\桌面图标」里的快捷方式删掉了(已按原样重建)。
+  # 有了这个环境变量, 演练就只在自己造的假桌面里动。
+  $d = [string]$env:MWA_DESKTOP_DIR
+  if ($d) { return $d }
+  return ([Environment]::GetFolderPath('Desktop'))
+}
+# 桌面根目录找不到时, 再往桌面上的一层子目录里找一遍 (用户收进文件夹的情况)
+function Find-BwDesktopLnk {
+  $desk = Get-BwDesktopDir
+  # 新名字优先; 老名字也认(升级上来的用户桌面上留着的还是旧名字那份)
+  foreach ($nm in @($global:BWLnkName, $global:BWLnkNameLegacy)) {
+    $hit = @()
+    try { $hit = @(Get-ChildItem -LiteralPath $desk -File -Filter $nm -ErrorAction SilentlyContinue) } catch { $hit = @() }
+    if ($hit.Count -eq 0) {
+      try {
+        $subs = @(Get-ChildItem -LiteralPath $desk -Directory -ErrorAction SilentlyContinue)
+        foreach ($s in $subs) {
+          $f = @(Get-ChildItem -LiteralPath $s.FullName -File -Filter $nm -ErrorAction SilentlyContinue)
+          if ($f.Count -gt 0) { $hit = @($f[0]); break }
+        }
+      } catch {}
+    }
+    if ($hit.Count -gt 0) { return $hit[0].FullName }
+  }
+  return ''
+}
+# 快捷方式的图标从哪取: 优先数据目录里那份独立的 .ico 文件, 没有才退回 exe 自己。
+#
+# 为什么不直接用 exe: Windows 的图标缓存是按「exe 的完整路径」记的。老版本 exe 占着
+# 同一个路径时 (比如 D:\Program Files\微软壁纸助手.exe), 即使文件已经换成新版,
+# 缓存里存的还是旧图标 —— 表现为"放桌面一个样、拖进文件夹又一个样"。
+# 独立的 .ico 是另一条路径, 没被旧版本污染过, 显示出来的始终是这张图。
+function Get-BwIconLocation([string]$exe) {
+  # 2026-10-12 改名: 数据目录里的图标, 新装是「壁纸助手.ico」; 老用户热更上来的
+  # 还是「微软壁纸助手.ico」(payload 只补缺失不覆盖同名旧物) —— 两个名都认, 新名优先。
+  foreach ($nm in @('壁纸助手.ico', '微软壁纸助手.ico')) {
+    $ico = Join-Path $global:BWRoot $nm
+    if (Test-Path -LiteralPath $ico) { return ('{0},0' -f $ico) }
+  }
+  return ('{0},0' -f $exe)
+}
+# 真正写盘的那一步: 返回 create / update / ok / fail
+function Write-BwShortcut($sh, [string]$lnk, [string]$want) {
+  $need = 'create'
+  if (Test-Path -LiteralPath $lnk) {
+    $need = ''
+    $cur = ''
+    try { $cur = [string]$sh.CreateShortcut($lnk).TargetPath } catch { return 'fail' }
+    if ($cur -ne $want) {
+      $need = 'update'      # 指错地方了 (挪过/换过版本)
+    } else {
+      # 指向没变, 但 exe 文件本身更新过 -> 重存一次, 让图标跟着新版刷新
+      $tw = (Get-Item -LiteralPath $want).LastWriteTime
+      $tl = (Get-Item -LiteralPath $lnk).LastWriteTime
+      if ($tw -gt $tl) { $need = 'update' }
+    }
+  }
+  if (-not $need) { return 'ok' }
+  try {
+    $sc = $sh.CreateShortcut($lnk)
+    $sc.TargetPath       = $want
+    $sc.Arguments        = ''
+    $sc.WorkingDirectory = (Split-Path $want -Parent)
+    $ver = ''
+    try { $ver = [string]$global:BWVersion } catch {}
+    $sc.Description      = ('桌面壁纸 v' + $ver + ' - 双击打开控制台')
+    $sc.IconLocation     = (Get-BwIconLocation $want)
+    $sc.Save()
+    if ($need -eq 'create') { Log ('桌面快捷方式: 已创建 -> ' + $lnk) }
+    else { Log ('桌面快捷方式: 已更新, 指向 [' + $want + ']') }
+    return $need
+  } catch { return 'fail' }
+}
+# 返回: create / update / ok / gone / off / fail
+#   gone = 以前建过, 现在没了 (被用户删了) —— 不再自动建
+# 老名字的快捷方式 -> 新名字(同一个文件夹里改个名), 返回改完之后的路径。
+# 为什么要搬: 显示名改了以后老 lnk 留着就是桌面上一个"旧名字"的空壳;
+# 启动项里要是新旧并存, 还会变成两个开机自启。
+function Move-BwLnkToNewName([string]$lnk) {
+  if (-not $lnk) { return '' }
+  $leaf = ''
+  try { $leaf = Split-Path $lnk -Leaf } catch { return $lnk }
+  if ($leaf -ne $global:BWLnkNameLegacy) { return $lnk }
+  $dst = Join-Path (Split-Path $lnk -Parent) $global:BWLnkName
+  if (Test-Path -LiteralPath $dst) {
+    # 新名字那份已经在 -> 老的删掉(内容一样, 留着只会变成两个入口)
+    try { Remove-Item -LiteralPath $lnk -Force -ErrorAction SilentlyContinue } catch {}
+    return $dst
+  }
+  try {
+    Move-Item -LiteralPath $lnk -Destination $dst -Force -ErrorAction Stop
+    Log ('快捷方式改名: ' + $leaf + ' -> ' + $global:BWLnkName)
+    return $dst
+  } catch { return $lnk }
+}
+function Ensure-BwDesktopShortcut {
+  $c = Get-BwConfig
+  if ([string]$c.desktop_shortcut -eq 'off') { return 'off' }
+  $want = Get-BwLauncherPath
+  if ((-not $want) -or (-not (Test-Path -LiteralPath $want))) { return 'fail' }
+  $sh = $null
+  try { $sh = New-Object -ComObject WScript.Shell } catch { return 'fail' }
+  $info = Get-BwDeskInfo
+
+  # 1) 记住的位置还在 -> 就地更新 (用户挪进文件夹也跟着走, 不在桌面根另建)
+  #    顺手补上"已经建过"的记号: 老版本留下的 desktop_shortcut.json 只有 path 没有
+  #    created, 不补的话以后这个快捷方式一旦被删, 会被当成"从来没建过"又在桌面根新建一个。
+  if ($info.path -and (Test-Path -LiteralPath $info.path)) {
+    # 老名字的快捷方式: 先就地改成新名字, 再按新路径继续维护
+    $newLnk = Move-BwLnkToNewName $info.path
+    if ($newLnk -ne $info.path) { $info.path = $newLnk; Save-BwDeskInfo $info }
+    if ([string]$info.created -ne 'yes') { $info.created = 'yes'; Save-BwDeskInfo $info }
+    return (Write-BwShortcut $sh $info.path $want)
+  }
+
+  # 2) 记的位置没了 (被删/被挪) -> 桌面根和一层子目录里找, 找到了就接着用那个
+  $found = Find-BwDesktopLnk
+  if ($found) {
+    $info.path = $found
+    $info.created = 'yes'   # 找着了就说明确实建过, 别再当成"从来没建过"
+    Save-BwDeskInfo $info
+    return (Write-BwShortcut $sh $found $want)
+  }
+
+  # 3) 从来没自动建过 -> 建这一次
+  if ([string]$info.created -ne 'yes') {
+    $target = Join-Path (Get-BwDesktopDir) $global:BWLnkName
+    $r = Write-BwShortcut $sh $target $want
+    if ($r -eq 'create') {
+      $info.path = $target
+      $info.created = 'yes'
+      Save-BwDeskInfo $info
+    }
+    return $r
+  }
+
+  # 4) 建过, 但被删了 -> 不再打扰
+  return 'gone'
+}
+function Test-BwAutoStart {
+  # 老名字的启动项也算"开着" —— 否则升级上来的用户会看到"开机自动换: 关"而其实是开的
+  return ((Test-Path -LiteralPath (Get-BwStartupLnk)) -or (Test-Path -LiteralPath (Get-BwStartupLnkLegacy)))
+}
+# 后台到底有没有在跑? 只看"开机自动换开了没"是不够的 ——
+# 那个开关只是往启动文件夹放了个快捷方式, **本次开机**并不会自己跑起来。
+# 所以客户会看到「开机自动换: 开」+「下次自动换: 15:52」, 以为程序在换,
+# 其实这次开机压根没后台进程, 那个 15:52 永远不会兑现 —— 这就是「时间不会变」的由来。
+# 认进程命令行里带 --daemon 的那个, 那是真正在按节拍换图的那个。
+function Test-BwDaemonRunning {
+  # 2026-10-20 提速: 原来用 Get-CimInstance Win32_Process 扫命令行, 每进一次菜单要 ~500ms
+  # (WMI 查询本来就慢, 机器上 WMI 再慢一点就是一秒)。守护进程 mode_daemon 启动时会
+  # 一直持有命名互斥体 Local\MSWallpaperAssistantDaemon (launcher.py 的 MUTEX_NAME),
+  # 直接探测它在不在就行 —— 实测 14ms, 判定结果与原来一致。
+  try {
+    $mtx = [System.Threading.Mutex]::OpenExisting('Local\MSWallpaperAssistantDaemon')
+    $mtx.Dispose()
+    return $true
+  } catch [System.Threading.WaitHandleCannotBeOpenedException] {
+    return $false
+  } catch [System.UnauthorizedAccessException] {
+    # 名字存在、只是打不开 —— 说明确实有人持有它
+    return $true
+  } catch {
+    # 兜底: 互斥体探测意外失败时退回老办法, 宁可慢也别误报"后台没跑"
+    try {
+      $ps = @(Get-CimInstance Win32_Process -Filter "Name='$($global:BWExeName)' OR Name='$($global:BWExeNameLegacy)'" -ErrorAction SilentlyContinue |
+              Where-Object { $_.CommandLine -and ($_.CommandLine -like '*--daemon*') })
+      return ($ps.Count -gt 0)
+    } catch { return $false }
+  }
+}
+# 立刻把后台拉起来(不等下次开机)。开机自启的快捷方式照建, 两件事一起办。
+function Start-BwDaemonNow([string]$exe) {
+  if ((-not $exe) -or (-not (Test-Path -LiteralPath $exe))) { return $false }
+  try {
+    Start-Process -FilePath $exe -ArgumentList '--daemon' -WorkingDirectory (Split-Path $exe -Parent) -WindowStyle Hidden
+    return $true
+  } catch { return $false }
+}
+
+# 开机自动换做成**两个按钮**, 不是一个会翻面的开关。
+# 一个开关两面翻的问题是: 客户只看到「[A] 开机自动换壁纸 开/关」, 按下去到底是开还是关
+# 得先记住现在是什么状态; 记反了就正好按成自己不想要的那一下 —— 而且后台进程会立刻停,
+# 下次开机不换图, 他只会觉得"这软件不灵了"。
+# 所以菜单上只摆当前**能做**的那一个动作: 关着就只显示 [A] 打开, 开着就只显示 [B] 关闭。
+function Enable-BwAutoStart {
+  # 老名字的启动项还在的话先搬成新名字, 免得启动文件夹里新旧两份并存(两个开机自启)
+  $legacyLnk = Get-BwStartupLnkLegacy
+  if (Test-Path -LiteralPath $legacyLnk) { [void](Move-BwLnkToNewName $legacyLnk) }
+  $lnk = Get-BwStartupLnk
+  $exe = Get-BwLauncherPath
+  if ((-not $exe) -or (-not (Test-Path -LiteralPath $exe))) {
+    Write-Host ('  找不到主程序「' + $global:BWExeName + '」(旧版文件名也行)。')
+    Write-Host '  请直接双击那个 exe 打开本菜单, 再来开这个开关。'
+    return $false
+  }
+  try {
+    # 清掉可能残留的 daemon.stop —— 不清的话刚拉起来的后台会立刻自己退掉
+    $sf = Join-Path $global:BWRoot 'daemon.stop'
+    if (Test-Path -LiteralPath $sf) { Remove-Item -LiteralPath $sf -Force -ErrorAction SilentlyContinue }
+    $sh = New-Object -ComObject WScript.Shell
+    $sc = $sh.CreateShortcut($lnk)
+    $sc.TargetPath       = $exe
+    $sc.Arguments        = '--daemon'
+    $sc.WorkingDirectory = (Split-Path $exe -Parent)
+    $sc.Description      = '桌面壁纸 - 开机自动换壁纸'
+    $sc.IconLocation     = (Get-BwIconLocation $exe)
+    $sc.Save()
+    # 关键: 光放快捷方式, 本次开机不会自己跑起来。要等下一次开机才换图,
+    # 客户当场看不到效果, 只会以为"按了没用"。所以顺手把后台立刻拉起来。
+    $started = Start-BwDaemonNow $exe
+    Write-Host '  已开启。下次登录后会在后台自动换壁纸, 一个窗口都不会闪。'
+    Write-Host ('  启动项位置: ' + $lnk)
+    Write-Host ('  指向: ' + $exe)
+    if ($started) { Write-Host '  后台已经现在就跑起来了, 不用等下次开机 —— 到点就换。' -ForegroundColor Green }
+    else { Write-Host '  (后台这次没拉起来, 下次开机才会自动跑)' -ForegroundColor DarkYellow }
+    if (@($global:BWExeName, $global:BWExeNameLegacy) -notcontains (Split-Path $exe -Leaf)) {
+      Write-Host '  (这份 exe 名字里带版本号, 以后换新版本要重开一次本开关)' -ForegroundColor DarkYellow
+    }
+    return $true
+  } catch { Write-Host ('  开启失败: ' + $_.Exception.Message); return $false }
+}
+function Disable-BwAutoStart {
+  $lnk = Get-BwStartupLnk
+  $legacyLnk = Get-BwStartupLnkLegacy
+  if ((-not (Test-Path -LiteralPath $lnk)) -and (-not (Test-Path -LiteralPath $legacyLnk))) {
+    Write-Host '  开机自动换本来就是关着的, 不用关。'
+    return $false
+  }
+  # 新老名字都清掉 —— 只删一个的话, 另一个还会在开机时把后台拉起来
+  foreach ($p in @($lnk, $legacyLnk)) {
+    if (Test-Path -LiteralPath $p) { try { Remove-Item -LiteralPath $p -Force } catch {} }
+  }
+  # 告诉还在后台跑的 daemon 收工
+  try { Set-Content -LiteralPath (Join-Path $global:BWRoot 'daemon.stop') -Value 'stop' -Encoding ASCII } catch {}
+  Write-Host '  已关闭开机自动换壁纸。想再开, 回来按 [A] 就行。'
+  return $true
+}
+
+# 用户在面板上**主动**打开「桌面快捷方式」时用这个。
+# 为什么不能直接用 Ensure-BwDesktopShortcut: 它有一条"用户删过就不再自动建"的保护
+# （尊重用户删掉图标的决定），于是"你主动点开"也会被它挡回来，表现为"点了没反应"。
+function New-BwDesktopShortcutForce {
+  $info = Get-BwDeskInfo
+  $want = Get-BwLauncherPath
+  if ((-not $want) -or (-not (Test-Path -LiteralPath $want))) { return 'fail' }
+  # 2026-10-23 用户要求：「开 -> 桌面有图标」。
+  # 原来会沿用记录里的路径，而那个路径是桌面里的子文件夹（…\桌面\桌面图标\），
+  # 资源管理器桌面上根本不显示子文件夹里的东西 —— 用户看到的就是"开了没变化"。
+  # 所以主动打开时一律建在**桌面根目录**，并把记录改成这个位置。
+  $target = Join-Path (Get-BwDesktopDir) $global:BWLnkName
+  $dir = Split-Path $target -Parent
+  if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+    try { [void][System.IO.Directory]::CreateDirectory($dir) } catch {}
+  }
+  $sh = $null
+  try { $sh = New-Object -ComObject WScript.Shell } catch { return 'fail' }
+  $r = Write-BwShortcut $sh $target $want
+  if ($r -ne 'fail') {
+    $info.path = $target
+    $info.created = 'yes'
+    Save-BwDeskInfo $info
+    Log ('桌面快捷方式: 已按用户操作重建 -> ' + $target)
+  }
+  return $r
+}
+
+# 面板里把「桌面快捷方式」关掉时, 要把桌面上那个 lnk 真删掉 ——
+# 只改 config 不删文件, 用户会看到"关了但图标还在"。
+function Remove-BwDesktopShortcut {
+  $paths = @()
+  try { $info = Get-BwDeskInfo; if ($info.path) { $paths += [string]$info.path } } catch {}
+  # 桌面根那份也要删（主动打开时是建在这里的）
+  try { $paths += (Join-Path (Get-BwDesktopDir) $global:BWLnkName) } catch {}
+  try { $p = Find-BwDesktopLnk; if ($p) { $paths += [string]$p } } catch {}
+  $n = 0
+  foreach ($p in $paths) {
+    if ($p -and (Test-Path -LiteralPath $p)) {
+      try { Remove-Item -LiteralPath $p -Force -ErrorAction Stop; $n++ } catch {}
+    }
+  }
+  if ($n -gt 0) {
+    try { $info2 = Get-BwDeskInfo; $info2.path = ''; $info2.created = 'yes'; Save-BwDeskInfo $info2 } catch {}
+  }
+  Log ('桌面快捷方式: 已按设置删掉 ' + $n + ' 个')
+  return $n
+}
+
+# ---------- [F] 收藏当前这张壁纸 ----------
+# 取当前壁纸: 优先用 state 里程序自己记的那张, 读不到再回退注册表
+# (用户可能自己手动换过壁纸, 那张也一样该能收藏)。
+
+# ---- 面板用的 JSON 输出 ----
+# 为什么不用 ConvertTo-Json: 实测(2026-10-23) 它把从 Get-Content 拿到的两行日志
+# 序列化成了 6 万多字符(PSObject 包装被当成对象全量展开), 整个 state 拼完就不返回了。
+# 这里只处理我们真正会输出的几种形状: 字典 / 数组 / 字符串 / 数字 / 布尔 / 普通对象。
+function ConvertTo-BwPanelJsonStr([string]$s) {
+  if ($null -eq $s) { $s = '' }
+  $sb = New-Object System.Text.StringBuilder
+  [void]$sb.Append('"')
+  foreach ($ch in $s.ToCharArray()) {
+    $c = [int][char]$ch
+    if ($ch -eq '"') { [void]$sb.Append('\"') }
+    elseif ($ch -eq '\') { [void]$sb.Append('\\') }
+    elseif ($c -eq 10) { [void]$sb.Append('\n') }
+    elseif ($c -eq 13) { [void]$sb.Append('\r') }
+    elseif ($c -eq 9) { [void]$sb.Append('\t') }
+    elseif ($c -lt 32) { [void]$sb.Append(('\u{0:x4}' -f $c)) }
+    else { [void]$sb.Append($ch) }
+  }
+  [void]$sb.Append('"')
+  return $sb.ToString()
+}
+
+function Add-BwPanelJson($sb, $v) {
+  if ($null -eq $v) { [void]$sb.Append('null'); return }
+  if ($v -is [string]) { [void]$sb.Append((ConvertTo-BwPanelJsonStr $v)); return }
+  if ($v -is [bool]) { if ($v) { [void]$sb.Append('true') } else { [void]$sb.Append('false') }; return }
+  if (($v -is [int]) -or ($v -is [long]) -or ($v -is [double]) -or ($v -is [decimal])) {
+    [void]$sb.Append(([string]$v)); return
+  }
+  if ($v -is [System.Collections.IDictionary]) {
+    [void]$sb.Append('{')
+    $first = $true
+    foreach ($k in $v.Keys) {
+      if (-not $first) { [void]$sb.Append(',') }
+      $first = $false
+      [void]$sb.Append((ConvertTo-BwPanelJsonStr ([string]$k)))
+      [void]$sb.Append(':')
+      Add-BwPanelJson $sb $v[$k]
+    }
+    [void]$sb.Append('}')
+    return
+  }
+  if ($v -is [System.Collections.IEnumerable]) {
+    [void]$sb.Append('[')
+    $first = $true
+    foreach ($x in $v) {
+      if (-not $first) { [void]$sb.Append(',') }
+      $first = $false
+      Add-BwPanelJson $sb $x
+    }
+    [void]$sb.Append(']')
+    return
+  }
+  # 普通对象: 按属性逐个输出(这里只有 PSCustomObject, 不会有循环引用)
+  [void]$sb.Append('{')
+  $first = $true
+  foreach ($p in $v.PSObject.Properties) {
+    if (-not $first) { [void]$sb.Append(',') }
+    $first = $false
+    [void]$sb.Append((ConvertTo-BwPanelJsonStr ([string]$p.Name)))
+    [void]$sb.Append(':')
+    Add-BwPanelJson $sb $p.Value
+  }
+  [void]$sb.Append('}')
+}
+
+function ConvertTo-BwPanelJson($v) {
+  $sb = New-Object System.Text.StringBuilder
+  Add-BwPanelJson $sb $v
+  return $sb.ToString()
+}
+
+# ---- 本地服务 ----
+# 为什么手写最小 HTTP 而不用 HttpListener:
+#   HttpListener 在部分机器上需要 URL 保留(要管理员), 换台机器就可能起不来;
+#   TcpListener 只要绑 127.0.0.1, 普通用户一定开得起来。这里只服务一个本地页面,
+#   不需要完整 HTTP 实现 —— 读到空行就够, 只处理 GET。
+function Get-BwPanelPort {
+  try {
+    $l = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, 0)
+    $l.Start()
+    $p = ([System.Net.IPEndPoint]$l.LocalEndpoint).Port
+    $l.Stop()
+    return $p
+  } catch { return 0 }
+}
+
+function Send-BwPanelResponse($stream, [int]$code, [string]$type, [byte[]]$body) {
+  $reason = 'OK'
+  if ($code -eq 403) { $reason = 'Forbidden' }
+  elseif ($code -eq 404) { $reason = 'Not Found' }
+  elseif ($code -eq 500) { $reason = 'Server Error' }
+  $head = ("HTTP/1.1 {0} {1}`r`nContent-Type: {2}`r`nContent-Length: {3}`r`nCache-Control: no-store`r`nConnection: close`r`n`r`n" -f $code, $reason, $type, $body.Length)
+  $hb = [System.Text.Encoding]::ASCII.GetBytes($head)
+  $stream.Write($hb, 0, $hb.Length)
+  if ($body.Length -gt 0) { $stream.Write($body, 0, $body.Length) }
+  $stream.Flush()
+}
+
+# 只绑回环地址; 令牌每启动一次换一个, 页面里的 {{BWPANEL_TOKEN}} 会被替换掉。
+# IdleMinutes: 一直没人访问就自己退出, 不在后台永久驻留。
+function Start-BwPanelServer {
+  param([int]$Port = 0, [int]$IdleMinutes = 30, [switch]$NoBrowser)
+
+  if ($Port -le 0) { $Port = Get-BwPanelPort }
+  if ($Port -le 0) { throw '挑不出可用的本地端口' }
+
+  $token = [guid]::NewGuid().ToString('N')
+  $utf8 = New-Object System.Text.UTF8Encoding($false)
+  $listener = $null
+  try {
+    $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, $Port)
+    $listener.Start()
+  } catch {
+    throw ('本地端口打不开: ' + $_.Exception.Message)
+  }
+
+  $url = ('http://127.0.0.1:{0}/?t={1}' -f $Port, $token)
+  Log ('面板: 本地服务已启动 -> ' + $url)
+
+  $last = Get-Date
+  $running = $true
+
+  if (-not $NoBrowser) {
+    try { Start-Process $url | Out-Null } catch { Log ('面板: 打不开浏览器: ' + $_.Exception.Message) 'WARN' }
+  }
+
+  try {
+    while ($running) {
+      if (-not $listener.Pending()) {
+        Start-Sleep -Milliseconds 120
+        if (($IdleMinutes -gt 0) -and (((Get-Date) - $last).TotalMinutes -ge $IdleMinutes)) {
+          Log '面板: 闲置太久, 自动退出'
+          break
+        }
+        continue
+      }
+
+      $client = $listener.AcceptTcpClient()
+      try {
+        $client.ReceiveTimeout = 3000
+        $stream = $client.GetStream()
+        $buf = New-Object byte[] 8192
+        $sb = New-Object System.Text.StringBuilder
+        while ($true) {
+          $n = $stream.Read($buf, 0, $buf.Length)
+          if ($n -le 0) { break }
+          [void]$sb.Append([System.Text.Encoding]::ASCII.GetString($buf, 0, $n))
+          if ($sb.Length -gt 16384) { break }
+          $t = $sb.ToString()
+          if ($t.Contains("`r`n`r`n") -or $t.Contains("`n`n")) { break }
+        }
+
+        $line = ''
+        foreach ($ln in ($sb.ToString() -split "`r?`n")) { if ($ln.Trim()) { $line = $ln.Trim(); break } }
+        $target = '/'
+        if ($line -match '^([A-Za-z]+)\s+(\S+)') { $target = $matches[2] }
+        $last = Get-Date
+
+        $u = $null
+        try { $u = New-Object System.Uri(('http://127.0.0.1:' + $Port + $target)) } catch { $u = $null }
+        $path = '/'
+        if ($u) { $path = $u.AbsolutePath }
+        if ($env:BWPANEL_DEBUG -eq '1') { Log ('面板调试: ' + $line) }
+
+        $q = @{}
+        if ($u) {
+          $qs = [string]$u.Query
+          if ($qs.StartsWith('?')) { $qs = $qs.Substring(1) }
+          foreach ($kv in ($qs -split '&')) {
+            if (-not $kv) { continue }
+            $i = $kv.IndexOf('=')
+            if ($i -lt 0) { $q[$kv] = '' }
+            else {
+              $k = [System.Uri]::UnescapeDataString($kv.Substring(0, $i))
+              $v = [System.Uri]::UnescapeDataString($kv.Substring($i + 1))
+              $q[$k] = $v
+            }
+          }
+        }
+
+        if (($path -eq '/') -or ($path -eq '/index.html') -or ($path -eq '/panel.html')) {
+          $html = [string]$global:BwPanelHtml
+          $html = $html.Replace('{{BWPANEL_TOKEN}}', $token)
+          Send-BwPanelResponse $stream 200 'text/html; charset=utf-8' $utf8.GetBytes($html)
+        }
+        elseif (($path -eq '/api/state') -or ($path -eq '/api/do') -or ($path -eq '/api/wall')) {
+          if ([string]$q['t'] -ne $token) {
+            Send-BwPanelResponse $stream 403 'text/plain; charset=utf-8' $utf8.GetBytes('令牌不对')
+          }
+          elseif ($path -eq '/api/wall') {
+            $want = ''
+            if ($q.ContainsKey('p')) { $want = [string]$q['p'] }
+            $full = ''
+            $okPath = $false
+            if ($want) {
+              try {
+                $full = [System.IO.Path]::GetFullPath($want)
+                $c = Get-BwConfig
+                $roots = @($c.bing_save_dir, $c.spotlight_save_dir, (Join-Path $global:BWRoot '合成'))
+                foreach ($d in $roots) {
+                  if (-not $d) { continue }
+                  $dd = ([System.IO.Path]::GetFullPath($d)).TrimEnd('\') + '\'
+                  if ($full.StartsWith($dd, [System.StringComparison]::OrdinalIgnoreCase)) { $okPath = $true; break }
+                }
+              } catch { $okPath = $false }
+            }
+            if ($okPath -and (Test-Path -LiteralPath $full)) {
+              $bytes = [System.IO.File]::ReadAllBytes($full)
+              $ext = [System.IO.Path]::GetExtension($full).ToLower()
+              $mt = 'image/jpeg'
+              if ($ext -eq '.png') { $mt = 'image/png' }
+              elseif ($ext -eq '.webp') { $mt = 'image/webp' }
+              elseif ($ext -eq '.bmp') { $mt = 'image/bmp' }
+              elseif ($ext -eq '.gif') { $mt = 'image/gif' }
+              Send-BwPanelResponse $stream 200 $mt $bytes
+            } else {
+              Send-BwPanelResponse $stream 404 'text/plain; charset=utf-8' $utf8.GetBytes('这张图不在了')
+            }
+          }
+          else {
+            $req = New-Object PSObject
+            if ($path -eq '/api/state') {
+              Add-Member -InputObject $req NoteProperty do 'state' -Force
+            } else {
+              Add-Member -InputObject $req NoteProperty do ([string]$q['do']) -Force
+              if ($q.ContainsKey('key')) { Add-Member -InputObject $req NoteProperty key ([string]$q['key']) -Force }
+              if ($q.ContainsKey('value')) { Add-Member -InputObject $req NoteProperty value ([string]$q['value']) -Force }
+              if ($q.ContainsKey('name')) { Add-Member -InputObject $req NoteProperty name ([string]$q['name']) -Force }
+            }
+            $res = $null
+            try { $res = Invoke-BwPanelAction $req }
+            catch { $res = [ordered]@{ ok = $false; error = $_.Exception.Message } }
+            $json = ConvertTo-BwPanelJson $res
+            Send-BwPanelResponse $stream 200 'application/json; charset=utf-8' $utf8.GetBytes($json)
+            if (([string]$q['do']).ToLower() -eq 'quit') { $running = $false }
+          }
+        }
+        else {
+          Send-BwPanelResponse $stream 404 'text/plain; charset=utf-8' $utf8.GetBytes('没有这个地址')
+        }
+      } catch {
+        Log ('面板: 处理请求出错: ' + $_.Exception.Message) 'WARN'
+      } finally {
+        try { $client.Close() } catch {}
+      }
+    }
+  } finally {
+    try { $listener.Stop() } catch {}
+    Log '面板: 本地服务已停止'
+  }
+  return $url
+}
+
+# 把 state.json 里的文件名解析成库里的完整路径(必应库 / 聚焦库各找一遍)。
+function Get-BwPanelResolve([string]$name) {
+  if (-not $name) { return '' }
+  $c = Get-BwConfig
+  # state.json 里的「最近换过的 / 收藏」存的是**不带扩展名**的名字
+  # （例：2026-10-15_桥梁、屋顶与暮色_弗罗茨瓦夫），而库里的文件是 .jpg。
+  # 2026-10-23 修：按名字直接拼路径会一律找不到，面板上就显示"还没有换过图"。
+  $cands = @($name)
+  if (-not [System.IO.Path]::HasExtension($name)) {
+    foreach ($e in @('.jpg', '.jpeg', '.png', '.webp', '.bmp')) { $cands += ($name + $e) }
+  }
+  foreach ($d in @($c.bing_save_dir, $c.spotlight_save_dir)) {
+    if (-not $d) { continue }
+    foreach ($n in $cands) {
+      try {
+        $p = Join-Path $d $n
+        if (Test-Path -LiteralPath $p) { return $p }
+      } catch {}
+    }
+  }
+  return ''
+}
+
+function Get-BwPanelState {
+  $c = Get-BwConfig
+  $s = Get-BwState
+  if (-not $s) { $s = New-Object PSObject }
+
+  # 面板只读这几项; 原样回传的话会把路径、上限之类一次性全抖出去, 没必要。
+  $cfg = [ordered]@{}
+  foreach ($k in @('cycle_minutes','resolution_mode','wallpaper_style','auto_fetch','fav_only',
+                   'art_fit_mode','desktop_shortcut','lib_cap','bing_cap','spotlight_per_cycle',
+                   'fetch_round_cap','fetch_day_cap','recycle_min_days','src_timeout_sec','bing_only')) {
+    $v = $null
+    try { if ($c.PSObject.Properties[$k]) { $v = $c.PSObject.Properties[$k].Value } } catch {}
+    $cfg[$k] = $v
+  }
+
+  $lastWall = ''; $lastSwap = ''; $shown = 0; $queueCount = 0
+  try { if ($s.last_wall) { $lastWall = [string]$s.last_wall } } catch {}
+  try { if ($s.last_swap) { $lastSwap = [string]$s.last_swap } } catch {}
+  try { $shown = [int]$s.shown } catch { $shown = 0 }
+  try { $queueCount = @($s.queue | Where-Object { $_ }).Count } catch { $queueCount = 0 }
+
+  $favs = @()
+  try { $favs = @($s.favorites | Where-Object { $_ }) } catch { $favs = @() }
+  $hist = @()
+  try { $hist = @($s.history | Where-Object { $_ }) } catch { $hist = @() }
+
+  # 缩略图只回"能真找到文件的", 免得面板上出现一排破图
+  $histOut = @(); $n = 0
+  foreach ($x in $hist) {
+    if ($n -ge 12) { break }
+    $p = Get-BwPanelResolve ([string]$x)
+    if (-not $p) { continue }
+    $histOut += [PSCustomObject]@{ name = [string]$x; path = $p }
+    $n++
+  }
+  $favOut = @(); $n = 0
+  foreach ($x in $favs) {
+    if ($n -ge 24) { break }
+    $p = Get-BwPanelResolve ([string]$x)
+    if (-not $p) { continue }
+    $favOut += [PSCustomObject]@{ name = [string]$x; path = $p }
+    $n++
+  }
+
+  $ver = ''; $lauVer = ''
+  try { $ver = [string](Get-BwLocalScriptVer) } catch {}
+  try { $lauVer = [string](Get-BwLauncherVer) } catch {}
+
+  # 日志尾巴: 面板右下角"最近动作"
+  $logTail = @()
+  try {
+    if (Test-Path -LiteralPath $global:BWLog) {
+      foreach ($x in @(Get-Content -LiteralPath $global:BWLog -Tail 6 -Encoding UTF8)) {
+        $s1 = [string]$x
+        if ($s1.Length -gt 240) { $s1 = $s1.Substring(0, 240) + '…' }
+        $logTail += $s1
+      }
+    }
+  } catch {}
+
+  # 桌面快捷方式的真实状态（配置说"开"不代表图标还在；用户可能自己删了/挪了）
+  $deskOn = $true
+  try { if ([string]$c.desktop_shortcut -eq 'off') { $deskOn = $false } } catch {}
+  $deskPath = ''
+  $deskExists = $false
+  try {
+    $di = Get-BwDeskInfo
+    if ($di.path) { $deskPath = [string]$di.path }
+    if ($deskPath -and (Test-Path -LiteralPath $deskPath)) { $deskExists = $true }
+    else {
+      $found = Find-BwDesktopLnk
+      if ($found) { $deskPath = [string]$found; $deskExists = $true }
+    }
+  } catch {}
+
+  $autoOn = $false; $daemonOn = $false
+  try { $autoOn = [bool](Test-BwAutoStart) } catch {}
+  try { $daemonOn = [bool](Test-BwDaemonRunning) } catch {}
+  $dlTotal = 0
+  try { $dlTotal = [int]$s.dl_total } catch {}
+  $strangers = 0
+  try { $strangers = @($s.strangers | Where-Object { $_ }).Count } catch {}
+
+  $poolLine = ''; $poolMode = ''
+  try { $ps1 = Get-BwSourcePoolStatus $s; $poolLine = [string]$ps1.Line; $poolMode = [string]$ps1.Mode } catch {}
+  $bingCount = 0; $spotCount = 0
+  try {
+    $bingCount = @(Get-ChildItem -LiteralPath ([string]$c.bing_save_dir) -File -ErrorAction SilentlyContinue |
+                   Where-Object { Test-BwImgFile $_.Name }).Count
+  } catch {}
+  try {
+    $spotCount = @(Get-ChildItem -LiteralPath ([string]$c.spotlight_save_dir) -File -ErrorAction SilentlyContinue |
+                   Where-Object { Test-BwImgFile $_.Name }).Count
+  } catch {}
+
+  return [ordered]@{
+    ok          = $true
+    scriptVer   = $ver
+    launcherVer = $lauVer
+    dirs        = [ordered]@{
+      base      = [string](Split-Path ([string]$c.bing_save_dir) -Parent)
+      bing      = [string]$c.bing_save_dir
+      spotlight = [string]$c.spotlight_save_dir
+    }
+    cfg         = $cfg
+    st          = [ordered]@{
+      lastWall = $lastWall
+      lastSwap = $lastSwap
+      queue    = $queueCount
+      shown    = $shown
+    }
+    history     = $histOut
+    favorites   = $favOut
+    favCount    = @($favs).Count
+    pool        = [ordered]@{ line = $poolLine; mode = $poolMode }
+    auto        = [ordered]@{ startup = $autoOn; daemon = $daemonOn; dlTotal = $dlTotal; strangers = $strangers }
+    desktop     = [ordered]@{ on = $deskOn; exists = $deskExists; path = $deskPath }
+    counts      = [ordered]@{ bing = $bingCount; spotlight = $spotCount }
+    log         = $logTail
+  }
+}
+
+# 面板能改的只有白名单里的项; 数值一律过 Limit-BwNum 的护栏(手填 1 亿分钟那种也能夹回来)。
+function Invoke-BwPanelSet([string]$key, $value) {
+  $c = Get-BwConfig
+  $key = [string]$key
+  $numKeys = @('cycle_minutes','lib_cap','bing_cap','spotlight_per_cycle','fetch_round_cap',
+               'fetch_day_cap','recycle_min_days','src_timeout_sec')
+  if ($numKeys -contains $key) {
+    $n = Limit-BwNum $value $key
+    $c | Add-Member -NotePropertyName $key -NotePropertyValue $n -Force
+  } elseif ($key -eq 'auto_fetch' -or $key -eq 'fav_only' -or $key -eq 'bing_only') {
+    # 注意: [bool]"false" 在 PowerShell 里是 $true(非空字符串), 直接转会把开关"关不掉"。
+    # 面板传来的都是字符串, 必须按白名单判。
+    $b = $false
+    if ($value -is [bool]) {
+      $b = [bool]$value
+    } else {
+      $s2 = ([string]$value).Trim().ToLower()
+      if ($s2 -notin @('false', '0', 'off', 'no', '关', '')) { $b = $true }
+    }
+    $c | Add-Member -NotePropertyName $key -NotePropertyValue $b -Force
+  } elseif ($key -eq 'resolution_mode') {
+    $v = ([string]$value).Trim().ToLower()
+    if (@('auto','uhd') -notcontains $v) { throw ('画质档不支持: ' + $v) }
+    $c | Add-Member -NotePropertyName $key -NotePropertyValue $v -Force
+  } elseif ($key -eq 'wallpaper_style') {
+    $v = ([string]$value).Trim().ToLower()
+    if (@('fill','fit','stretch','center','tile','span','keep') -notcontains $v) { throw ('填充方式不支持: ' + $v) }
+    $c | Add-Member -NotePropertyName $key -NotePropertyValue $v -Force
+  } elseif ($key -eq 'art_fit_mode' -or $key -eq 'desktop_shortcut') {
+    $v = ([string]$value).Trim().ToLower()
+    if (@('on','off') -notcontains $v) { throw ('这个开关只接受 on / off: ' + $v) }
+    $c | Add-Member -NotePropertyName $key -NotePropertyValue $v -Force
+  } else {
+    throw ('不支持的设置项: ' + $key)
+  }
+  Save-BwConfig $c
+  Log ('面板: 设置 ' + $key + ' -> ' + [string]$value)
+  # 桌面快捷方式这一项光改配置不够: 要真去桌面建/删那个图标
+  if ($key -eq 'desktop_shortcut') {
+    if (([string]$c.desktop_shortcut).ToLower() -eq 'off') {
+      [void](Remove-BwDesktopShortcut)
+    } else {
+      # 主动打开 = 强制重建（绕过"用户删过就不再建"的保护）
+      [void](New-BwDesktopShortcutForce)
+    }
+  }
+  # 必应模式一打开就立刻换成"今天这张": 用户在面板上开它, 期待的是当场看到今天的图,
+  # 而不是等到下一个轮换周期(最多 30 分钟)才动。用独立进程跑, 不占住面板的请求。
+  if ($key -eq 'bing_only') {
+    $jobName = 'normalnow'
+    if ([bool]$c.bing_only) { $jobName = 'bingnow' }
+    try {
+      $coreFile = Join-Path $global:BWRoot 'core.ps1'
+      Start-Process 'powershell.exe' -ArgumentList @(
+        '-NoProfile','-ExecutionPolicy','Bypass','-File',('"{0}"' -f $coreFile),'-PanelJob',$jobName
+      ) -WindowStyle Hidden | Out-Null
+      if ($jobName -eq 'bingnow') { Log '面板: 必应模式已开, 正在切成今天的必应图' }
+      else { Log '面板: 必应模式已关, 正在恢复默认轮换' }
+    } catch {}
+  }
+  return $true
+}
+
+function Invoke-BwPanelAction($req) {
+  $do = ''
+  try { $do = ([string]$req.do).Trim().ToLower() } catch {}
+  if (($do -eq '') -or ($do -eq 'state')) { return (Get-BwPanelState) }
+
+  if ($do -eq 'swap') {
+    $s = Get-BwState
+    $ok = Invoke-BwSwap $s (Get-Date) '面板: 立即换一张'
+    Save-BwStateKeepFav $s
+    $st = Get-BwPanelState
+    $st['ok'] = [bool]$ok
+    if (-not $ok) { $st['error'] = '这一轮没换成（库里暂时没有可换的图），稍后再点一次' }
+    return $st
+  }
+
+  if ($do -eq 'set') {
+    $k = [string]$req.key
+    [void](Invoke-BwPanelSet $k $req.value)
+    $st = Get-BwPanelState
+    $st['ok'] = $true
+    if ($k -eq 'desktop_shortcut') {
+      $d = $st['desktop']
+      if ($d -and $d['exists']) {
+        $st['note'] = '桌面图标已就位：' + [string]$d['path']
+      } elseif (([string]$req.value).ToLower() -eq 'off') {
+        $st['note'] = '桌面图标已删除'
+      } else {
+        $st['note'] = '没建成功：找不到主程序（launcher.txt）或桌面没有写权限'
+      }
+    }
+    return $st
+  }
+
+  if (($do -eq 'fav') -or ($do -eq 'unfav')) {
+    $s = Get-BwState
+    $nm = ''
+    try { if ($req.name) { $nm = [string]$req.name } } catch {}
+    if (-not $nm) {
+      try { if ($s.last_wall) { $nm = Split-Path ([string]$s.last_wall) -Leaf } } catch {}
+    }
+    if (-not $nm) { throw '不知道该收藏哪一张' }
+    $favs = @()
+    try { $favs = @($s.favorites | Where-Object { $_ }) } catch { $favs = @() }
+    if ($do -eq 'fav') {
+      if ($favs -notcontains $nm) { $favs += $nm }
+      Log ('面板: 收藏 ' + $nm)
+    } else {
+      $favs = @($favs | Where-Object { $_ -ne $nm })
+      Log ('面板: 取消收藏 ' + $nm)
+    }
+    $s.favorites = $favs
+    # 刚改过 favorites -> 只能用 Save-BwState。KeepFav 以**磁盘上**的 favorites 为准,
+    # 在这里用等于把用户刚点的收藏立刻抹掉(menu.ps1 里同样的注释, 2026-09-22 踩过)。
+    Save-BwState $s
+    $st = Get-BwPanelState
+    $st['ok'] = $true
+    return $st
+  }
+
+  if ($do -eq 'use') {
+    $nm = [string]$req.name
+    $p = Get-BwPanelResolve $nm
+    if (-not $p) { throw '这张图找不到了（可能已被自动清理）' }
+    $ok = Set-BwWall $p
+    $s = Get-BwState
+    $s.last_wall = $p
+    $s.last_swap = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+    Add-BwHist $s $nm
+    Save-BwStateKeepFav $s
+    Log ('面板: 手动设为壁纸 ' + $nm + ' (ok=' + $ok + ')')
+    $st = Get-BwPanelState
+    $st['ok'] = [bool]$ok
+    return $st
+  }
+
+  if ($do -eq 'update') {
+    $changed = $false
+    try { $changed = [bool](Invoke-BwScriptUpdate -Quiet -Force) } catch {}
+    $st = Get-BwPanelState
+    $st['ok'] = $true
+    $st['updated'] = $changed
+    return $st
+  }
+
+  if ($do -eq 'list') {
+    $src = 'bing'
+    try { if ($req.name) { $src = ([string]$req.name).ToLower() } } catch {}
+    $c = Get-BwConfig
+    $dir = [string]$c.bing_save_dir
+    if ($src -eq 'spotlight') { $dir = [string]$c.spotlight_save_dir }
+    $files = @()
+    try {
+      $files = @(Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue |
+                 Where-Object { Test-BwImgFile $_.Name } | Sort-Object Name -Descending)
+    } catch {}
+    $skip = 0
+    try { if ($req.value) { $skip = [int]([string]$req.value) } } catch { $skip = 0 }
+    $out = @()
+    $i = 0
+    foreach ($f in $files) {
+      if ($i -lt $skip) { $i++; continue }
+      $out += [PSCustomObject]@{ name = $f.Name; path = $f.FullName }
+      if ($out.Count -ge 60) { break }
+      $i++
+    }
+    return [ordered]@{ ok = $true; src = $src; dir = $dir; total = $files.Count; skip = $skip; items = $out }
+  }
+
+  if ($do -eq 'job') {
+    $name = 'refill'
+    $arg = ''
+    try { if ($req.name) { $name = ([string]$req.name).ToLower() } } catch {}
+    try { if ($req.value) { $arg = [string]$req.value } } catch {}
+    $okNames = @('refill','backfill','archive','resetpool','setbase','update','bingnow','normalnow')
+    if ($okNames -notcontains $name) { throw ('不支持的任务: ' + $name) }
+    if (($name -eq 'archive') -and ($arg -notmatch '^\d{4}-\d{2}$')) { throw '年月要写成 2024-08 这样' }
+    if (($name -eq 'setbase') -and (-not $arg)) { throw '要指定一个目标目录' }
+    $coreFile = Join-Path $global:BWRoot 'core.ps1'
+    $psArgs = @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"{0}"' -f $coreFile),
+                '-PanelJob',$name)
+    if ($arg) { $psArgs += @('-PanelJobArg', ('"{0}"' -f $arg)) }
+    $p = Start-Process 'powershell.exe' -ArgumentList $psArgs -WindowStyle Hidden -PassThru
+    Log ('面板: 已起后台任务 ' + $name + ' ' + $arg + ' (PID ' + $p.Id + ')')
+    $st = Get-BwPanelState
+    $st['ok'] = $true
+    $st['job'] = $name
+    return $st
+  }
+
+  if ($do -eq 'quit') { return [ordered]@{ ok = $true } }
+
+  if ($do -eq 'autostart') {
+    # 三件事: 开(建启动项+立刻拉后台) / 关(删启动项+让后台收工) / 已开着但后台没跑就只拉后台
+    $want = 'on'
+    try { if ($req.value) { $want = ([string]$req.value).Trim().ToLower() } } catch {}
+    $cur = $false
+    try { $cur = [bool](Test-BwAutoStart) } catch {}
+    $daemon = $false
+    try { $daemon = [bool](Test-BwDaemonRunning) } catch {}
+    $ok = $true
+    $note = ''
+    if ($want -eq 'off') {
+      if ($cur) { try { [void](Disable-BwAutoStart) } catch { $ok = $false } }
+      $note = '已关闭开机自动换'
+    } else {
+      if (-not $cur) {
+        try { $ok = [bool](Enable-BwAutoStart) } catch { $ok = $false }
+        if ($ok) { $note = '已开启，下次登录起会自动换' } else { $note = '没开成：找不到主程序（launcher.txt），请直接双击 exe 再试' }
+      } elseif (-not $daemon) {
+        try { $ok = [bool](Start-BwDaemonNow (Get-BwLauncherPath)) } catch { $ok = $false }
+        $note = '启动项本来就是开的，已把后台现在拉起来'
+      } else {
+        $note = '本来就是开着的'
+      }
+    }
+    Log ('面板: 开机自动换 -> ' + $want + ' (ok=' + $ok + '; ' + $note + ')')
+    $st = Get-BwPanelState
+    $st['ok'] = [bool]$ok
+    $st['note'] = $note
+    return $st
+  }
+
+  if ($do -eq 'openDir') {
+    $c = Get-BwConfig
+    $which = 'base'
+    try { if ($req.name) { $which = [string]$req.name } } catch {}
+    $p = [string]$c.bing_save_dir
+    if ($which -eq 'spotlight') { $p = [string]$c.spotlight_save_dir }
+    elseif ($which -eq 'data') { $p = [string]$global:BWRoot }
+    if ($p -and (Test-Path -LiteralPath $p)) {
+      try { Start-Process 'explorer.exe' -ArgumentList ('"{0}"' -f $p) | Out-Null } catch {}
+    }
+    return [ordered]@{ ok = $true; path = $p }
+  }
+
+  throw ('未知操作: ' + $do)
+}
+
+# 立刻把壁纸换成"今天这一张"必应图（只给必应模式用）。
+# 为什么要单独一个函数: 原来的"每天第一次 -> 必应当日图"只在后台轮换跑到时才执行,
+# 用户刚把必应模式打开的那一下不会动 —— 看起来像"点了没反应"。
+# 这里刻意不走 Invoke-BwCycle: 那个会顺手补漏、抓聚焦, 而必应模式只要一张当天的图。
+function Invoke-BwPanelBingNow {
+  $c = Get-BwConfig
+  $s = Get-BwState
+  $meta = $null
+  for ($i = 1; $i -le 3; $i++) {
+    $meta = Get-BwMeta 0
+    if ($meta) { break }
+    Start-Sleep -Seconds 5
+  }
+  if (-not $meta) {
+    Log '面板: 切必应当日图失败(取不到元数据), 后台下一轮会再试'
+    return $false
+  }
+  $bday = Get-BwDisplayDate $meta
+  $name = Get-BwName $meta
+  $path = Get-BwTargetPath $bday $name
+  $dir = Split-Path $path -Parent
+  [void](New-BwDir $dir)
+  if (-not (Test-Path -LiteralPath $path)) {
+    $m = @{ date = $bday; title = $meta.title
+            copyright = ($meta.copyright -replace '\s*[(（]©.*$', '')
+            source_type = '必应'; source_url = ('https://cn.bing.com' + $meta.urlbase)
+            source_link = 'https://www.bing.com' }
+    if (-not (Save-BwFile (Get-BwCandidates $meta ($c.resolution_mode)) $path $m)) { $path = $null }
+  }
+  if (-not $path) {
+    Log '面板: 必应当日图下载失败, 后台下一轮会再试'
+    return $false
+  }
+  $ok = Set-BwWall $path
+  $s.last_wall = $path
+  $s.last_bing_date = (Get-Date).ToString('yyyy-MM-dd')
+  $s.last_swap = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+  Add-BwHist $s $name
+  Save-BwStateKeepFav $s
+  Log ('面板: 已切到必应当日图 ' + $name + ' (ok=' + $ok + ')')
+  return [bool]$ok
+}
+
+# 关掉必应模式后立刻回到"默认模式": 按队列换一张普通壁纸。
+# 不开这个的话, 关掉开关只是把配置改了, 桌面还停在今天那张必应图上,
+# 要等下一个轮换周期(最多 30 分钟)才动 —— 用户会觉得"关了没反应"。
+function Invoke-BwPanelNormalNow {
+  $s = Get-BwState
+  $ok = Invoke-BwSwap $s (Get-Date) '面板: 关闭必应模式, 恢复默认轮换'
+  Save-BwStateKeepFav $s
+  if (-not $ok) {
+    Log '面板: 恢复默认轮换时没换成图(队列可能是空的), 后台下一轮会补; 也可以点「补几张新图」'
+  } else {
+    Log '面板: 已关闭必应模式, 并已按默认轮换换了一张'
+  }
+  return [bool]$ok
+}
+
+# ---- 后台任务 ----
+# 补货 / 补漏 / 整月补齐 / 重置源池 / 迁移库 都可能跑几分钟到几十分钟, 绝不能占住
+# 本地服务的请求线程(占住了面板就"转圈"), 所以一律起独立进程跑, 进度看 wallpaper.log。
+function Invoke-BwPanelRefill {
+  $null = Ensure-BwDirs
+  $c = Get-BwConfig
+  $s = Get-BwState
+  $want = 6
+  try { $want = [int]$c.spotlight_per_cycle } catch { $want = 6 }
+  if ($want -gt 50) { $want = 50 }
+  Log ('面板任务: 开始补货, 本轮最多 ' + $want + ' 张')
+  $new = @(Invoke-SpotlightFetch -count $want -Quiet -Counter)
+  if ($new.Count -gt 0) {
+    # 队列里存文件名; 存完整路径会让取图时拼成 "库\F:\库\xxx.jpg", 张张找不到
+    $names = @($new | ForEach-Object { Split-Path $_ -Leaf })
+    $s.queue = @(@($s.queue | Where-Object { $_ }) + $names)
+    Save-BwStateKeepFav $s
+  }
+  Log ('面板任务: 补货结束, 新下载 ' + $new.Count + ' 张')
+}
+
+function Invoke-BwPanelSetBase([string]$target) {
+  if (-not $target) { Log '面板任务: 没给目标目录, 放弃'; return }
+  $target = $target.Trim().TrimEnd('\')
+  if (-not (Test-BwWritable $target)) { Log ('面板任务: 目标写不进去 -> ' + $target); return }
+  $c = Get-BwConfig
+  $oldBase = ''
+  try { $oldBase = [string](Split-Path ([string]$c.bing_save_dir) -Parent) } catch {}
+  if ($oldBase -and ($oldBase.TrimEnd('\').ToUpper() -ne $target.ToUpper())) {
+    Log ('面板任务: 开始迁移库 ' + $oldBase + ' -> ' + $target)
+    $n = Move-BwLibraryFiles $oldBase $target
+    Log ('面板任务: 已搬 ' + $n + ' 张图')
+  }
+  $c.bing_save_dir = Join-Path $target '必应'
+  $c.spotlight_save_dir = Join-Path $target '聚焦'
+  Save-BwConfig $c
+  [void](Ensure-BwDirs)
+  Log ('面板任务: 保存位置已改成 ' + $target)
+}
+
+if ($PanelJob) {
+  $jm = ([string]$PanelJob).Trim().ToLower()
+  Log ('面板任务开始: ' + $jm + ' ' + [string]$PanelJobArg)
+  try {
+    if ($jm -eq 'refill') { Invoke-BwPanelRefill }
+    elseif ($jm -eq 'backfill') { Invoke-BwBackfill (Get-BwState) }
+    elseif ($jm -eq 'archive') { Invoke-BwArchiveBatch ([string]$PanelJobArg) }
+    elseif ($jm -eq 'resetpool') { $r = Reset-BwSourceRecords; Log ('面板任务: ' + [string]$r) }
+    elseif ($jm -eq 'setbase') { Invoke-BwPanelSetBase ([string]$PanelJobArg) }
+    elseif ($jm -eq 'update') { [void](Invoke-BwScriptUpdate -Quiet -Force) }
+    elseif ($jm -eq 'bingnow') { [void](Invoke-BwPanelBingNow) }
+    elseif ($jm -eq 'normalnow') { [void](Invoke-BwPanelNormalNow) }
+    else { Log ('面板任务: 不认识的任务 ' + $jm) 'WARN' }
+    Log ('面板任务完成: ' + $jm)
+  } catch {
+    Log ('面板任务失败: ' + $jm + ' :: ' + $_.Exception.Message) 'ERROR'
+  }
+  exit 0
+}
+
+# 入口: -PanelExport 释放面板文件; -PanelReq 处理一次接口请求。
+if ($PanelExport) {
+  $ok = Write-BwPanelHtml $PanelExport
+  exit ([int](-not $ok))
+}
+if ($PanelReq) {
+  $res = $null
+  try {
+    $req = $null
+    if (Test-Path -LiteralPath $PanelReq) {
+      $raw = [System.IO.File]::ReadAllText($PanelReq, [System.Text.Encoding]::UTF8)
+      if ($raw) { $req = $raw | ConvertFrom-Json }
+    }
+    if (-not $req) { throw '请求文件是空的' }
+    $res = Invoke-BwPanelAction $req
+  } catch {
+    $res = [ordered]@{ ok = $false; error = $_.Exception.Message }
+  }
+  if ($PanelOut) {
+    $enc = New-Object System.Text.UTF8Encoding($false)
+    try {
+      $json = ConvertTo-BwPanelJson $res
+      [System.IO.File]::WriteAllText($PanelOut, $json, $enc)
+    } catch {
+      $err = (@{ ok = $false; error = ('写结果失败: ' + $_.Exception.Message) } | ConvertTo-Json)
+      try { [System.IO.File]::WriteAllText($PanelOut, $err, $enc) } catch {}
+    }
+  }
+  exit 0
+}
+
 # 注意: -Update 与 -Cycle 走同一套逻辑。
 # 老版本的开机自启动作是 -Update; 让 -Update 也进新节奏, 老用户不用重装就能零提权生效。
 if ($Cycle -or $Update) { Invoke-BwCycle }

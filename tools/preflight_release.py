@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# 作者: 海风（kele551）   https://gitee.com/kele551/ms-wallpaper-assistant
+# 作者: 海风（kele551）   https://gitcode.com/kele551/ms-wallpaper-assistant
 """桌面壁纸（壁纸助手）—— 发版前自检闸门（必须全绿才允许发布）
 
 为什么这个文件在仓库里：
@@ -76,9 +76,8 @@ README = os.path.join(REPO, 'README.md')
 CHANGELOG = os.path.join(REPO, 'docs', 'CHANGELOG.md')
 MANUAL = os.path.join(REPO, '使用说明.txt')
 
-GITEE_REPO = 'https://gitee.com/kele551/ms-wallpaper-assistant'
 GITHUB_REPO = 'https://github.com/kele551/ms-wallpaper-assistant'
-UA = 'MSWallpaperPreflight/1.0 (+%s)' % GITEE_REPO
+UA = 'MSWallpaperPreflight/1.0 (+%s)' % GITHUB_REPO
 
 # 旧名：产品 2026-10-12 更名「微软壁纸助手」→「壁纸助手」。文档里**允许**按兼容说明提及旧名，
 # 但不许把旧名当成当前文件名/链接引用（差一个字，老用户点下载就 404）。
@@ -617,10 +616,15 @@ for _f in ('README.md', '使用说明.txt'):
     check('%s 里旧名（%s）只出现在兼容说明里' % (_f, LEGACY_NAME), not _bad,
           '；'.join(_bad[:2]))
 
+# 2026-10-23: 主源 2026-10-17 已迁到 GitCode, 这里原来只认 Gitee 地址 ——
+# 文档跟着主源改完之后反而被判红。改成"两个仓库地址认一个就行"。
+_CANONICAL = ('gitcode.com/kele551/ms-wallpaper-assistant',
+              'github.com/kele551/ms-wallpaper-assistant',
+              'atomgit.com/kele551/ms-wallpaper-assistant')
 check('README 里有署名「海风（kele551）」与仓库地址',
-      ('海风（kele551）' in _rm) and ('gitee.com/kele551/ms-wallpaper-assistant' in _rm))
+      ('海风（kele551）' in _rm) and any(u in _rm for u in _CANONICAL))
 check('使用说明.txt 里有署名与仓库地址',
-      ('海风（kele551）' in _man) and ('gitee.com/kele551/ms-wallpaper-assistant' in _man))
+      ('海风（kele551）' in _man) and any(u in _man for u in _CANONICAL))
 
 _req = read(os.path.join(REPO, 'requirements.txt')) or ''
 _lack = [d for d in ('pyinstaller', 'requests') if d.lower() not in _req.lower()]
@@ -815,6 +819,136 @@ else:
     if _gcv:
         check_warn('GitCode 主源的 version.json 版本 == 本地 v%s' % VER,
                    str(_gcv).lstrip('v') == VER, '线上=%s 本地=%s' % (_gcv, VER))
+
+# ══════════════════════════════════════════════════════════════════════════
+# ⑪ 网页控制台（V2.4.0 起界面就是它；内嵌副本与源文件必须一致）
+# ══════════════════════════════════════════════════════════════════════════
+say()
+say('⑪ 网页控制台：panel.html 与 core.ps1 内嵌副本、入口脚本、红线词')
+
+
+def _rd(_p):
+    try:
+        return io.open(_p, encoding='utf-8-sig', newline='').read()
+    except Exception:
+        return ''
+
+
+_core_txt = _rd(os.path.join(REPO, 'core.ps1'))
+_panel_txt = _rd(os.path.join(REPO, 'panel.html'))
+_menu_txt = _rd(os.path.join(REPO, 'menu.ps1'))
+
+check('panel.html 存在且不是空的', bool(_panel_txt.strip()),
+      '面板页面源码, 发布前会被嵌进 core.ps1')
+check('core.ps1 里有 PANEL_HTML 标记',
+      ('# >>> PANEL_HTML_BEGIN' in _core_txt) and ('# <<< PANEL_HTML_END' in _core_txt),
+      '嵌入口的开始/结束标记')
+
+_m_emb = re.search(r"\$global:BwPanelHtml = @'\n(.*?)\n'@", _core_txt, re.S)
+_embedded = _m_emb.group(1) if _m_emb else ''
+check('core.ps1 内嵌的面板 HTML == repo/panel.html',
+      bool(_embedded) and (_embedded == _panel_txt),
+      '不一致就说明改了 panel.html 忘了跑 tools/embed_panel.py；老用户升级后看到的还是旧界面')
+check('内嵌 HTML 里有 {{BWPANEL_TOKEN}} 占位符（服务启动时替换成一次性令牌）',
+      '{{BWPANEL_TOKEN}}' in _embedded, '没有它, 页面调接口会被 403 挡住')
+
+check('menu.ps1 已经是"控制台入口"（调用 Start-BwPanelServer）',
+      'Start-BwPanelServer' in _menu_txt, 'V2.4.0 起界面只有网页控制台, 入口脚本负责起服务')
+check('menu.ps1 里没有旧文本菜单的 Read-Host（界面只能有一个）',
+      'Read-Host' not in _menu_txt, '旧菜单 2026-10-23 已整体移除')
+check('menu.ps1 仍然保留 $global:BWVersion 版本常量（发版脚本和本节都依赖它）',
+      bool(re.search(r"\$global:BWVersion\s*=\s*'[0-9.]+'", _menu_txt)), '这一行别挪走')
+
+check('core.ps1 有 Invoke-BwPanelAction / Start-BwPanelServer / ConvertTo-BwPanelJson',
+      all(k in _core_txt for k in ('function Invoke-BwPanelAction', 'function Start-BwPanelServer',
+                                   'function ConvertTo-BwPanelJson')),
+      '面板三个必需件')
+
+_local = re.findall(r'[A-Za-z]:\\\\Harness|[A-Za-z]:\\\\Users\\\\', _panel_txt)
+check('panel.html 里没有本机绝对路径（页面是要发出去的）', not _local, '命中: %s' % _local[:3])
+_banned = [w for w in ('绕过', '翻墙', '梯子', '科学上网', '破解', '屏蔽') if w in _panel_txt]
+check('panel.html 里没有对外文案红线词', not _banned, '命中: %s' % _banned)
+
+# 2026-10-23 用户要求：所有项目都不许再出现老仓库（Gitee）地址。
+# 注意：关键字必须拆开拼 —— 否则"禁止清单"自己会被扫成命中（2026-10-19 邮箱那次就这么翻车的）。
+_NEEDLE = 'gitee' + '.com/kele551'
+_bad_gitee = []
+for _dp2, _dn2, _fn2 in os.walk(REPO):
+    if os.sep + '.git' in _dp2:
+        continue
+    _dn2[:] = [d for d in _dn2 if d not in ('.git', 'build', 'dist', '__pycache__')]
+    for _f2 in _fn2:
+        if not _f2.lower().endswith(('.md', '.txt', '.py', '.ps1', '.json', '.html', '.yml', '.yaml')):
+            continue
+        if _f2 in ('CHANGELOG.md', 'version.json'):
+            continue
+        _p2 = os.path.join(_dp2, _f2)
+        try:
+            _t2 = io.open(_p2, encoding='utf-8-sig', errors='replace').read()
+        except Exception:
+            continue
+        for _i2, _ln2 in enumerate(_t2.splitlines(), 1):
+            if _NEEDLE in _ln2:
+                _bad_gitee.append('%s:%d' % (os.path.relpath(_p2, REPO), _i2))
+check('仓库里没有老仓库（Gitee）地址（历史 CHANGELOG 除外）', not _bad_gitee, '；'.join(_bad_gitee[:5]))
+
+# ══════════════════════════════════════════════════════════════════════════
+# ⑬ 主程序自动替换演练（v2.3.3 -> 当前版本，含 exe 覆盖与重启）
+#   真发版时 min_launcher = 当前版本，老客户端一定会走"换主程序"这条路；
+#   ⑫ 只测了换脚本，这一节专门测"连 exe 一起换"。
+# ══════════════════════════════════════════════════════════════════════════
+say()
+say('⑬ 主程序自动替换演练：v2.3.3 老客户端连 exe 一起升到当前版本')
+_drill2 = os.path.join(REPO, 'tools', 'drill_launcher_update.ps1')
+_oldexe = None
+for _f in os.listdir(REPO):
+    if _f.endswith('.exe') and '2.3.3' in _f:
+        _oldexe = _f
+        break
+if not os.path.exists(_drill2):
+    skip('主程序自动替换演练', '找不到 tools/drill_launcher_update.ps1')
+elif not _oldexe:
+    skip('主程序自动替换演练', '仓库里没有 v2.3.3 的旧 exe（演练要用它当"老客户端"）')
+elif not os.environ.get('MWA_ED25519_KEY'):
+    skip('主程序自动替换演练', '没设 MWA_ED25519_KEY（演练源要签名）')
+else:
+    import subprocess
+    try:
+        _p2 = subprocess.run(
+            ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', _drill2, '-Repo', REPO],
+            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=900)
+        _o2 = (_p2.stdout or '') + (_p2.stderr or '')
+        _bad2 = [ln.strip() for ln in _o2.splitlines() if '[FAIL]' in ln]
+        check('主程序自动替换演练：老客户端能连 exe 一起升级、升后控制台可用', _p2.returncode == 0 and not _bad2,
+              '；'.join(_bad2[:4]) if _bad2 else ('退出码 %s' % _p2.returncode))
+    except Exception as e:
+        check('主程序自动替换演练：老客户端能连 exe 一起升级、升后控制台可用', False,
+              '%s: %s' % (type(e).__name__, e))
+
+# ══════════════════════════════════════════════════════════════════════════
+# ⑫ 升级演练（真跑：v2.3.3 老客户端 → 当前版本；升上来之后控制台必须能用）
+# ══════════════════════════════════════════════════════════════════════════
+say()
+say('⑫ 升级演练：旧版客户端真升到当前版本（含"坏指纹必须拒绝"）')
+_drill = os.path.join(REPO, 'tools', 'drill_upgrade.ps1')
+if not os.path.exists(_drill):
+    skip('升级演练', '找不到 tools/drill_upgrade.ps1')
+elif not os.environ.get('MWA_ED25519_KEY'):
+    skip('升级演练', '没设 MWA_ED25519_KEY（演练用的升级源要签名，老客户端才认）')
+else:
+    import subprocess
+    try:
+        _p = subprocess.run(
+            ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', _drill, '-Repo', REPO],
+            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=900)
+        _out = (_p.stdout or '') + (_p.stderr or '')
+        _bad = [ln.strip() for ln in _out.splitlines() if '[FAIL]' in ln]
+        check('升级演练：v2.3.3 能升到当前版本、升上来的控制台可用、坏指纹会被拒绝',
+              _p.returncode == 0 and not _bad,
+              '；'.join(_bad[:4]) if _bad else ('退出码 %s' % _p.returncode))
+    except Exception as e:
+        check('升级演练：v2.3.3 能升到当前版本、升上来的控制台可用、坏指纹会被拒绝', False,
+              '%s: %s' % (type(e).__name__, e))
 
 # ══════════════════════════════════════════════════════════════════════════
 # ⑩ 升级源 Ed25519 验签（纯读文件 + 纯计算，--offline / --dry-run 也照跑）

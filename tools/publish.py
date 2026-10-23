@@ -570,9 +570,16 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
             sys.exit('❌ 发版前自检未通过，已中止发布。修好再发（或 --skip-preflight 紧急跳过）')
         print('   ✅ 自检全绿，继续发布')
 
+    # 2026-10-23: 网页控制台上线, 新增/改动的文件都必须列进来 ——
+    # 这个清单是**固定**的(不是 git add -A), 漏一个就不会被提交, 别人克隆下来是残缺的。
     git_commit_push(ver, ['docs/CHANGELOG.md', 'README.md', 'core.ps1', 'menu.ps1',
-                          'launcher.py', '_ed25519.py', '使用说明.txt',
-                          'version.json', 'version.json.sig'])
+                          'launcher.py', 'build-exe.py', '_ed25519.py', '使用说明.txt',
+                          'version.json', 'version.json.sig',
+                          'panel.html', 'tools/embed_panel.py', 'tools/sign_version_json.py',
+                          'tools/drill_upgrade.ps1', 'tools/drill_launcher_update.ps1',
+                          'tools/preflight_release.py', 'tools/publish.py',
+                          'docs/ARCHITECTURE.md', 'docs/CODE_OF_CONDUCT.md',
+                          'docs/README_EN.md', 'docs/index.html', 'docs/demo/index.html'])
     gitee_release(ver, token, assets, notes)
     if with_github:
         nf = notes_file or (REPO_DIR / '_notes.md')

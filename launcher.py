@@ -1,8 +1,8 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 壁纸助手 - 绿色单文件版启动器。
 
-作者: 海风（kele551）   https://gitee.com/kele551/ms-wallpaper-assistant
+作者: 海风（kele551）   https://gitcode.com/kele551/ms-wallpaper-assistant
 
 设计要点
 --------
@@ -45,7 +45,7 @@ import time
 import datetime
 import ctypes
 
-VERSION = '2.3.3'
+VERSION = '2.4.0'
 # 【2026-10-16 升级通道加固】内置的 Ed25519 **公钥**（离线生成，公开无妨、本来就要随程序分发）。
 # 升级源 version.json 必须带一份同目录的 `version.json.sig`（128 个十六进制字符 = 64 字节签名），
 # 用这把公钥验过才认；验不过 / 没签名 / 签名格式不对，一律**拒绝**（fail-closed，见 mode_verify_update）。
@@ -727,9 +727,11 @@ def sleep_watching_stop(stop_file, seconds, sleep=time.sleep, isfile=os.path.isf
 
 # ---------------------------------------------------------------- 各模式
 def mode_menu(d):
-    if not ensure_console():
-        return 1
-    return ps(os.path.join(d, 'menu.ps1'), (), no_window=False)
+    # 2026-10-23 用户要求：「每次点开快捷图标，小黑窗不能弹出」。
+    # v2.4.0 起界面是浏览器里的网页控制台，menu.ps1 只起本地服务 + 开浏览器，
+    # 不需要控制台窗口；所以这里**不申请控制台**、也不建新窗口（CREATE_NO_WINDOW）。
+    # 出错时 menu.ps1 会弹 WinForms 消息框，不依赖控制台。
+    return ps(os.path.join(d, 'menu.ps1'), (), no_window=True)
 
 
 def mode_daemon(d):
