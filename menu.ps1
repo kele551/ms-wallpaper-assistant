@@ -83,6 +83,13 @@ try {
 
 # BWPANEL_NOBROWSER=1 只在自检/演练里用: 起服务但不开浏览器（不打扰正在用电脑的人）
 $noBrowser = ($env:BWPANEL_NOBROWSER -eq '1')
+# 2026-10-23: 已经有一个控制台在跑就直接复用它 —— 以前每点一次图标就多起一个服务进程,
+# 旧的要等 30 分钟闲置才退, 同时挂着好几个(每个约 140MB)。自检/演练(-NoBrowser)不复用。
+if (-not $noBrowser) {
+  $reused = $false
+  try { $reused = [bool](Open-BwExistingPanel) } catch { $reused = $false }
+  if ($reused) { exit 0 }
+}
 try {
   [void](Start-BwPanelServer -IdleMinutes 30 -NoBrowser:$noBrowser)
   exit 0
