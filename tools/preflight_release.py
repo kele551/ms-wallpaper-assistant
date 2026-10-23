@@ -108,6 +108,7 @@ USAGE = """桌面壁纸发版前自检 —— 用法
   ⑧ 链接与徽章可访问性（需要联网，--no-links/--offline 可跳过）
   ⑨ 线上升级源版本号对齐（只算 WARN）
   ⑩ 升级源 Ed25519 验签（从 launcher.py 解析内置公钥；正例 + 两个负例；缺 .sig 时 [SKIP]）
+  ⑮ 后台守护：打开控制台会自愈、启动/停止/出错都留日志、主循环有兜底（2026-10-23 加）
 
 判据: 红项（FAIL）一条都不许有 —— 有一条就不许发布；
       跳过（SKIP）与警告（WARN）不阻断发布，但结尾会单独列出来，发布前看一眼。
@@ -954,5 +955,42 @@ else:
 # ⑩ 升级源 Ed25519 验签（纯读文件 + 纯计算，--offline / --dry-run 也照跑）
 # ══════════════════════════════════════════════════════════════════════════
 check_update_signature()
+
+# ══════════════════════════════════════════════════════════════════════════
+# ⑮ 后台守护的"自愈 + 可诊断"（2026-10-23 加）
+#   起因: 用户报「手动挑了一张壁纸, 到 30 分钟不换」。查下来轮换逻辑没问题, 是
+#   **后台守护进程早就不在了** —— 开机自启只在登录时跑一次, 之后没有任何机制把它拉回来;
+#   而且它被 --stop 停掉时**一行日志都没有**, 事后分不清"自己崩了"还是"有人叫它停"。
+#   这一节就是防止那两件事退回去: 打开控制台必须自愈 / 起停必须留痕 / 主循环不许裸奔。
+# ══════════════════════════════════════════════════════════════════════════
+say()
+say('⑮ 后台守护：打开控制台会自愈、启动/停止/出错都留痕、主循环有兜底')
+_p_menu = read(os.path.join(REPO, 'menu.ps1'))
+_p_py = read(os.path.join(REPO, 'launcher.py'))
+check('menu.ps1 打开控制台时会检查后台守护、没在跑就拉起来',
+      ('Test-BwDaemonRunning' in _p_menu) and ('Start-BwDaemonNow' in _p_menu),
+      'menu.ps1 里缺 Test-BwDaemonRunning / Start-BwDaemonNow（后台死了就再也没人拉起）')
+_need = ['守护进程: 已启动', '守护进程: 收到停止信号, 已退出', '守护进程: 这一轮出错, 已自动继续']
+_miss = [m for m in _need if m not in _p_py]
+check('launcher.py 守护进程的启动/停止/出错都写日志（事后可回溯）', not _miss,
+      ('launcher.py 里缺: ' + '、'.join(_miss)) if _miss else '')
+_i = _p_py.find('def mode_daemon')
+_seg = _p_py[_i:_i + 8000] if _i >= 0 else ''
+_guard = ('while True:' in _seg) and ('        try:' in _seg) and ('except Exception as e:' in _seg)
+check('launcher.py 守护进程主循环有兜底（一轮出异常不会把整个后台带走）', _guard,
+      'mode_daemon 的主循环里没找到 try / except 兜底')
+# 2026-10-23 新增：库上限必须真的执行 / 新图必须尽快进队 / 面板必须复用已有服务
+_p_core = read(os.path.join(REPO, 'core.ps1'))
+check('core.ps1 库上限真的执行（看过的先淘汰，不够再按日期补，没看过的也清）',
+      ('没看过' in _p_core) and ('$bulk = 250' in _p_core),
+      'Trim-BwOneDir 里缺少"没看过的也补"的兜底 —— 上限会像 2026-10-23 那样形同虚设')
+_p_m = read(os.path.join(REPO, 'menu.ps1'))
+check('新下载的图会插进当前队列前 1/3（不再只排到队尾）',
+      ('Add-BwNewToQueue' in _p_core) and ('Add-BwNewToQueue' in _p_m or 'Get-BwFreshQueue' in _p_core),
+      'core.ps1 里没找到 Add-BwNewToQueue')
+check('控制台打开时复用已在跑的服务（不再每点一次多一个进程）',
+      ('Open-BwExistingPanel' in _p_core) and ('Open-BwExistingPanel' in _p_m)
+      and ('panel.serve.json' in _p_core),
+      'core.ps1 / menu.ps1 里缺少面板复用逻辑')
 
 finish()

@@ -55,6 +55,22 @@ try {
 
 Hide-BwConsole
 
+# 2026-10-23: 打开控制台时顺手确认后台还在跑。
+# 起因: 用户报「手动挑了一张壁纸, 到 30 分钟不换」。查下来轮换逻辑本身没问题,
+# 是**后台守护进程早就不在了** —— 开机自启只在登录时跑一次, 之后没有任何东西会把它拉回来
+# (升级时的 --stop、清理工具关掉进程、意外退出都会留下这个状态),
+# 用户看到的就是「到点了不换, 那个"下次自动换"的时间永远不兑现」。
+# 所以每次打开控制台都把这一件事做掉: 开机自动换开着、后台却没在跑 -> 立刻拉起来。
+try {
+  if (Test-BwAutoStart) {
+    if (-not (Test-BwDaemonRunning)) {
+      $exe0 = Get-BwLauncherPath
+      if (Start-BwDaemonNow $exe0) { Log ('控制台: 后台没在跑, 已自动拉起(到点照常换图)') }
+      else { Log ('控制台: 后台没在跑, 自动拉起失败(找不到主程序: ' + $exe0 + ')') 'WARN' }
+    }
+  }
+} catch { Log ('控制台: 检查后台失败: ' + $_.Exception.Message) 'WARN' }
+
 # 顺手查一次更新（独立进程跑，不挡界面）
 if ($env:BWPANEL_NOUPDATE -ne '1') {
 try {
@@ -67,6 +83,13 @@ try {
 
 # BWPANEL_NOBROWSER=1 只在自检/演练里用: 起服务但不开浏览器（不打扰正在用电脑的人）
 $noBrowser = ($env:BWPANEL_NOBROWSER -eq '1')
+# 2026-10-23: 已经有一个控制台在跑就直接复用它 —— 以前每点一次图标就多起一个服务进程,
+# 旧的要等 30 分钟闲置才退, 同时挂着好几个(每个约 140MB)。自检/演练(-NoBrowser)不复用。
+if (-not $noBrowser) {
+  $reused = $false
+  try { $reused = [bool](Open-BwExistingPanel) } catch { $reused = $false }
+  if ($reused) { exit 0 }
+}
 try {
   [void](Start-BwPanelServer -IdleMinutes 30 -NoBrowser:$noBrowser)
   exit 0

@@ -1768,23 +1768,46 @@ function Trim-BwOneDir($s, [string]$dir, [int]$cap, [string]$label) {
   $over = $files.Count - $cap
   if ($over -le 0) { return 0 }
   $hist = @(Get-BwHist $s)
-  if ($hist.Count -eq 0) { return 0 }
-  # 当前正显示的那张不能动
+  # 当前正显示的那张、收藏的图都不能动
   $curKey = ''
   if ($s.last_wall) { $curKey = Get-BwNameKey (Split-Path ([string]$s.last_wall) -Leaf) }
+  $favKeys = @{}
+  foreach ($fn in @(Get-BwFav $s)) { if ($fn) { $favKeys[[string]$fn] = $true } }
+  $picked = @{}
   $cand = @()
+  # ① 先淘汰「已经看过的、最老的」—— 与改之前一致
   foreach ($h in $hist) {
-    if ($h -eq $curKey) { continue }
-    $f = @($files | Where-Object { (Get-BwNameKey $_.Name) -eq $h } | Select-Object -First 1)
-    if ($f.Count -gt 0) { $cand += $f[0] }
+    $hk = [string]$h
+    if ((-not $hk) -or ($hk -eq $curKey) -or $favKeys.ContainsKey($hk) -or $picked.ContainsKey($hk)) { continue }
+    $f = @($files | Where-Object { (Get-BwNameKey $_.Name) -eq $hk } | Select-Object -First 1)
+    if ($f.Count -gt 0) { $cand += $f[0]; $picked[$hk] = $true }
     if ($cand.Count -ge $over) { break }
   }
+  # ② 还不够(库里大量"从没轮到过"的图): 按文件名里的日期从早到晚补。
+  #    2026-10-23 修: 原来只淘汰"看过的" —— 「必应库上限」形同虚设:
+  #    用户设 200 张, 实际能长到 1110 张(4.6 GB), 因为绝大多数图一辈子没被轮到过。
+  #    现在的口径: **上限就是上限**, 只保护「当前壁纸 / 收藏 / 做了记号的外来图」。
+  if ($cand.Count -lt $over) {
+    $rest = @($files | Where-Object {
+        $k = Get-BwNameKey $_.Name
+        ($k -ne $curKey) -and (-not $picked.ContainsKey([string]$k)) -and (-not $favKeys.ContainsKey([string]$k))
+      } | Sort-Object -Property Name)
+    foreach ($f in $rest) {
+      $cand += $f
+      if ($cand.Count -ge $over) { break }
+    }
+  }
+  # 一轮最多搬这么多: 差得太多时别让一次换图卡在搬文件上, 剩下的下一轮继续
+  $bulk = 250
+  if ($cand.Count -gt $bulk) { $cand = @($cand | Select-Object -First $bulk) }
   $moved = 0
   foreach ($f in $cand) {
     if (Move-BwToRecycle $f.FullName) { $moved++ }
   }
   if ($moved -gt 0) {
-    Log ($label + '上限 ' + $cap + ' 张: 库里 ' + $files.Count + ' 张超了, 已把看过的最老的 ' + $moved + ' 张移进回收站')
+    $more = ''
+    if ($moved -lt $over) { $more = '; 还差 ' + ($over - $moved) + ' 张, 下一轮继续' }
+    Log ($label + '上限 ' + $cap + ' 张: 库里 ' + $files.Count + ' 张, 超出 ' + $over + ' 张 -> 本轮移进回收站 ' + $moved + ' 张' + $more)
   }
   return $moved
 }
@@ -3327,6 +3350,78 @@ function Get-BwBalancedOrder([string[]]$names, [int]$turn) {
   return @($order)
 }
 
+# 2026-10-23 用户要求: 「现在必应和聚焦的新图片比较多, 是否轮换切换?」-> 「改」。
+# 改之前: 队列是**全局**按"最旧优先"排的, 于是 1109 张 2020-2023 的必应老图全排在前面,
+# 205 张 2026 年的聚焦新图要等约 23 天才轮到 —— 库越大越明显。
+# 现在: **每个来源内部仍按原来的"最旧优先"**, 来源之间**按各自张数比例均匀穿插**
+# (1109 : 205 ≈ 每 6 张里 1 张聚焦)。这样两边的完整轮回时长也基本一样(都约 3 周),
+# 既不会"新图老也轮不到", 也不会让某一个来源霸屏。
+# 算法用"平滑加权轮转"(smooth weighted round-robin): 每步给每个还没出完的组加上它自己的
+# 权重, 取权重最大的那组出一张, 再减掉总权重 —— 出来的比例平稳, 不会成段扎堆。
+function Merge-BwQueueBySource([string[]]$ordered) {
+  $list = @($ordered | Where-Object { $_ })
+  if ($list.Count -le 2) { return @($list) }
+  $c = $null
+  try { $c = Get-BwConfig } catch { $c = $null }
+  # 每张图属于哪个来源 —— 认不出来的一律算 other(照原顺序排在最后)
+  $srcOf = @{}
+  try {
+    foreach ($f in @(Get-BwSpotlightAll)) { $srcOf[[string]$f.Name] = 'spot' }
+    foreach ($def in @(Get-BwSourceDefs)) {
+      $d = Get-BwSrcDir $c $def.Key
+      if (-not $d) { continue }
+      foreach ($f in @(Get-BwSrcFiles $d)) { $srcOf[[string]$f.Name] = [string]$def.Key }
+    }
+    foreach ($f in @(Get-BwBingAll)) { $srcOf[[string]$f.Name] = 'bing' }
+  } catch { }
+  $keys = @('spot', 'bing', 'other')
+  try { foreach ($def in @(Get-BwSourceDefs)) { if ($keys -notcontains [string]$def.Key) { $keys += [string]$def.Key } } } catch { }
+  $bucket = @{}
+  foreach ($k in $keys) { $bucket[$k] = New-Object System.Collections.ArrayList }
+  foreach ($n in $list) {
+    $k = 'other'
+    if ($srcOf.ContainsKey([string]$n)) { $k = [string]$srcOf[[string]$n] }
+    if (-not $bucket.ContainsKey($k)) { $bucket[$k] = New-Object System.Collections.ArrayList; $keys += $k }
+    [void]$bucket[$k].Add([string]$n)
+  }
+  $groups = @()
+  foreach ($k in $keys) {
+    $arr = @($bucket[$k] | Where-Object { $_ })
+    if ($arr.Count -eq 0) { continue }
+    $groups += ,@{ K = [string]$k; Items = $arr; Next = 0; Weight = $arr.Count; Credit = 0.0 }
+  }
+  if ($groups.Count -le 1) { return @($list) }
+  $totalW = 0
+  foreach ($g in $groups) { $totalW += [int]$g.Weight }
+  $out = New-Object System.Collections.ArrayList
+  while ($out.Count -lt $list.Count) {
+    $pick = -1
+    $best = -1.0e18
+    for ($i = 0; $i -lt $groups.Count; $i++) {
+      $g = $groups[$i]
+      if ($g.Next -ge $g.Items.Count) { continue }
+      $g.Credit = [double]$g.Credit + [double]$g.Weight
+      if ($g.Credit -gt $best) { $best = $g.Credit; $pick = $i }
+    }
+    if ($pick -lt 0) { break }
+    $pg = $groups[$pick]
+    [void]$out.Add([string]$pg.Items[$pg.Next])
+    $pg.Next = [int]$pg.Next + 1
+    $pg.Credit = [double]$pg.Credit - [double]$totalW
+  }
+  if ($out.Count -lt $list.Count) {
+    # 理论上不该发生(每个名字都在某个组里); 真漏了就照原顺序补在队尾, 一张都不能丢
+    $got = @{}
+    foreach ($o in $out) { $got[[string]$o] = $true }
+    foreach ($n in $list) { if (-not $got.ContainsKey([string]$n)) { [void]$out.Add([string]$n) } }
+  }
+  # 一行日志, 日后翻日志就能确认"到底怎么穿插的"
+  $sumTxt = ''
+  foreach ($g in $groups) { $sumTxt += (' / ' + $g.K + ' ' + @($g.Items).Count + ' 张') }
+  Log ('队列按来源交错: 共 ' + $list.Count + ' 张' + $sumTxt)
+  return @($out)
+}
+
 # 把库里的图洗一次牌。
 # 注意: 光"洗牌"只能保证**一轮之内**不重复 —— 队列发完再洗一轮时, 库里所有图
 # (包括上一轮全看过的)都会被重新洗进来, 客户就会又看到昨天那张。
@@ -3513,13 +3608,52 @@ function Get-BwFreshQueue($s) {
       $keep = @($pool | Where-Object { -not $mark.ContainsKey((Get-BwNameKey $_)) })
       if ($keep.Count -gt 0) { $pool = $keep }
     }
-    return @(Get-BwOldestFirst $s $pool $now2)
+    return @(Merge-BwQueueBySource (Get-BwOldestFirst $s $pool $now2))
   }
   if ($oldestFirst) {
     # 「历史清零重来」那条分支: 整库按"最早看过"优先排, 不走洗牌
-    return @(Get-BwOldestFirst $s $names $now2)
+    return @(Merge-BwQueueBySource (Get-BwOldestFirst $s $names $now2))
   }
   return @(Get-BwBalancedOrder $names $turn)
+}
+
+# 2026-10-23: 新下载的图别只排在队尾 —— 队列平时只在"空了 / 重洗"时才重建,
+# 新图要等下次重洗才轮得到(实测有时要等一整天)。这里把新图插进当前队列的**前 1/3**:
+# 既不"下一张就是它"(避免刚换过的又撞回来), 也不至于等半天。
+function Add-BwNewToQueue($s, [string[]]$names) {
+  if (-not $s) { return 0 }
+  $q = @($s.queue | Where-Object { $_ })
+  $have = @{}
+  foreach ($x in $q) { $have[[string]$x] = $true }
+  $add = @()
+  foreach ($n in @($names)) {
+    $nm = [string]$n
+    if (-not $nm) { continue }
+    if ($have.ContainsKey($nm)) { continue }
+    $have[$nm] = $true
+    $add += $nm
+  }
+  if ($add.Count -eq 0) { return 0 }
+  $at = [int][Math]::Floor($q.Count / 3)
+  if ($at -lt 0) { $at = 0 }
+  $head = @($q | Select-Object -First $at)
+  $tail = @($q | Select-Object -Skip $at)
+  $s.queue = @(@($head) + @($add) + @($tail))
+  Log ('新图进队: ' + $add.Count + ' 张插在队列第 ' + ($at + 1) + ' 位 (队列现在 ' + @($s.queue).Count + ' 张)')
+  return $add.Count
+}
+# 库里所有图名的快照(聚焦 + 必应 + 其它图源), 用来算"这一趟新下了哪几张"。
+function Get-BwLibNameSet {
+  $h = @{}
+  try { foreach ($f in @(Get-BwSpotlightAll)) { $h[[string]$f.Name] = $true } } catch {}
+  try { foreach ($f in @(Get-BwBingAll)) { $h[[string]$f.Name] = $true } } catch {}
+  try {
+    $c = Get-BwConfig
+    foreach ($def in @(Get-BwSourceDefs)) {
+      foreach ($f in @(Get-BwSrcFiles (Get-BwSrcDir $c $def.Key))) { $h[[string]$f.Name] = $true }
+    }
+  } catch {}
+  return $h
 }
 
 # ---- 收藏 ----
@@ -3611,6 +3745,8 @@ function Invoke-BwSpotBackfill([int]$count, [switch]$Force) {
     # (后台子进程就是直接调的)照样会干活。
     if ($global:BWDry) { Log ('试运行: 本应后台补货 ' + $count + ' 张聚焦壁纸, 不下载、不重洗队列'); return }
     $c = Get-BwConfig
+    # 记下"下载之前库里有哪些", 下完一比就知道这次新下了哪几张
+    $snap = Get-BwLibNameSet
     # 2026-10-09 用户要求"只在库低于阈值时补货": 阈值就是库上限 —— 库已经满了还去下载,
     # 下回来立刻又被 Trim-BwLibrary 淘汰, 纯属白白消耗源池(而且源池总共才 800+ 张)。
     $cap = Get-BwLibCap
@@ -3627,13 +3763,23 @@ function Invoke-BwSpotBackfill([int]$count, [switch]$Force) {
     # 2026-10-09: 两个新图源走同一条"按需补货"通道 —— 各自库满即停、单轮/单日闸门照旧,
     # 一个源失败只写一行日志, 不影响聚焦库、也不影响换图。
     [void](Invoke-BwAllSrcFetch -count $count -Quiet -Force:$Force -IgnoreCap:$Force)
-    # 不管下到几张, 都重洗一次队列, 让新图进轮换
+    # 2026-10-23: 原来这里**整队重洗** —— 新图会被"最旧优先"排到队尾, 又等于没插队。
+    # 现在只把**这次新下的**插进队列前 1/3; 队列本来就空才重洗。
     $s = Get-BwState
     if ($s) {
-      $s.queue = @(Get-BwFreshQueue $s)
+      $after = Get-BwLibNameSet
+      $news = @()
+      foreach ($k in @($after.Keys)) { if (-not $snap.ContainsKey($k)) { $news += [string]$k } }
+      $q0 = @($s.queue | Where-Object { $_ })
+      if ($q0.Count -eq 0) {
+        $s.queue = @(Get-BwFreshQueue $s)
+        Log ('后台补货结束: 队列本来就是空的, 已重洗成 ' + @($s.queue).Count + ' 张')
+      } elseif ($news.Count -gt 0) {
+        [void](Add-BwNewToQueue $s $news)
+      }
       Save-BwState $s
     }
-    Log ('后台补货结束: 库中现有 ' + @(Get-BwSpotlightAll).Count + ' 张, 队列已重洗')
+    Log ('后台补货结束: 库中现有 ' + @(Get-BwSpotlightAll).Count + ' 张')
   } catch { Log ('后台补货异常: ' + $_.Exception.Message) }
 }
 # 起一个脱离的隐藏 powershell 进程去跑 Invoke-BwSpotBackfill。
@@ -4480,6 +4626,7 @@ function Get-BwMonthName($item) { '{0}_{1}.jpg' -f $item.date, $item.code }
 function Invoke-BwArchiveBatch([string]$ym) {
   $items = Get-BwMonthItems $ym
   if (-not $items -or $items.Count -eq 0) { Write-Host ('  未取到 ' + $ym + ' 的清单(检查网络)'); return }
+  $snap0 = Get-BwLibNameSet
   Write-Host ('  共 ' + $items.Count + ' 张, 开始批量下载(跳过已有)...')
   $ok = 0; $skip = 0; $fail = 0
   foreach ($it in $items) {
@@ -4493,6 +4640,18 @@ function Invoke-BwArchiveBatch([string]$ym) {
   }
   Write-Host ('  完成: 成功 ' + $ok + ', 跳过 ' + $skip + ', 失败 ' + $fail)
   Log ("归档批量 $ym : 成功$ok 跳过$skip 失败$fail")
+  # 2026-10-23: 新补齐的图也尽快进轮换(插在队列前 1/3), 不要等下次重洗
+  try {
+    if ($ok -gt 0) {
+      $s0 = Get-BwState
+      if ($s0) {
+        $after0 = Get-BwLibNameSet
+        $news0 = @()
+        foreach ($k in @($after0.Keys)) { if (-not $snap0.ContainsKey($k)) { $news0 += [string]$k } }
+        if ($news0.Count -gt 0) { [void](Add-BwNewToQueue $s0 $news0); Save-BwState $s0 }
+      }
+    }
+  } catch { }
 }
 function Invoke-BwArchiveSingle([string]$ym, [string]$date, [switch]$SetWall) {
   $items = Get-BwMonthItems $ym
@@ -6519,6 +6678,36 @@ function Send-BwPanelResponse($stream, [int]$code, [string]$type, [byte[]]$body)
 
 # 只绑回环地址; 令牌每启动一次换一个, 页面里的 {{BWPANEL_TOKEN}} 会被替换掉。
 # IdleMinutes: 一直没人访问就自己退出, 不在后台永久驻留。
+# 2026-10-23: 已经有一个控制台服务在跑? 有就直接把浏览器指过去, 不新起进程。
+# 判据三样都对才复用: 记录文件在 / 那个进程还活着 / 那个端口真在监听。
+function Open-BwExistingPanel {
+  param([switch]$NoBrowser)
+  $f = Join-Path $global:BWRoot 'panel.serve.json'
+  if (-not (Test-Path -LiteralPath $f)) { return $false }
+  $rec = $null
+  try { $rec = Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $false }
+  if (-not $rec) { return $false }
+  $port = 0
+  try { $port = [int]$rec.port } catch { return $false }
+  if ($port -le 0) { return $false }
+  $alive = $false
+  try { $alive = [bool](Get-Process -Id ([int]$rec.pid) -ErrorAction Stop) } catch { $alive = $false }
+  if (-not $alive) { try { Remove-Item -LiteralPath $f -Force } catch {}; return $false }
+  $listening = $false
+  try {
+    $cli = New-Object System.Net.Sockets.TcpClient
+    $ar = $cli.BeginConnect('127.0.0.1', $port, $null, $null)
+    if ($ar.AsyncWaitHandle.WaitOne(1500)) { $cli.EndConnect($ar); $listening = $true }
+    $cli.Close()
+  } catch { $listening = $false }
+  if (-not $listening) { return $false }
+  $url = [string]$rec.url
+  if (-not $url) { $url = ('http://127.0.0.1:{0}/?t={1}' -f $port, [string]$rec.token) }
+  if (-not $NoBrowser) { try { Start-Process $url | Out-Null } catch {} }
+  Log ('面板: 已经在跑, 直接复用 -> ' + $url)
+  return $true
+}
+
 function Start-BwPanelServer {
   param([int]$Port = 0, [int]$IdleMinutes = 30, [switch]$NoBrowser)
 
@@ -6536,6 +6725,14 @@ function Start-BwPanelServer {
   }
 
   $url = ('http://127.0.0.1:{0}/?t={1}' -f $Port, $token)
+  # 2026-10-23: 把"正在服务"记下来, 下次点图标时直接复用这个服务,
+  # 不再每点一次就多起一个进程(以前旧的要等 30 分钟闲置才退, 同时挂好几个, 每个约 140MB)。
+  $serveFile = Join-Path $global:BWRoot 'panel.serve.json'
+  try {
+    $rec0 = [ordered]@{ port = $Port; token = $token; pid = $PID
+                        url = $url; since = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') }
+    [System.IO.File]::WriteAllText($serveFile, ($rec0 | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding($false)))
+  } catch {}
   Log ('面板: 本地服务已启动 -> ' + $url)
 
   $last = Get-Date
@@ -6667,6 +6864,13 @@ function Start-BwPanelServer {
     }
   } finally {
     try { $listener.Stop() } catch {}
+    # 只删自己那份记录(端口 + 令牌都对得上才删), 免得把别的实例的记录删了
+    try {
+      if ((Test-Path -LiteralPath $serveFile)) {
+        $r0 = Get-Content -LiteralPath $serveFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (([int]$r0.port -eq $Port) -and ([string]$r0.token -eq $token)) { Remove-Item -LiteralPath $serveFile -Force }
+      }
+    } catch {}
     Log '面板: 本地服务已停止'
   }
   return $url
@@ -6912,6 +7116,38 @@ function Invoke-BwPanelSet([string]$key, $value) {
   return $true
 }
 
+# 2026-10-23 用户报:「打开数据目录, 怎么是网页背后跳出」。
+# 原因: 面板的服务进程是隐藏窗口的后台 PowerShell, 它起的资源管理器窗口没有前台权,
+# 于是常常在浏览器**后面**开出来 —— 用户看不到, 以为"点了没反应"。
+# 做法: 打开目录之后主动把新冒出来的窗口激活到最前(按窗口标题试, 提不到就按目录名再试),
+# 最多等 2 秒; 提窗口失败也不影响"目录已经打开"这件事。
+function Open-BwFolderFront([string]$path) {
+  if (-not $path) { return $false }
+  if (-not (Test-Path -LiteralPath $path)) { return $false }
+  $sh = $null
+  try { $sh = New-Object -ComObject WScript.Shell } catch { $sh = $null }
+  $before = @{}
+  if ($sh) {
+    try { foreach ($w in @(Get-Process | Where-Object { $_.MainWindowTitle })) { $before[[string]$w.MainWindowTitle] = $true } } catch {}
+  }
+  try { Start-Process 'explorer.exe' -ArgumentList ('"{0}"' -f $path) | Out-Null } catch {}
+  if (-not $sh) { return $true }
+  $leaf = ''
+  try { $leaf = [string](Split-Path $path -Leaf) } catch { $leaf = '' }
+  for ($i = 1; $i -le 8; $i++) {
+    Start-Sleep -Milliseconds 250
+    $titles = @()
+    try { $titles = @(Get-Process | Where-Object { $_.MainWindowTitle } | Select-Object -ExpandProperty MainWindowTitle) } catch { $titles = @() }
+    $fresh = @($titles | Where-Object { $_ -and (-not $before.ContainsKey([string]$_)) })
+    foreach ($t in $fresh) {
+      try { if ($sh.AppActivate([string]$t)) { return $true } } catch {}
+    }
+    if ($leaf) { try { if ($sh.AppActivate($leaf)) { return $true } } catch {} }
+  }
+  try { [void]$sh.AppActivate($path) } catch {}
+  return $true
+}
+
 function Invoke-BwPanelAction($req) {
   $do = ''
   try { $do = ([string]$req.do).Trim().ToLower() } catch {}
@@ -7082,7 +7318,8 @@ function Invoke-BwPanelAction($req) {
     if ($which -eq 'spotlight') { $p = [string]$c.spotlight_save_dir }
     elseif ($which -eq 'data') { $p = [string]$global:BWRoot }
     if ($p -and (Test-Path -LiteralPath $p)) {
-      try { Start-Process 'explorer.exe' -ArgumentList ('"{0}"' -f $p) | Out-Null } catch {}
+      # 2026-10-23: 打开后把窗口提到最前 —— 不然它总在浏览器后面出来, 看着像没反应
+      [void](Open-BwFolderFront $p)
     }
     return [ordered]@{ ok = $true; path = $p }
   }
@@ -7161,9 +7398,10 @@ function Invoke-BwPanelRefill {
   Log ('面板任务: 开始补货, 本轮最多 ' + $want + ' 张')
   $new = @(Invoke-SpotlightFetch -count $want -Quiet -Counter)
   if ($new.Count -gt 0) {
-    # 队列里存文件名; 存完整路径会让取图时拼成 "库\F:\库\xxx.jpg", 张张找不到
+    # 队列里存文件名; 存完整路径会让取图时拼成 "库\F:\库\xxx.jpg", 张张找不到。
+    # 2026-10-23: 以前接在**队尾**(等于今天看不到), 改成插到队列前 1/3。
     $names = @($new | ForEach-Object { Split-Path $_ -Leaf })
-    $s.queue = @(@($s.queue | Where-Object { $_ }) + $names)
+    [void](Add-BwNewToQueue $s $names)
     Save-BwStateKeepFav $s
   }
   Log ('面板任务: 补货结束, 新下载 ' + $new.Count + ' 张')
