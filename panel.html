@@ -957,12 +957,20 @@ function computeNext(){
   if (!cycMin || cycMin <= 0) return;
   nextAt = t + cycMin * 60000;
 }
+/* 【2026-10-25 用户「必应模式，时间没有锁死」】
+   必应模式**不按间隔走** —— 后台是"每天第一轮巡检把当天那张贴上去"(core.ps1 规则 1),
+   所以这一屏不该再有"还有 23 小时"这类倒计时: 进度条一点点往前爬、顶栏偶尔还会翻成
+   "即将换图…", 看着就是"时间没锁死"。现在必应模式直接给一句固定说明, 进度条归零,
+   也不做"倒计时归零补拉"(在必应模式下那条没有意义, 换图由下面的轻量探测负责)。 */
 function tick(){
-  var ring = $("ring");
   var meter = $("cycMeter");
+  var cfg = (S && S.cfg) || {};
+  if (cfg.bing_only){
+    if (meter) meter.style.width = "0%";
+    setText("statusText", "必应模式 · 明天开机后换新图");
+    return;
+  }
   if (!nextAt || !cycMin){
-    if (ring) ring.style.setProperty("--p", "0");
-    setHTML("ringTxt", "—");
     if (meter) meter.style.width = "0%";
     return;
   }
@@ -975,32 +983,11 @@ function tick(){
   var txt = fmtLeft(leftMin);
   var unit = fmtLeftUnit(leftMin);
   if (left <= 0){ txt = "即将"; unit = ""; }
-  if (ring) ring.style.setProperty("--p", String(Math.round(pct)));
-  setHTML("ringTxt", txt + (unit ? "<small>" + unit + "</small>" : ""));
   if (meter) meter.style.width = Math.round(pct) + "%";
-  /* 下次时间文案 */
-  var cfg = (S && S.cfg) || {};
-  var title = "—";
-  if (left <= 0){
-    title = "随时会换（下一轮检查时）";
-  } else if (cfg.bing_only){
-    /* 【2026-10-25 用户「这个描述应该是明天第一次开机切换」】原来写"下一次 16:34 后换成
-       当天的必应图"。那个点是"上一张换上的时刻 + 24 小时"算出来的, 可必应模式压根不看它:
-       后台规则是**每天第一轮巡检换成官方当前那张**(core.ps1 规则 1, 15 分钟一轮),
-       机器整晚开着也会在零点那轮把同一张再贴一遍, 真换新图要等必应发图(约每天 16:00)。
-       所以这里给不出精确到分的时间, 改成说明"什么时候才会换"。 */
-    title = "今天的必应图已在桌面 · 明天开机后第一轮巡检换成当天的新图（必应约每天 16:00 发图）";
-  } else if (cfg.auto_fetch === false){
-    title = "不会自动换（可随时手动换）";
-  } else {
-    title = "下一次 " + hhmm(nextAt) + " 自动更换";
-  }
-  setText("nextTitle", title);
   /* 顶栏也显示换图时间，而不是笼统的"自动更换中" */
   var st2;
-  if (!nextAt) st2 = "不会自动换";
+  if (cfg.auto_fetch === false) st2 = "不会自动换（可随时手动换）";
   else if (left <= 0) st2 = "即将换图…";
-  else if (cfg.bing_only) st2 = "必应模式 · 明天开机后换新图";
   else st2 = hhmm(nextAt) + " 换图 · 还有 " + txt + unit;
   setText("statusText", st2);
   /* 【2026-10-25】倒计时走到零的那一刻补拉一次状态 —— 后台换完图, 「当前壁纸」大卡
@@ -1077,11 +1064,16 @@ function render(s){
   var cyc = parseInt(cfg.cycle_minutes, 10);
   if (!isNaN(cyc) && cyc > 0) cycMin = cyc;
   computeNext();
-  setText("cycPill", fmtCycle(cycMin));
+  /* 【2026-10-25 用户「这个描述应该是明天第一次开机切换」】
+     必应模式下别再显示"24 小时" —— 那不是真的"下次换图点", 后台按天走:
+     明天第一次开机(开机后第一轮巡检)才换成当天的新图。 */
+  setText("cycPill", isBing ? "明天开机" : fmtCycle(cycMin));
   setText("setCycNum", fmtCycle(cycMin));
   var chips = document.querySelectorAll(".cyc-chip");
   for (var i = 0; i < chips.length; i++){
-    chips[i].classList.toggle("on", parseInt(chips[i].getAttribute("data-v"), 10) === cycMin);
+    /* 必应模式下**一个档位都不高亮**: 高亮 24 小时会让人以为"下次就是 24 小时后" */
+    chips[i].classList.toggle("on", !isBing
+      && parseInt(chips[i].getAttribute("data-v"), 10) === cycMin);
   }
   var slider = $("setCyc");
   if (slider){
@@ -1098,10 +1090,10 @@ function render(s){
   var cycRow2 = $("cycChips");
   if (cycRow2) cycRow2.classList.toggle("locked", isBing);
   var hint = isBing
-    ? "必应模式下固定 24 小时（每天一张）；切回聚焦模式会还原原来的间隔"
+    ? "必应模式：每天一张 —— 明天第一次开机（开机后第一轮巡检）换成当天的新图；必应约每天 16:00 发图。切回聚焦模式会还原原来的间隔"
     : "点一下直接切；滑块到 4 小时，更长用上面的档位";
   setText("cycHint", hint);
-  setText("setCycHint", isBing ? "必应模式固定 24 小时" : "每多少分钟自动换一张");
+  setText("setCycHint", isBing ? "必应模式：明天第一次开机换当天的新图" : "每多少分钟自动换一张");
   setText("nextSub", "每 " + fmtCycle(cycMin) + " · 图库 " + ((cnt.bing || 0) + (cnt.spotlight || 0)) + " 张 · 收藏 "
     + (s.favCount || 0) + " 张" + (s.local && s.local.count ? (" · 本地 " + s.local.count + " 张") : ""));
 
@@ -1336,31 +1328,109 @@ function tileFor(it, opt){
   });
   return f;
 }
+/* 【2026-10-25 用户「必应模式下 最近换过 浏览框也应该切换到必应图库」】
+   这一排原来不分库: 切到必应模式以后, 名单里压着的还是上一阵子按间隔轮下来的聚焦图,
+   看着就是"必应模式却给我看聚焦的旧图"。
+   现在的口径:
+     · 必应模式 —— **必应图库里最近的几张**(按文件名日期, 当前这张排第一并带换上时刻),
+       一张聚焦图都不混进来; 历史只用来给同名条目补"换上时间"(见 renderHistory)。
+     · 聚焦模式 —— 本来就是两库混着轮, 照旧按换上时间给 4 张。
+   必应图库那份 60 秒最多拉一次(拉回来只重画这一排, 不整页刷新)。 */
+var BING_FILL = { at: 0, rows: [], busy: false };
+/* 必应图库按**文件名里的日期**排 —— 这是"必应哪天发的图", 用户认的就是这个。
+   服务端给的是按文件修改时间, 补回来的老存档(下载于今天)会把 2023 年那些顶到前面,
+   用户截图里 2023-01 的归档图排在最前就是这个原因。 */
+function bingNameDate(n){
+  var m = String(n || "").match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : "";
+}
+function bingGalleryOrdered(arr){
+  var list = (arr || []).slice();
+  list.sort(function(a, b){
+    var da = bingNameDate(a && a.name), db = bingNameDate(b && b.name);
+    if (da && db && da !== db) return da < db ? 1 : -1;
+    if (da && !db) return -1;
+    if (!da && db) return 1;
+    return (Number(b && b.ts) || 0) - (Number(a && a.ts) || 0);
+  });
+  return list;
+}
+function bingFillRows(){
+  var now = Date.now();
+  if (BING_FILL.busy || (now - BING_FILL.at) < 60000) return BING_FILL.rows;
+  BING_FILL.busy = true;
+  BING_FILL.at = now;
+  /* 40 张: 排序在页面上做, 取太少(原来 8 张)的话, 一次补档就能把最近几天的图挤出窗口。 */
+  fetch("/?panel=gallery&src=bing&take=40", { cache: "no-store" })
+    .then(function(r){ return r.ok ? r.json() : []; })
+    .then(function(arr){
+      BING_FILL.busy = false;
+      if (arr && arr.length){
+        BING_FILL.rows = bingGalleryOrdered(arr);
+        if (S) renderHistory(S.history || [], baseName((S.st && S.st.lastWall) || ""));
+      }
+    })
+    .catch(function(){ BING_FILL.busy = false; });
+  return BING_FILL.rows;
+}
 function renderHistory(list, curName){
   var box = $("hist");
-  box.innerHTML = "";
-  var shown = 0;
-  /* 【2026-10-25 用户「必应模式下 最近换过 浏览框也应该切换到必应图库」】
-     这一排原来不分库: 切到必应模式以后, 名单里压着的还是上一阵子按间隔轮下来的聚焦图,
-     看着就是"必应模式却给我看聚焦的旧图"。现在按当前模式收口径 ——
-     必应模式只显必应库换过的(srv 端每条带 src), 聚焦模式本来就是两库混着轮, 不收。
-     一条必应的都没有时(刚切过来/必应库空)照旧显最近的, 不留一排空格子。 */
-  var rows = list;
-  if (S && S.cfg && S.cfg.bing_only){
-    var pick = list.filter(function(x){ return x.src === "bing"; });
-    if (pick.length) rows = pick;
+  if (!box) return;
+  list = list || [];
+  var isBing = !!(S && S.cfg && S.cfg.bing_only);
+  var rows = [], seen = {};
+  /* 【2026-10-25 二次修正 · 用户截图】必应模式下把"过去 30 分钟轮换记下的必应条目"端上来还不够:
+     他截图里那四张(企鹅/圣丹斯/白沙/树木)确实是必应库里的图, 但都是 2023 年的**归档**,
+     是聚焦模式轮换时被换过的, 看着跟必应每日一图完全不是一回事。
+     现在的口径: 这一排 = **必应图库里最近的几张**(按文件名日期), 当前这张带换上时间;
+     历史只用来给同名条目补"换上时间", 以及图库清单还没回来时先顶一格不空白。 */
+  function add(it, at){
+    /* 去扩展名再比: state.json 的"看过"名单记的是不带扩展名的名字, 图库清单带 .jpg,
+       不去掉就永远对不上 —— 当前这张换上的时刻(20:42)就补不到角标上。 */
+    var k = String((it && it.name) || "").replace(/\.[a-z0-9]+$/i, "").toLowerCase();
+    if (!k || seen[k] || rows.length >= 4) return;
+    seen[k] = 1;
+    rows.push({ name: it.name, path: it.path || "", thumb: it.thumb || "", at: at || "" });
+  }
+  var atMap = {};
+  for (var i = 0; i < list.length; i++){
+    var h = list[i];
+    if (h && h.src === "bing") {
+      atMap[String(h.name || "").replace(/\.[a-z0-9]+$/i, "").toLowerCase()] = (h.at || "");
+    }
+  }
+  if (isBing){
+    var fill = bingFillRows();
+    for (var j = 0; j < fill.length; j++){
+      var f = fill[j];
+      var fk = String(f.name || "").replace(/\.[a-z0-9]+$/i, "").toLowerCase();
+      add(f, atMap[fk] || "");
+    }
+    if (rows.length < 4){
+      /* 图库清单是异步来的: 首次打开这一下先用必应历史顶住(有内容就不闪空),
+         清单回来后 bingFillRows 会重画这一排。 */
+      for (var k2 = 0; k2 < list.length; k2++){
+        var h2 = list[k2];
+        if (h2 && h2.src === "bing") add(h2, h2.at);
+      }
+    }
+  } else {
+    for (var k3 = 0; k3 < list.length; k3++){ add(list[k3], list[k3] && list[k3].at); }
   }
   // 【2026-10-25】服务端已改成"从最新的一条往前给"，这里只取一行（4 张）。
   // 原来一行 6 张：单张只有 112px 宽，悬停那排「设为壁纸/收藏/原图」按钮塞不下、
   // 直接溢出到隔壁格，用户截图反馈"文字比例不和谐"。改成 4 张后单张约 170px，
   // 与下方图库 .gallery 的格子（minmax(152px)）同一量级，按钮和图的比例就顺了。
+  box.innerHTML = "";
   rows.forEach(function(it){
-    if (shown >= 4) return;
-    var f = tileFor({ name: it.name, path: it.path, thumb: "", fav: false, src: "hist", at: it.at }, { currentName: curName });
+    // 有"换上时间"就角标写换上的时刻/月日；没有(图库里最近但本机没换过)就退回图片日期。
+    var f = tileFor({ name: it.name, path: it.path || "", thumb: it.thumb || "",
+                      fav: false, src: "hist", at: it.at || "" },
+                    { currentName: curName });
     box.appendChild(f);
-    shown++;
   });
-  $("histEmpty").style.display = shown ? "none" : "";
+  $("histEmpty").style.display = rows.length ? "none" : "";
+  if (!rows.length) setText("histEmpty", isBing ? "必应图库还是空的 —— 补几张新图之后这里就有了" : "还没有换过图");
 }
 
 /* ── 动作 ── */
@@ -1745,6 +1815,28 @@ refresh(false);
 var mTab = String(location.search || "").match(/[?&]tab=(now|lib|set)\b/);
 if (mTab) showTab(mTab[1]);
 setInterval(tick, 1000);      /* 只有前端计时, 不发请求 */
+/* 【2026-10-25 用户「当前预览图没有锁定当前壁纸的图像，关闭窗口[重开]才恢复」】
+   这一页原来只在"打开 / 倒计时归零 / 切回前台"时拉一次状态。必应模式的倒计时是 24 小时,
+   后台换图根本不看它 —— 页面上的大卡能一直停在旧图, 重开窗口才对上。
+   现在每 15 秒问一次 /api/now: 服务端只 stat 一下 state.json(不读目录、不带日志),
+   桌面上的图真变了才整页补拉; 没变就回几百字节。服务是单线程手写 TcpListener,
+   所以只在**页面可见**时问, 两次之间至少隔 12 秒。 */
+var NOW_AT = 0;
+function watchCurrent(){
+  if (!S || document.hidden) return;
+  var now = Date.now();
+  if (now - NOW_AT < 12000) return;
+  NOW_AT = now;
+  fetch("/api/now?t=" + encodeURIComponent(TOKEN), { cache: "no-store" })
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(j){
+      if (!j || j.ok !== true) return;
+      var st = (S && S.st) || {};
+      if ((j.wall && j.wall !== (st.lastWall || "")) || (j.swap && j.swap !== (st.lastSwap || ""))) refresh(false);
+    })
+    .catch(function(){});
+}
+setInterval(watchCurrent, 15000);
 var LAST_BLIND_RETRY = 0;
 document.addEventListener("visibilitychange", function(){
   if (document.hidden) return;
