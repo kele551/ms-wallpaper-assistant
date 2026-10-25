@@ -111,7 +111,7 @@ pip install "pyinstaller==6.22.3"
 python build-exe.py --release
 ```
 
-产物：`壁纸助手.exe`（固定名，日常用）、`壁纸助手-v<版本>.exe`、`MSWallpaperAssistant-v<版本>.zip`。
+产物：`桌面壁纸.exe`（固定名，日常用）、`桌面壁纸-v<版本>.exe`、`MSWallpaperAssistant-v<版本>.zip`。
 
 ### 自查（改完自己先过一遍）
 

@@ -25,7 +25,7 @@ function Assert($cond, $m) {
 
 $oldExe = Get-ChildItem $Repo -Filter '*2.3.3.exe' | Select-Object -First 1
 if (-not $oldExe) { Write-Host '找不到 v2.3.3 的 exe，演练中止' -ForegroundColor Red; exit 2 }
-$newExe = Join-Path $Repo '壁纸助手.exe'
+$newExe = Join-Path $Repo '桌面壁纸.exe'   # 2026-10-25 文件名更正; 老客户端那份仍故意用老名
 if (-not (Test-Path $newExe)) { Write-Host '找不到新 exe（先打包）'; exit 2 }
 
 try {

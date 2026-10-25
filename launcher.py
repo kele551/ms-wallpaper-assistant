@@ -63,6 +63,11 @@ UPDATE_PUBKEY = 'cdb8bb7a545ca55a92f4e6744dada5c80437ade25eb0dfc5c8a2b8f177f39ef
 #   * 互斥体名 Local\MSWallpaperAssistantDaemon 不改 —— 改名过渡期新老 exe
 #     可能同时在跑, 守护进程必须继续互斥, 只能有一个。
 APP_NAME = '壁纸助手'
+# 【2026-10-25 文件名更正】exe 文件名 = 显示名「桌面壁纸」, 不再用 APP_NAME 推。
+# APP_NAME 从此只管数据目录(%LOCALAPPDATA%\壁纸助手)和随包 .ico 文件名 —— 那两处改名
+# 要把老用户的 config / state / 图片索引整个搬家, 风险对不上收益。
+# 成品文件名以这一处为准 (build-exe.py 的 EXE_STEM、发版自检 tools/preflight_release.py 都读它)。
+EXE_STEM = '桌面壁纸'
 LEGACY_APP_NAME = '微软壁纸助手'
 DATA_DIR_NAME = '壁纸助手数据'
 LEGACY_DATA_DIR_NAME = '微软壁纸助手数据'
@@ -881,7 +886,7 @@ def mode_stop(d):
 
 
 def mode_verify_update(argv):
-    """只读子命令: 壁纸助手.exe --verify-update <version.json> <version.json.sig>
+    """只读子命令: 桌面壁纸.exe --verify-update <version.json> <version.json.sig>
 
     给 core.ps1 的升级流程在「相信 version.json 之前」调用的验签闸门:
       · 用内置公钥 UPDATE_PUBKEY 对 version.json 的**原始字节**验签;
@@ -898,7 +903,7 @@ def mode_verify_update(argv):
         return 2
     _paths = [a for a in argv[idx + 1:] if not a.startswith(('-', '/'))]
     if len(_paths) != 2:
-        say('用法: 壁纸助手.exe --verify-update <version.json> <version.json.sig>')
+        say('用法: %s.exe --verify-update <version.json> <version.json.sig>' % EXE_STEM)
         return 2
     vj_path, sig_path = _paths[0], _paths[1]
     try:

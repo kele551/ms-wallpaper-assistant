@@ -5,7 +5,7 @@
 
 ## 这是什么
 
-Python 启动器（`launcher.py` → 打包成 `壁纸助手.exe`）+ 两份 PowerShell 脚本（`core.ps1` 换壁纸、`menu.ps1` 菜单），
+Python 启动器（`launcher.py` → 打包成 `桌面壁纸.exe`）+ 两份 PowerShell 脚本（`core.ps1` 换壁纸、`menu.ps1` 菜单），
 首次运行释放脚本到 `%LOCALAPPDATA%\壁纸助手`，之后可按 `version.json` 里的指纹热更新。**不需要管理员权限。**
 
 ## 环境与命令
@@ -31,7 +31,9 @@ $e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile("core.p
   改了脚本又不动它，热更校验就对不上了（发版时一起重新生成才正确）。
 - **`.ps1` 一律 UTF-8 带 BOM**。丢 BOM → PowerShell 5.1 按 ANSI 读 → 中文乱码 → ParserError（历史上真发生过）。
 - **行尾**：本仓库入库/检出**一律 LF**；不要整文件重写行尾（会产生"整个文件都变了"的假 diff）。
-- **产物文件名不带版本号**（固定 `壁纸助手.exe`，版本号只写进 exe 属性与界面）。
+- **产物文件名不带版本号**（固定 `桌面壁纸.exe`，版本号只写进 exe 属性与界面）。
+  文件名唯一来源是 `launcher.py` 的 `EXE_STEM`；老名 `壁纸助手.exe` / `微软壁纸助手.exe` 在
+  `core.ps1` 的 `$global:BWExeNamesFixed` 里继续当固定名认，老用户原地升级不会被复制出第二份 exe。
 - **对外文案红线词**：绕过 / 翻墙 / 梯子 / 科学上网 / 墙 / 破解 / 屏蔽 —— 一个都不要出现在任何文件里。
 - **署名不要改**：`海风（kele551）`（中文）/ `HaiFeng (kele551)`（ASCII）/ `Copyright (C) 2026 HaiFeng (kele551)`。
 - **仓库里不许出现本机路径、私人邮箱、令牌**（`tools/preflight_release.py` 的 ⑥ 节会拦）。
@@ -66,7 +68,7 @@ GitHub Issues 里带 `good first issue` / `help wanted` 标签的条目，每条
 
 ## English summary (for AI agents)
 
-- **What it is**: a Python launcher (`launcher.py` → packaged as `壁纸助手.exe`) plus two PowerShell scripts
+- **What it is**: a Python launcher (`launcher.py` → packaged as `桌面壁纸.exe`) plus two PowerShell scripts
   (`core.ps1` cycles wallpapers, `menu.ps1` is the menu). Scripts are released into `%LOCALAPPDATA%\壁纸助手`
   and can be hot-updated according to the hashes in `version.json`. No admin rights needed.
 - **Run / verify**: `python launcher.py` · `python -m py_compile launcher.py build-exe.py` ·

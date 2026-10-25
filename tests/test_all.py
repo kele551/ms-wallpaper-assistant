@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-"""壁纸助手 - 打包后必跑的一套端到端测试.
+"""桌面壁纸 - 打包后必跑的一套端到端测试.
 
-(2026-10-12 产品改名「微软壁纸助手」->「壁纸助手」: 名字断言全部跟随,
+(2026-10-12 产品改名「微软壁纸助手」->「壁纸助手」、2026-10-25 文件名更正为「桌面壁纸.exe」: 名字断言全部跟随
+ (数据目录名仍是「壁纸助手」, 那两处不随文件名改; 老 exe 名由 core.ps1 的 BWExeNamesFixed 继续认),
 并新增 7/8 两个用例专门盯改名迁移: 老名 appdata 目录的复制迁移、launcher.txt 自愈。)
 
 用法:
-    python tests\test_all.py                    测仓库根目录里的 壁纸助手.exe
+    python tests\test_all.py                    测仓库根目录里的 桌面壁纸.exe
     python tests\test_all.py <其他exe路径>       测指定的 exe
 
 覆盖:
@@ -31,7 +32,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 # 默认：源码与产物就在本脚本的上一级（仓库根）；也可用环境变量 BW_SRC 覆盖。
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.environ.get('BW_SRC') or os.path.dirname(HERE)
-EXE = sys.argv[1] if len(sys.argv) > 1 else os.path.join(SRC, '壁纸助手.exe')
+EXE = sys.argv[1] if len(sys.argv) > 1 else os.path.join(SRC, '桌面壁纸.exe')
 APP_NAME = '壁纸助手'
 DATA_DIR_NAME = '壁纸助手数据'
 LEGACY_APP_NAME = '微软壁纸助手'          # 改名迁移用例要用的老名
@@ -72,14 +73,14 @@ print('临时目录:', root)
 title('1. 全新安装 -> 数据落 LOCALAPPDATA, exe 旁边不多出任何东西')
 lad1 = os.path.join(root, 'lad1'); os.makedirs(lad1)
 prog1 = os.path.join(root, 'prog1'); os.makedirs(prog1)
-exe1 = os.path.join(prog1, '壁纸助手.exe')
+exe1 = os.path.join(prog1, '桌面壁纸.exe')
 shutil.copy2(EXE, exe1)
 r = run_exe(exe1, ['--stop'], lad1)
 check('exe 退出码 0', r.returncode == 0, r.returncode)
 want1 = os.path.join(lad1, APP_NAME)
 check('数据目录建在 LOCALAPPDATA 下', os.path.isdir(want1), want1)
 check('exe 旁边没有数据目录', not os.path.exists(os.path.join(prog1, DATA_DIR_NAME)))
-check('exe 旁边只有 exe 自己', sorted(os.listdir(prog1)) == ['壁纸助手.exe'], sorted(os.listdir(prog1)))
+check('exe 旁边只有 exe 自己', sorted(os.listdir(prog1)) == ['桌面壁纸.exe'], sorted(os.listdir(prog1)))
 check('daemon.stop 写在数据目录里(不在 exe 旁)', os.path.isfile(os.path.join(want1, 'daemon.stop')))
 
 # ============ 2. payload 释放 ============
@@ -102,7 +103,7 @@ check('launcher.txt 指向当前 exe', os.path.abspath(txt) == os.path.abspath(e
 title('3. exe 旁边有旧数据(老名「微软壁纸助手数据」) -> 自动搬走, 内容一致, 旧目录清掉')
 lad3 = os.path.join(root, 'lad3'); os.makedirs(lad3)
 prog3 = os.path.join(root, 'prog3'); os.makedirs(prog3)
-exe3 = os.path.join(prog3, '壁纸助手.exe')
+exe3 = os.path.join(prog3, '桌面壁纸.exe')
 shutil.copy2(EXE, exe3)
 old = os.path.join(prog3, LEGACY_DATA_DIR_NAME); os.makedirs(old)
 open(os.path.join(old, 'config.json'), 'w', encoding='utf-8').write('{"migrated":true}')
@@ -120,13 +121,13 @@ check('state.json 搬过来且内容一致',
 check('旧版脚本没被搬(新版重放)',
       open(os.path.join(want3, 'core.ps1'), encoding='utf-8', errors='replace').read() != '老版本的脚本')
 check('exe 旁旧目录已清掉', not os.path.exists(old))
-check('exe 旁只剩 exe', sorted(os.listdir(prog3)) == ['壁纸助手.exe'], sorted(os.listdir(prog3)))
+check('exe 旁只剩 exe', sorted(os.listdir(prog3)) == ['桌面壁纸.exe'], sorted(os.listdir(prog3)))
 
 # ============ 4. 便携模式 ============
 title('4. 便携模式 -> 数据跟着 exe 走, 不搬进 LOCALAPPDATA')
 lad4 = os.path.join(root, 'lad4'); os.makedirs(lad4)
 prog4 = os.path.join(root, 'prog4'); os.makedirs(prog4)
-exe4 = os.path.join(prog4, '壁纸助手.exe')
+exe4 = os.path.join(prog4, '桌面壁纸.exe')
 shutil.copy2(EXE, exe4)
 pd = os.path.join(prog4, DATA_DIR_NAME); os.makedirs(pd)
 open(os.path.join(pd, 'portable.txt'), 'w', encoding='utf-8').write('')
@@ -192,7 +193,7 @@ check('ico 的每一帧都原样进了 exe', not missing,
 title('7. %LOCALAPPDATA% 里只有老名目录 -> 第一次启动复制进新目录, 老目录保留不删')
 lad7 = os.path.join(root, 'lad7'); os.makedirs(lad7)
 prog7 = os.path.join(root, 'prog7'); os.makedirs(prog7)
-exe7 = os.path.join(prog7, '壁纸助手.exe')
+exe7 = os.path.join(prog7, '桌面壁纸.exe')
 shutil.copy2(EXE, exe7)
 old7 = os.path.join(lad7, LEGACY_APP_NAME); os.makedirs(old7)
 open(os.path.join(old7, 'config.json'), 'w', encoding='utf-8').write('{"from":"legacy-appdata"}')
@@ -214,7 +215,7 @@ check('老目录保留不删(回滚兜底)', os.path.isdir(old7))
 # ============ 8. launcher.txt 自愈: exe 挪窝/改名后仍指向真实路径 ============
 title('8. exe 换位置再启动 -> launcher.txt 自动改成新路径 (2026-10-12 审查 P1)')
 moved8 = os.path.join(root, 'moved8'); os.makedirs(moved8)
-exe8 = os.path.join(moved8, '壁纸助手-挪过了.exe')
+exe8 = os.path.join(moved8, '桌面壁纸-挪过了.exe')
 shutil.copy2(exe1, exe8)          # 用 1 里跑过的 exe(数据目录里已有 launcher.txt 旧值)
 r = run_exe(exe8, ['--stop'], lad1)
 check('exe 退出码 0', r.returncode == 0, r.returncode)

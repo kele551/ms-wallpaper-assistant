@@ -2,437 +2,799 @@
 <!--
   桌面壁纸 · 控制台
   作者: 海风（kele551）   https://gitcode.com/kele551/ms-wallpaper-assistant
-  说明: 由 menu.ps1 起本地服务后打开; 只与本机 127.0.0.1 通信, 不联网。
+  说明: 由 menu.ps1 起本地服务后打开; 只与本机 127.0.0.1 通信, 不联网、不引外部资源。
         页面里的 {{BWPANEL_TOKEN}} 由脚本在返回时替换成一次性令牌。
+  2026-10-24 UI 整改: 分「当前 / 图库 / 设置」三块(单页切换, 不路由);
+        图库走新接口 ?panel=gallery 与 ?panel=thumb(只读、只回数据目录里的图片、支持 304)。
+        倒计时环纯前端计时 —— 页面**不再轮询**本机服务(它是单线程手写 TcpListener)。
 -->
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#0a0c11">
+<meta name="theme-color" content="#171a20">
 <title>桌面壁纸 · 控制台</title>
 <style>
   :root{
-    --bg:#0a0c11; --card:#12161f; --card-2:#161b26;
-    --ink:#eef2f8; --ink-2:#a3adbe; --ink-3:#697385;
-    --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.14);
-    --brand:#6ee7a8; --brand-2:#3ddc97; --warn:#f0b95b; --bad:#ff7b7b;
-    --r:16px; --sh:0 18px 50px rgba(0,0,0,.5);
+    --font:"Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif;
+    --mono:"Cascadia Mono",Consolas,"Courier New",monospace;
+    /* 暗色(默认) = 石墨灰 */
+    --bg:#171a20; --bg-1:#1c2027; --card:#20252d; --card-2:#262d37;
+    --line:#303844; --line-2:#3e4856;
+    --txt:#e7ebf1; --txt-2:#a3aebe; --txt-3:#76818f;
+    --ok:#3ecf8e; --warn:#f0b429; --danger:#f2555a; --info:#4f8cff;
+    --accent:#35d07f; --accent-ink:#062016;
+    --fs-title:20px; --fs-h:14px; --fs-body:13px; --fs-meta:12px; --fs-micro:11px;
+    --r-card:10px; --r-btn:8px; --r-pill:999px;
+    --shadow-1:0 1px 0 rgba(0,0,0,.18); --shadow-2:0 14px 40px rgba(0,0,0,.45);
+    --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:20px; --sp-6:24px;
+    --knob:#fff; --on-art:#fff; --on-art-2:rgba(255,255,255,.78);
+    --scrim:rgba(6,9,14,.66); --scrim-2:rgba(6,9,14,.12);
+    --accent-soft:rgba(53,208,127,.14);
+    --accent-line:rgba(53,208,127,.45);
+    --ok-soft:rgba(62,207,142,.16); --warn-soft:rgba(240,180,41,.16); --danger-soft:rgba(242,85,90,.16);
+    /* 浏览器原生那部分（滚动条/表单控件/日期弹层）跟着主题走，
+       否则暗色面板配一条亮色滚动条。2026-10-24 四款一起补。 */
+    color-scheme:dark;
+  }
+  [data-theme="light"]{
+    --bg:#f3f5f9; --bg-1:#e9edf4; --card:#ffffff; --card-2:#f7f9fc;
+    --line:#e2e7ef; --line-2:#d3dae5;
+    --txt:#17202b; --txt-2:#5b6675; --txt-3:#8a96a5;
+    --ok:#12a150; --warn:#a86f00; --danger:#d13438; --info:#1a5fd0;
+    --accent:#0f9d58; --accent-ink:#fff;
+    --shadow-1:0 1px 0 rgba(16,30,54,.04); --shadow-2:0 18px 40px rgba(20,34,60,.14);
+    --scrim:rgba(4,10,18,.58); --scrim-2:rgba(4,10,18,.06);
+    --accent-soft:rgba(15,157,88,.12);
+    --accent-line:rgba(15,157,88,.42);
+    --ok-soft:rgba(18,161,80,.12); --warn-soft:rgba(168,111,0,.12); --danger-soft:rgba(209,52,56,.12);
+    color-scheme:light;
   }
   *{box-sizing:border-box}
-  body{
-    margin:0;min-height:100vh;color:var(--ink);
-    background:
-      radial-gradient(1100px 620px at 82% -14%, rgba(61,220,151,.14), transparent 58%),
-      radial-gradient(820px 520px at 4% 104%, rgba(88,140,255,.12), transparent 60%),
-      var(--bg);
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;
-    -webkit-font-smoothing:antialiased;
-    padding:22px clamp(14px,3vw,30px) 28px;
-  }
-  .wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--txt);font:var(--fs-body)/1.5 var(--font);-webkit-font-smoothing:antialiased}
+  h1,h2,h3,p{margin:0}
+  button,select,input{font:inherit;color:inherit}
+  button{cursor:pointer;background:none;border:0}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:8px;border:2px solid var(--bg)}
+  ::-webkit-scrollbar-track{background:transparent}
 
-  header{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
-  .brand{display:flex;align-items:center;gap:11px}
-  .logo{width:32px;height:32px;border-radius:10px;background:linear-gradient(140deg,var(--brand),#4aa8ff);
-        box-shadow:0 8px 22px rgba(61,220,151,.35);position:relative;flex:none}
-  .logo::after{content:"";position:absolute;inset:8px;border-radius:4px;background:var(--bg);opacity:.7}
-  .brand h1{margin:0;font-size:17px;letter-spacing:.4px}
-  .brand small{display:block;color:var(--ink-3);font-size:12px;font-weight:500;margin-top:3px}
-  .status{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--ink-2);flex-wrap:wrap}
-  .live{width:8px;height:8px;border-radius:50%;background:var(--brand);box-shadow:0 0 0 4px rgba(110,231,168,.16);flex:none}
-  .live.off{background:var(--bad);box-shadow:0 0 0 4px rgba(255,123,123,.16)}
+  .wrap{max-width:1160px;margin:0 auto;padding:var(--sp-5) var(--sp-5) var(--sp-6);
+        display:flex;flex-direction:column;gap:var(--sp-4)}
 
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-  @media(max-width:900px){ .grid{grid-template-columns:1fr} }
+  /* 顶栏 */
+  .top{display:flex;align-items:center;justify-content:space-between;gap:var(--sp-4);flex-wrap:wrap}
+  .brand{display:flex;align-items:center;gap:var(--sp-3);min-width:0}
+  .logo{width:36px;height:36px;border-radius:10px;background:var(--accent);color:var(--accent-ink);
+        display:grid;place-items:center;font-weight:700;font-size:15px;flex:none}
+  .brand h1{font-size:var(--fs-title);font-weight:650;letter-spacing:.2px}
+  .brand p{color:var(--txt-3);font-size:var(--fs-meta);margin-top:2px}
+  .top-r{display:flex;align-items:center;gap:var(--sp-2)}
 
-  .card{background:linear-gradient(170deg,var(--card-2),var(--card));border:1px solid var(--line);
-        border-radius:var(--r);box-shadow:var(--sh);overflow:hidden}
-  .card-h{display:flex;align-items:center;justify-content:space-between;gap:10px;
-          padding:14px 18px;border-bottom:1px solid var(--line)}
-  .card-h h2{margin:0;font-size:14px;letter-spacing:.3px}
-  .card-h .tag{font-size:11.5px;color:var(--ink-3)}
+  /* 分段控件(当前 / 图库 / 设置) */
+  .segbar{display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap}
+  .seg{display:inline-flex;gap:2px;padding:3px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--card)}
+  .seg-btn{height:28px;padding:0 var(--sp-4);border-radius:var(--r-pill);border:0;background:none;
+           color:var(--txt-2);font-size:var(--fs-meta);transition:color .15s,background .15s}
+  .seg-btn:hover{color:var(--txt)}
+  .seg-btn.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+  .seg-info{margin-left:auto;color:var(--txt-3);font-size:var(--fs-micro);font-family:var(--mono)}
+  .screen{display:none}
+  .screen.on{display:block;animation:fade .15s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
 
-  /* 当前壁纸那张卡片: 和右边等高, 多出来的高度给图片 —— 既对齐又不会留一片空白 */
-  /* 等高卡片: 缩略图区吃掉剩余高度（内容本身对齐到顶部），底部说明贴底 */
-  .card.fillcol{display:flex;flex-direction:column}
-  .card.fillcol .thumbs{flex:1 1 auto;min-height:0;align-content:start}
-  .card-hint{margin-top:auto;padding:2px 18px 14px;font-size:11.5px;color:var(--ink-3)}
-  .grid.tight{align-items:start}
-  .grid.equal{grid-template-columns:1fr 1fr}
-  /* 和图库并排时: 卡片填满这一行的高度, 缩略图在卡片内部滚动 —— 行不会被撑高 */
-  .card.lib{display:flex;flex-direction:column;overflow:hidden}
-  /* flex-basis 必须是 0: 用 auto 的话缩略图的内容高度会把整行撑高（行高就不再由「高级」决定） */
-  .card.lib{min-height:0}
-  .card.lib .thumbs{flex:1 1 0;min-height:0;overflow:auto;align-content:start}
-  .card.fill{display:flex;flex-direction:column}
-  .card.fill .hero{flex:1 1 auto;aspect-ratio:auto;min-height:240px}  .hero{position:relative;aspect-ratio:16/9;background:#0e1219;overflow:hidden}
-  .hero img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .5s ease}
-  .hero img.ready{opacity:1}
-  .hero .veil{position:absolute;inset:0;pointer-events:none;
-    background:linear-gradient(to top,rgba(6,8,12,.92),rgba(6,8,12,.35) 42%,rgba(6,8,12,.05) 70%)}
-  .hero .meta{position:absolute;left:18px;right:18px;bottom:14px;display:flex;align-items:flex-end;
-              justify-content:space-between;gap:12px}
-  .hero .meta h3{margin:0 0 5px;font-size:18px;letter-spacing:.3px;line-height:1.32;
-                 text-shadow:0 2px 18px rgba(0,0,0,.6);word-break:break-all}
-  .hero .meta p{margin:0;font-size:12.5px;color:var(--ink-2)}
-  .hero .badge{font-size:11.5px;padding:4px 10px;border-radius:999px;white-space:nowrap;
-    border:1px solid rgba(110,231,168,.4);color:var(--brand);background:rgba(110,231,168,.12)}
-  .hero .empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--ink-3);font-size:13px}
-  .actions{display:flex;gap:9px;flex-wrap:wrap;padding:14px 18px}
+  /* 通用组件 */
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r-card);padding:var(--sp-4);
+        box-shadow:var(--shadow-1)}
+  .card.pad0{padding:0;overflow:hidden}
+  .card-h{display:flex;align-items:center;gap:var(--sp-2);margin-bottom:var(--sp-3);flex-wrap:wrap}
+  .card-h h2{font-size:var(--fs-h);font-weight:600}
+  .card-h .right{margin-left:auto;display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap}
+  .muted{color:var(--txt-3)}
+  .mono{font-family:var(--mono);font-size:var(--fs-meta)}
+  .xs{font-size:var(--fs-micro)}
+  .t-lg{font-size:17px;font-weight:650}
 
-  .btn{padding:9px 15px;border-radius:11px;font-size:13.5px;border:1px solid var(--line-2);
-       background:rgba(255,255,255,.05);color:var(--ink);cursor:pointer;transition:.16s ease}
-  .btn:hover{background:rgba(255,255,255,.1)}
+  /* 2026-10-25（用户截图：控制台整页都是「—」）：连不上本机服务时，唯一的提示是顶栏
+     那颗小胶囊，一滚动就没影了，剩下满屏"读不到值"看着像程序坏了。真实原因是控制台
+     每从快捷图标打开一次就换一个随机端口、服务闲置约 30 分钟自动退出 —— 旧标签页永远
+     连不回去。所以在内容区顶部（三个视图都看得见）钉一条说明，把话说清楚。 */
+  .offnote{display:flex;flex-direction:column;gap:var(--sp-2);align-items:flex-start;
+           background:var(--danger-soft);border:1px solid var(--danger);border-radius:var(--r-card);
+           padding:var(--sp-4);margin-bottom:var(--sp-4)}
+  .offnote[hidden]{display:none}
+  .offnote b{font-size:var(--fs-h);color:var(--txt)}
+  .offnote span{font-size:var(--fs-body);color:var(--txt-2);line-height:1.7}
+
+  .pill{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 var(--sp-3);border-radius:var(--r-pill);
+        border:1px solid var(--line);font-size:var(--fs-micro);color:var(--txt-2);white-space:nowrap;background:var(--card-2)}
+  .pill i{width:6px;height:6px;border-radius:50%;background:var(--txt-3);flex:none}
+  .pill.ok i{background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
+  .pill.warn i{background:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)}
+  .pill.bad i{background:var(--danger);box-shadow:0 0 0 3px var(--danger-soft)}
+
+  .btn{height:30px;padding:0 var(--sp-3);border-radius:var(--r-btn);border:1px solid var(--line);
+       background:var(--card-2);color:var(--txt);font-size:var(--fs-meta);display:inline-flex;align-items:center;gap:6px;
+       transition:border-color .15s,background .15s,color .15s;white-space:nowrap}
+  .btn:hover{border-color:var(--line-2);background:var(--card)}
   .btn:disabled{opacity:.45;cursor:not-allowed}
-  .btn.pri{background:linear-gradient(140deg,var(--brand),var(--brand-2));color:#07230f;font-weight:700;
-           border-color:transparent;box-shadow:0 10px 24px rgba(61,220,151,.25)}
-  .btn.pri:hover{transform:translateY(-1px)}
-  .btn.ghost{background:transparent}
-  .btn.on{border-color:rgba(110,231,168,.55);color:var(--brand);background:rgba(110,231,168,.12)}
+  .btn.primary{background:var(--accent);border-color:transparent;color:var(--accent-ink);font-weight:600}
+  .btn.primary:hover{filter:brightness(1.07);background:var(--accent)}
+  .btn.ghost{background:transparent;border-color:transparent;color:var(--txt-2)}
+  .btn.ghost:hover{color:var(--txt);background:var(--card-2)}
+  .btn.danger{color:var(--danger);border-color:var(--danger)}
+  .btn.danger:hover{background:var(--danger-soft)}
+  .btn.sm{height:24px;padding:0 var(--sp-2);font-size:var(--fs-micro)}
+  .btn.icon{width:30px;padding:0;justify-content:center}
+  .btn.primary kbd{border-color:var(--accent-ink);color:var(--accent-ink);opacity:.7;background:transparent}
+  .btn svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+  .btn.on{border-color:var(--accent-line);color:var(--accent);background:var(--accent-soft)}
 
-  .rows{display:flex;flex-direction:column}
-  .row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 18px;
-       border-bottom:1px solid var(--line)}
-  .row:last-child{border-bottom:0}
-  .row .k{font-size:13.5px}
-  .row .k small{display:block;color:var(--ink-3);font-size:11.5px;margin-top:3px;line-height:1.5}
-  .row .v{display:flex;align-items:center;gap:9px;flex:none}
-  /* 档位这种"一排按钮"的行: 说明文字别和按钮抢宽度, 直接上下排 */
-  .row.stacked{display:block}
-  .row.stacked .v{margin-top:9px;justify-content:flex-start}
+  kbd{font:500 10px/1 var(--mono);color:var(--txt-3);border:1px solid var(--line-2);border-radius:5px;
+      padding:3px 5px;background:var(--card)}
 
-  .sw{width:42px;height:24px;border-radius:99px;background:rgba(255,255,255,.13);position:relative;
-      cursor:pointer;border:0;flex:none;transition:.18s}
-  .sw::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;
-             background:#fff;transition:.18s}
-  .sw.on{background:linear-gradient(140deg,var(--brand),var(--brand-2))}
-  .sw.on::after{left:21px}
+  .chip{height:26px;padding:0 var(--sp-3);border-radius:var(--r-pill);border:1px solid var(--line);
+        background:transparent;color:var(--txt-2);font-size:var(--fs-meta);display:inline-flex;align-items:center;gap:6px;
+        transition:background .15s,border-color .15s,color .15s;white-space:nowrap;cursor:pointer}
+  .chip:hover{color:var(--txt);border-color:var(--line-2)}
+  .chip.on{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent);font-weight:600}
+  .chip.add{border-style:dashed;color:var(--txt-3)}
+  .chiprow{display:flex;gap:6px;flex-wrap:wrap}
 
-  .slider{display:flex;align-items:center;gap:12px;padding:15px 18px;border-bottom:1px solid var(--line)}
-  input[type=range]{-webkit-appearance:none;appearance:none;flex:1;height:6px;border-radius:99px;
-    background:rgba(255,255,255,.12);outline:none}
+  .sw{width:36px;height:20px;border-radius:var(--r-pill);background:var(--line-2);position:relative;
+      flex:none;transition:background .18s;border:0}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
+             background:var(--knob);transition:transform .18s;box-shadow:0 1px 2px rgba(0,0,0,.35)}
+  .sw.on{background:var(--accent)}
+  .sw.on::after{transform:translateX(16px)}
+
+  /* 句子式设置行(标题 + 一句说明 + 控件)
+     2026-10-25 再收口（用户指着「高级」卡问"这样好看吗"）：这一卡里三种排版打架——
+     「版本」是标题左、值右；「数据目录」的「打开」被三行文字挤到行中间浮着；「操作」
+     又整行左对齐。根因是 .ctl 用 align-self:center，控件对齐的是**整行的中线**，
+     行里文字一多，控件就飘到半空。改成一律对齐**标题那一行**：
+     标题行高写死 28px（正好是最常用控件 .inp/.btn.sm 的高度），控件给 min-height:28px，
+     于是文字值、开关、输入框、按钮的垂直中心全落在同一条线上，右边界本来就贴着卡片内边距。 */
+  .set{display:flex;align-items:flex-start;gap:var(--sp-3);padding:var(--sp-3) 0;border-top:1px solid var(--line)}
+  .set:first-of-type{border-top:0}
+  .set .txt{flex:1;min-width:0}
+  .set .txt b{display:block;font-size:var(--fs-body);font-weight:550;line-height:28px}
+  .set .txt span{display:block;color:var(--txt-3);font-size:var(--fs-meta);margin-top:2px}
+  .set .ctl{align-self:flex-start;flex:none;min-height:28px;display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap;justify-content:flex-end}
+  .set.col{flex-direction:column;align-items:stretch}
+  /* 2026-10-25 对齐/收边：上面 .set .ctl 的 align-self 在竖排行里会赢过
+     .set.col 的 align-items:stretch，于是「补货/补齐」「本地文件夹图源」这些
+     整行排开的控件全部飘到卡片中间，和左边的标题对不上。这里把它掰回左对齐，
+     同时给 max-width:100% —— 长路径、长目录名换行收在卡片里，不再顶穿右边框。 */
+  .set.col .ctl{align-self:flex-start;justify-content:flex-start;max-width:100%;margin-top:var(--sp-2)}
+  .set.col .ctl .mono{text-align:left;overflow-wrap:anywhere}
+
+  .inp{height:28px;border-radius:var(--r-btn);border:1px solid var(--line-2);background:var(--card-2);
+       color:var(--txt);padding:0 var(--sp-2);font-size:var(--fs-meta);width:88px;text-align:right;
+       font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .selinp{height:28px;border-radius:var(--r-btn);border:1px solid var(--line-2);background:var(--card-2);
+       color:var(--txt);padding:0 var(--sp-2);font-size:var(--fs-meta)}
+  input[type=range]{-webkit-appearance:none;appearance:none;flex:1;height:6px;border-radius:var(--r-pill);
+       background:var(--line-2);outline:none;min-width:120px}
   input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;
-    background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.5);cursor:pointer}
-  input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;border-radius:50%;background:#fff;cursor:pointer}
-  .num{font-variant-numeric:tabular-nums;font-size:13.5px;min-width:70px;text-align:right}
-  .chips{display:flex;gap:6px;flex-wrap:wrap}
-  /* 必应模式: 整个档位组锁死(变灰 + 点不动) */
-  .chips.locked{opacity:.5;pointer-events:none;filter:grayscale(.4)}
+       background:var(--accent);box-shadow:0 2px 8px rgba(0,0,0,.4);cursor:pointer}
+  input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;border-radius:50%;background:var(--accent);cursor:pointer}
   input[type=range]:disabled{opacity:.45;cursor:not-allowed}
-  .chip{font-size:11.5px;padding:4px 9px;border-radius:8px;border:1px solid var(--line-2);
-        color:var(--ink-2);cursor:pointer;transition:.16s}
-  .chip:hover{color:var(--ink)}
-  .chip.on{border-color:rgba(110,231,168,.5);color:var(--brand);background:rgba(110,231,168,.1)}
+  .chiprow.locked{opacity:.5;pointer-events:none}
 
-  select{background:rgba(255,255,255,.06);color:var(--ink);border:1px solid var(--line-2);
-         border-radius:9px;padding:6px 9px;font-size:13px;font-family:inherit}
-  select:focus{outline:2px solid rgba(110,231,168,.5);outline-offset:1px}
+  /* 统计卡 */
+  .stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--sp-3)}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:var(--r-card);padding:var(--sp-3) var(--sp-4)}
+  .stat .k{color:var(--txt-3);font-size:var(--fs-micro);letter-spacing:.04em}
+  .stat .v{font-size:24px;font-weight:650;line-height:1.25;margin-top:var(--sp-1);
+           font-variant-numeric:tabular-nums}
+  .stat .v small{font-size:var(--fs-meta);font-weight:500;color:var(--txt-3);margin-left:var(--sp-1)}
+  .stat .d{font-size:var(--fs-micro);color:var(--txt-3);margin-top:2px}
 
-  .thumbs{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:14px 18px 16px}
-  @media(max-width:520px){ .thumbs{grid-template-columns:repeat(3,1fr)} }
-  .th{aspect-ratio:16/10;border-radius:10px;overflow:hidden;border:1px solid var(--line);
-      position:relative;cursor:pointer;background:#0e1219}
-  .th img{width:100%;height:100%;object-fit:cover;display:block;opacity:.86;transition:.18s}
-  .th:hover img{opacity:1}
-  .th.on{border-color:var(--brand);box-shadow:0 0 0 2px rgba(110,231,168,.35)}
-  .th .d{position:absolute;left:6px;bottom:5px;font-size:10.5px;color:#fff;background:rgba(0,0,0,.55);
-         padding:1px 6px;border-radius:5px}
-  .th .fav{position:absolute;right:5px;top:5px;font-size:11px;line-height:1;color:#ffd479;
-           background:rgba(0,0,0,.55);padding:3px 5px;border-radius:6px}
-  .none{padding:16px 18px;color:var(--ink-3);font-size:12.5px}
+  /* 进度条 / 倒计时环 */
+  .meter{height:6px;border-radius:var(--r-pill);background:var(--line);overflow:hidden;margin:var(--sp-3) 0 var(--sp-2)}
+  .meter i{display:block;height:100%;border-radius:var(--r-pill);background:var(--accent);width:0;
+           transition:width .15s linear}
+  .ring{width:52px;height:52px;border-radius:50%;flex:none;display:grid;place-items:center;
+        background:conic-gradient(var(--accent) calc(var(--p)*1%),var(--line) 0);position:relative;
+        transition:background .15s linear}
+  .ring::before{content:"";position:absolute;inset:5px;border-radius:50%;background:var(--card)}
+  .ring span{position:relative;font-size:var(--fs-h);font-weight:650;font-variant-numeric:tabular-nums;
+             display:inline-flex;align-items:baseline;gap:1px}
+  .ring small{font-size:var(--fs-micro);color:var(--txt-3);font-weight:400}
 
-  .log{padding:12px 18px 16px;font-size:11.5px;color:var(--ink-3);line-height:1.95;
-       font-family:ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-all;
-       max-height:132px;overflow:auto}
-  .log .hit{color:var(--ink-2)}
+  /* 当前壁纸大图 */
+  .art{position:relative;aspect-ratio:16/9;background:var(--bg-1);overflow:hidden}
+  .art img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .3s ease}
+  .art img.ready{opacity:1}
+  .art img:not([src]){visibility:hidden}
+  .art::after{content:"";position:absolute;inset:0;pointer-events:none;
+    background:linear-gradient(to top,var(--scrim),var(--scrim-2) 56%,transparent 82%)}
+  .art .cap{position:absolute;left:var(--sp-4);right:var(--sp-4);bottom:var(--sp-3);z-index:2}
+  .art .cap .badge{display:inline-block;font-size:var(--fs-micro);letter-spacing:.05em;color:var(--on-art);
+    background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.22);border-radius:var(--r-pill);
+    padding:3px var(--sp-2)}
+  .art .cap h3{color:var(--on-art);font-size:var(--fs-title);font-weight:650;margin-top:var(--sp-2);
+    text-shadow:0 2px 12px rgba(0,0,0,.45);word-break:break-all}
+  .art .cap p{color:var(--on-art-2);font-size:var(--fs-meta);margin-top:2px}
+  .art .empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--txt-3);
+    font-size:var(--fs-meta);z-index:1}
 
-  /* 页脚居中（用户 2026-10-23 要求）：署名一行、底部按钮一行，都居中 */
-  footer{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;
-         text-align:center;font-size:12px;color:var(--ink-3);padding:10px 2px 6px}
-  footer .links{display:flex;gap:16px;flex-wrap:wrap;justify-content:center}
-  footer .repo{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:center;
-               font-family:ui-monospace,Consolas,monospace;font-size:11.5px;color:var(--ink-3)}
-  footer .repo a{color:var(--ink-2);text-decoration:none;border-bottom:1px dotted rgba(255,255,255,.25)}
-  footer .repo a:hover{color:var(--brand);border-bottom-color:rgba(110,231,168,.6)}
-  footer .repo .sep{opacity:.5}
-  footer .repo .tagline{opacity:.75}
-  footer button.link{border:0;background:none;color:var(--ink-3);font-size:12px;cursor:pointer;padding:0;
-                     font-family:inherit;border-bottom:1px dotted rgba(255,255,255,.22)}
-  footer button.link:hover{color:var(--ink-2)}
+  .nextrow{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4) 0}
+  .nextrow .grow{flex:1;min-width:0}
+  .acts{display:flex;gap:var(--sp-2);flex-wrap:wrap;padding:var(--sp-3) var(--sp-4)}
+  .monrow{display:flex;align-items:center;gap:var(--sp-2);padding:0 var(--sp-4) var(--sp-4);flex-wrap:wrap}
+  .lbl{letter-spacing:.04em}
 
-  .toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,18px);
-         background:rgba(16,20,28,.96);border:1px solid var(--line);color:var(--ink);
-         padding:10px 16px;border-radius:12px;font-size:13px;opacity:0;pointer-events:none;
-         transition:.24s ease;z-index:9;box-shadow:var(--sh);max-width:min(520px,90vw)}
-  .toast.show{opacity:1;transform:translate(-50%,0)}
-  .toast.bad{border-color:rgba(255,123,123,.5);color:#ffd7d7}
-  .skeleton{background:linear-gradient(100deg,#141a24 20%,#1d2431 38%,#141a24 56%);
-            background-size:220% 100%;animation:sk 1.4s linear infinite}
-  @keyframes sk{to{background-position:-120% 0}}
+  /* 缩略图网格(16:10)
+     【2026-10-25 用户「文字比例不和谐」】原来一行 6 张：单张 112x70，悬停那排按钮
+     （设为壁纸 58px + 收藏 + 原图，共约 130px）比格子还宽，直接溢出到隔壁格、
+     第三个按钮被切掉 —— 看着就是"字比图大"。改成一行 4 张（约 170x106），
+     和下方图库 .gallery 的格子同一量级，按钮排得下、文字比例也就顺了。 */
+  .thumbs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--sp-2)}
+  .gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(152px,1fr));gap:var(--sp-2)}
+  .tile{position:relative;margin:0;aspect-ratio:16/10;border-radius:var(--r-btn);overflow:hidden;
+        border:1px solid var(--line);background:var(--bg-1);cursor:pointer;padding:0;
+        transition:border-color .15s,transform .15s}
+  .tile:hover{border-color:var(--accent);transform:translateY(-2px)}
+  .tile img{width:100%;height:100%;object-fit:cover;display:block}
+  .tile.sel{outline:2px solid var(--accent);outline-offset:1px}
+  .tile-d{position:absolute;left:6px;bottom:6px;font-size:var(--fs-micro);color:var(--on-art);
+    background:rgba(0,0,0,.45);border-radius:5px;padding:1px 5px;font-variant-numeric:tabular-nums}
+  .tile-star{position:absolute;right:6px;top:5px;font-size:var(--fs-micro);color:var(--warn);
+    background:rgba(0,0,0,.5);border-radius:5px;padding:1px 5px;line-height:1.3}
+  .tile-acts{position:absolute;left:0;right:0;bottom:0;display:flex;gap:var(--sp-1);padding:var(--sp-2);
+    background:linear-gradient(to top,var(--scrim),transparent);opacity:0;transform:translateY(4px);
+    transition:opacity .15s,transform .15s}
+  .tile:hover .tile-acts,.tile:focus-within .tile-acts{opacity:1;transform:none}
+  .tile-acts .btn{height:22px;padding:0 6px;font-size:var(--fs-micro)}
+  .empty{padding:var(--sp-5) var(--sp-4);text-align:center;color:var(--txt-3);font-size:var(--fs-meta);
+    display:flex;flex-direction:column;align-items:center;gap:var(--sp-2)}
+  .loadmore{display:flex;justify-content:center;padding-top:var(--sp-3)}
+
+  /* 2026-10-25 收边（「最近动作」末行被横切半截，用户截图）：
+     1) 断词从 break-all 换成 anywhere：中文按词断行，只有超长 URL / 长 token 这种没有
+        空格的东西才允许在任意位置断开，不再出现「版本 v / 2.4.1」这种断法。
+     2) 行高写死 18px，框高 = 7 行 + 边框。关键是**竖向内边距只能是 0 或 18px 的整数倍**：
+        overflow 的裁剪线在内边距盒上，底部那 8px 内边距也算可视区，于是第 8 行总会露出
+        上半截（实测 7~8px）；就算把它挪到顶部，钉到底时裁剪线又会落在某一行的中间
+        （实测上沿切 8px）。改成上下 0 之后，滚动到底的裁剪位置 = 18 的整数倍，
+        两头都正好压在行与行之间。以后要给日志框加呼吸感，请把内边距写成 18px 的整倍数。
+     3) 光对齐还不够：日志是从旧往新排的，框只放得下 7 行，停在顶部就等于把最新那条
+        藏在滚动条下面（截图里被切半截的正是最新那条）。渲染完钉到底见 renderLog()。
+     4) 2026-10-25 再改（用户："这个日志框可以再往下拉，对齐左边"）：
+        · 左对齐：框的边框本来就贴着卡片内容左沿，但**里面那 12px 横向内边距**把第一行字
+          顶到比「最近动作」标题还右 12px，看着就是没对齐。改成框往外扩 12px（负外边距）、
+          内边距仍 12px —— 边框离卡片边 4px，文字左沿和卡里所有文字同一条线。
+        · 往下拉：框高不再写死 7 行，改由 fitLog() 按卡片剩余空间取**整行**填到底
+          （等高网格里邻居卡片撑出来的空白，正好被它吃掉）。CSS 这里留 12 行做兜底。 */
+  .log{font:var(--fs-micro)/18px var(--mono);color:var(--txt-2);background:var(--bg-1);
+       border:1px solid var(--line);border-radius:var(--r-btn);padding:0 var(--sp-3);
+       margin:0 calc(var(--sp-3) * -1);
+       max-height:calc(18px*12 + 2px);overflow:auto;white-space:pre-wrap;
+       overflow-wrap:anywhere}
+
+  /* 库容条（下载卡底部）：名称 44px + 进度槽 + 右对齐数值，三行同宽同基线 */
+  .capbar{display:flex;flex-direction:column;gap:6px;margin-top:var(--sp-2)}
+  .capline{display:flex;align-items:center;gap:var(--sp-2);font-size:var(--fs-meta)}
+  .capline .capname{width:44px;flex:none;color:var(--txt-2)}
+  .capline .captrack{flex:1;min-width:60px;height:6px;border-radius:3px;background:var(--card-2);overflow:hidden}
+  .capline .captrack i{display:block;height:100%;width:0;border-radius:3px;background:var(--accent)}
+  .capline .captrack i.full{background:var(--warn)}
+  .capline .capnum{width:104px;flex:none;text-align:right;color:var(--txt-3);
+                   font-family:var(--mono);font-size:var(--fs-micro)}
+
+  .sk{background:linear-gradient(90deg,var(--line) 25%,var(--line-2) 37%,var(--line) 63%);
+      background-size:400% 100%;animation:sk 1.4s linear infinite;border-radius:5px;height:10px}
+  @keyframes sk{0%{background-position:100% 0}100%{background-position:-100% 0}}
+
+  .toast{position:fixed;left:50%;bottom:var(--sp-6);transform:translate(-50%,14px);opacity:0;pointer-events:none;
+    background:var(--card);border:1px solid var(--line-2);box-shadow:var(--shadow-2);border-radius:var(--r-btn);
+    padding:var(--sp-2) var(--sp-4);font-size:var(--fs-meta);z-index:40;max-width:min(560px,92vw);
+    transition:opacity .15s,transform .15s}
+  .toast.on{opacity:1;transform:translate(-50%,0)}
+  .toast.bad{border-color:var(--danger);color:var(--danger)}
+
+  .foot{display:flex;flex-direction:column;align-items:center;gap:var(--sp-2);text-align:center;
+        color:var(--txt-3);font-size:var(--fs-meta);padding-top:var(--sp-2)}
+  .foot .links{display:flex;gap:var(--sp-3);flex-wrap:wrap;justify-content:center}
+  .foot a{color:var(--txt-2);text-decoration:none;border-bottom:1px dotted var(--line-2)}
+  .foot a:hover{color:var(--accent);border-bottom-color:var(--accent-line)}
+  .foot .repo{font-family:var(--mono);font-size:var(--fs-micro);display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
+
+  .cols-2{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(300px,1fr);gap:var(--sp-4);align-items:start}
+  .col{display:flex;flex-direction:column;gap:var(--sp-4);min-width:0}
+  /* 2026-10-25（用户："这样好看吗"）：align-items:start 让同一行的两张卡各自高度，
+     「换图」卡到 1000px、「下载」卡到 830px，底边一高一低。改成 stretch 后同一行等高，
+     底边齐平；矮的那张多出来的空白在卡内，读起来是留白而不是错位。 */
+  .setgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--sp-4)}
+  .setfoot{margin-top:var(--sp-4);text-align:center}
+  @media (max-width:1000px){
+    .cols-2{grid-template-columns:minmax(0,1fr)}
+    .setgrid{grid-template-columns:minmax(0,1fr)}
+  }
+  @media (max-width:640px){
+    .wrap{padding:var(--sp-3) var(--sp-3) var(--sp-5)}
+    .thumbs{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .brand p{display:none}
+  }
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
+<script>
+/* 首屏观感（2026-10-24 加防闪 + 2026-10-25 把持久层从浏览器搬到 config.json）
+   两件老毛病一起治：
+   1) 防闪：<html> 上写死 data-theme="dark"，真主题原来要等 body 末尾才赋值 —— 系统浅色时
+      打开会先黑一下再变白。这段在 </head> 前就把明暗（和主色）定下来。
+   2) 别再丢：面板端口是每次开机现抢的随机口（实测同一台机器 10845 -> 38919），端口一变
+      就是另一个 origin，localStorage 里存的明暗/主色再也读不出来 —— 用户选过的等于静默丢失。
+      现在 core.ps1 出页面时把 config.json 里的值替换进 BWUI_THEME / BWUI_ACCENT 两个占位符。
+   取值口径（本页唯一一处，下面 themeMode() 和「外观」面板都走它）：
+      ?theme= 最优先（截图/验收用，不写记忆）
+      > 本次页面上刚点的
+      > 服务端下发的 seed（空串 = 服务端没意见）
+      > 本机 localStorage（升级前只有这一层的老用户，观感不变样）
+      > 跟随系统
+   这段只读不写；写入由页尾「外观」面板负责（同时落 localStorage 和 config.json）。 */
+(function(){
+  var TL = ['auto','light','dark'], AL = ['default','blue','green','violet','amber'];
+  function pick(v, list){
+    v = String(v === null || v === undefined ? '' : v).trim().toLowerCase();
+    return list.indexOf(v) >= 0 ? v : '';
+  }
+  /* 占位符没被替换（直接双击打开这个文件）时 pick 认不出来 -> 空串 = 没意见，不会把花括号当主题 */
+  var seedT = pick('{{BWUI_THEME}}', TL);
+  var seedA = pick('{{BWUI_ACCENT}}', AL);
+  var curM = '', curA = '';
+  function ls(k){ try { return localStorage.getItem(k) || ''; } catch(e){ return ''; } }
+  window.__BWUI = {
+    mode:   function(){ return curM || seedT || pick(ls('ui-theme-mode'), TL) || pick(ls('bw-theme'), ['light','dark']) || 'auto'; },
+    accent: function(){ return curA || seedA || pick(ls('ui-accent'), AL) || 'default'; },
+    sysTheme: function(){
+      try { return (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark'; }
+      catch(e){ return 'dark'; }
+    },
+    effTheme: function(){ var m = this.mode(); return (m === 'light' || m === 'dark') ? m : this.sysTheme(); },
+    /* 记在本机浏览器这一层（老键一并写，升级回来的用户观感不断档） */
+    setLS: function(obj){
+      try { for (var k in obj){ if (Object.prototype.hasOwnProperty.call(obj, k)) localStorage.setItem(k, obj[k]); } } catch(e){}
+      if (obj['ui-theme-mode']) curM = pick(obj['ui-theme-mode'], TL);
+      if (obj['ui-accent']) curA = pick(obj['ui-accent'], AL);
+    },
+    /* 落到 config.json：这样换端口、换浏览器、重开都还在。api() 是后面那段脚本里的函数，
+       这里只在用户点击后才调用，那时它已经定义好了。失败不拦界面（面板会 toast）。 */
+    persist: function(key, value){
+      var m = pick(value, key === 'panel_theme' ? TL : AL);
+      if (!m) return;
+      try { if (typeof api === 'function') api('set', { key: key, value: m })['catch'](function(){}); } catch(e){}
+    },
+    seedTheme: seedT, seedAccent: seedA
+  };
+  var U = window.__BWUI, R = document.documentElement;
+  try {
+    var q = String(location.search || '').match(/[?&]theme=(dark|light)\b/);
+    R.setAttribute('data-theme', q ? q[1] : U.effTheme());
+  } catch(e){}
+  try { var a = U.accent(); if (a !== 'default') R.setAttribute('data-accent', a); } catch(e){}
+})();
+</script>
 </head>
 <body>
 <div class="wrap">
 
-  <header>
+  <header class="top">
     <div class="brand">
-      <i class="logo"></i>
+      <span class="logo" aria-hidden="true">壁</span>
       <div>
-        <h1>桌面壁纸 · 控制台</h1>
-        <small id="versionLine">正在读取本机状态…</small>
+        <h1>桌面壁纸</h1>
+        <p>必应每日 + 微软聚焦 · 自动更换 · 绿色单文件</p>
       </div>
     </div>
-    <div class="status">
-      <i class="live" id="liveDot"></i>
-      <span id="statusLine">连接中…</span>
+    <div class="top-r">
+      <span class="pill" id="statusPill"><i></i><span id="statusText">连接中…</span></span>
+      <button class="btn ghost icon" id="themeBtn" title="切换明暗" aria-label="切换明暗">
+        <svg viewBox="0 0 24 24" id="themeIcon"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg>
+      </button>
     </div>
   </header>
 
-  <div class="grid">
-    <section class="card fill">
-      <div class="card-h">
-        <h2>当前壁纸</h2>
-        <span class="tag" id="curDate">—</span>
-      </div>
-      <div class="hero" id="hero">
-        <img id="heroImg" alt="">
-        <div class="veil"></div>
-        <div class="empty" id="heroEmpty" style="display:none">还没有设置过壁纸</div>
-        <div class="meta">
-          <div>
-            <h3 id="heroTitle">—</h3>
-            <p id="heroSub">—</p>
-          </div>
-          <span class="badge" id="heroBadge">—</span>
-        </div>
-      </div>
-      <div class="actions">
-        <button class="btn pri" id="btnSwap">立即换一张</button>
-        <button class="btn" id="btnFav">收藏这张</button>
-        <button class="btn ghost" id="btnOpenImg">看原图</button>
-      </div>
-    </section>
-
-    <section class="card">
-      <div class="card-h"><h2>更换节奏</h2><span class="tag" id="nextTip">—</span></div>
-      <div class="slider">
-        <input type="range" id="cyc" min="5" max="240" step="5" value="30" aria-label="换图间隔（分钟）">
-        <div class="num" id="cycNum">30 分钟</div>
-      </div>
-      <div class="rows">
-        <div class="row">
-          <div class="k">常用档位<small id="cycHint">点一下切换</small></div>
-          <div class="v chips" id="cycChips">
-            <span class="chip" data-v="10">10 分</span>
-            <span class="chip" data-v="30">30 分</span>
-            <span class="chip" data-v="60">1 小时</span>
-            <span class="chip" data-v="240">4 小时</span>
-            <span class="chip" data-v="720">12 小时</span>
-            <span class="chip" data-v="1440">24 小时</span>
-          </div>
-        </div>
-        <div class="row">
-          <div class="k">自动补新图<small>关掉就只在现有这些图里轮换</small></div>
-          <div class="v"><button class="sw" id="swAuto" aria-label="自动补新图"></button></div>
-        </div>
-        <div class="row">
-          <div class="k">只在收藏里轮换<small>只挑你收藏过的图来换</small></div>
-          <div class="v"><button class="sw" id="swFav" aria-label="只在收藏里轮换"></button></div>
-        </div>
-        <div class="row">
-          <div class="k">下载画质<small>自动 = 1080p 屏只下 1080p，省一半空间</small></div>
-          <div class="v">
-            <select id="selRes">
-              <option value="auto">按屏幕自动</option>
-              <option value="uhd">固定 4K</option>
-            </select>
-          </div>
-        </div>
-        <div class="row">
-          <div class="k">壁纸填充方式<small>跟系统"填充/适应"等价</small></div>
-          <div class="v">
-            <select id="selStyle">
-              <option value="fill">填充</option>
-              <option value="fit">适应</option>
-              <option value="stretch">拉伸</option>
-              <option value="center">居中</option>
-              <option value="tile">平铺</option>
-              <option value="span">跨区</option>
-              <option value="keep">跟随系统（不改）</option>
-            </select>
-          </div>
-        </div>
-        <div class="row">
-          <div class="k">小图不放大<small>开 = 1:1 居中 + 同图模糊底；关 = 拉大铺满（会糊）</small></div>
-          <div class="v"><button class="sw" id="swFit" aria-label="小图不放大"></button></div>
-        </div>
-        <div class="row stacked">
-          <div class="k">更换模式<small id="modeHint">—</small></div>
-          <div class="v chips">
-            <span class="chip" id="modeFocus" data-mode="focus">聚焦模式</span>
-            <span class="chip" id="modeBing" data-mode="bing">必应模式</span>
-          </div>
-        </div>
-      </div>
-    </section>
+  <div class="segbar">
+    <div class="seg" role="tablist" aria-label="视图">
+      <button class="seg-btn on" data-screen="now" role="tab" aria-selected="true">当前</button>
+      <button class="seg-btn" data-screen="lib" role="tab" aria-selected="false">图库</button>
+      <button class="seg-btn" data-screen="set" role="tab" aria-selected="false">设置</button>
+    </div>
+    <span class="seg-info" id="segInfo">正在读取本机状态…</span>
   </div>
 
-  <div class="grid">
-    <section class="card fillcol">
-      <div class="card-h"><h2>最近用过的</h2><span class="tag">点一下设为壁纸</span></div>
-      <div class="thumbs" id="hist"></div>
-      <div class="none" id="histNone" style="display:none">还没有换过图</div>
-      <div class="card-hint">最多显示最近 12 张；想找更早的，用右边的「浏览图库」</div>
-    </section>
+  <main>
+    <!-- 连不上本机服务时才会显示（默认 hidden），三个视图都在它下面，见 .offnote 注释 -->
+    <div class="offnote" id="offNote" hidden>
+      <b>这一页没连上本机服务，所以下面全是「—」</b>
+      <span>不是壁纸出了故障：控制台每从「桌面壁纸」图标打开一次就换一个随机端口，服务闲置约 30 分钟也会自动退出，
+        旧标签页从此连不回去。重新双击一次「桌面壁纸」（桌面上的图标、任务栏上钉着的那个、或者那个 exe，
+        哪个顺手用哪个），就会开出一页新的控制台。</span>
+      <span>服务还活着的时候点「重试」也能连回来。<i id="offWhy" class="muted xs"></i></span>
+      <button class="btn sm" id="offRetry">重试</button>
+    </div>
+    <!-- ============ 1. 当前 ============ -->
+    <section class="screen on" id="s-now">
+      <div class="cols-2">
+        <div class="col">
+          <div class="card pad0">
+            <div class="art" id="hero">
+              <img id="heroImg" alt="">
+              <div class="empty" id="heroEmpty">正在读取本机状态…</div>
+              <div class="cap">
+                <span class="badge" id="heroBadge">当前壁纸</span>
+                <h3 id="heroTitle">—</h3>
+                <p id="heroSub">—</p>
+              </div>
+            </div>
+            <div class="acts">
+              <button class="btn primary" id="btnSwap">立即换一张 <kbd>Space</kbd></button>
+              <button class="btn" id="btnFav">收藏 <kbd>F</kbd></button>
+              <button class="btn" id="btnOpenImg">看原图</button>
+            </div>
+            <div class="monrow">
+              <span class="muted xs lbl">显示器</span>
+              <span class="chip on" id="chipScreen" title="多屏支持暂不做">主屏 —</span>
+              <span class="muted xs" title="多屏支持暂不做">多屏待做</span>
+            </div>
+          </div>
 
-    <section class="card fillcol">
-      <div class="card-h"><h2>收藏</h2><span class="tag" id="favTag">0 张</span></div>
-      <div class="thumbs" id="favs"></div>
-      <div class="none" id="favNone" style="display:none">还没有收藏，看中哪张点上面的「收藏这张」</div>
-      <div class="card-hint">最多显示 24 张；打开「只在收藏里轮换」后，自动换图只从这些里挑</div>
-    </section>
-  </div>
-
-  <div class="grid equal">
-    <section class="card">
-      <div class="card-h"><h2>高级</h2><span class="tag">改错了可以点下面的"打开数据目录"手动还原</span></div>
-      <div class="rows">
-        <div class="row">
-          <div class="k">开机自动换<small id="autoHint">关 = 登录后不会自己换</small></div>
-          <div class="v"><button class="sw" id="swAutoStart" aria-label="开机自动换"></button></div>
-        </div>
-        <div class="row">
-          <div class="k">桌面快捷方式（也可放进工具栏文件夹）<small id="deskHint">关掉会删掉那个图标</small></div>
-          <div class="v"><button class="sw" id="swDesk" aria-label="桌面快捷方式"></button></div>
-        </div>
-        <div class="row">
-          <div class="k">图库上限<small>0 = 不限；超了会淘汰最老的</small></div>
-          <div class="v"><input type="number" id="numLib" min="0" max="2000" step="10"
-                 style="width:86px;background:rgba(255,255,255,.06);color:var(--ink);border:1px solid var(--line-2);border-radius:9px;padding:6px 9px;font-family:inherit;font-size:13px"></div>
-        </div>
-        <div class="row">
-          <div class="k">必应库上限<small>0 = 不限</small></div>
-          <div class="v"><input type="number" id="numBing" min="0" max="2000" step="10"
-                 style="width:86px;background:rgba(255,255,255,.06);color:var(--ink);border:1px solid var(--line-2);border-radius:9px;padding:6px 9px;font-family:inherit;font-size:13px"></div>
-        </div>
-        <div class="row">
-          <div class="k">每轮抓几张<small>一轮补几张聚焦图（1–50）</small></div>
-          <div class="v"><input type="number" id="numRound" min="1" max="50" step="1"
-                 style="width:86px;background:rgba(255,255,255,.06);color:var(--ink);border:1px solid var(--line-2);border-radius:9px;padding:6px 9px;font-family:inherit;font-size:13px"></div>
-        </div>
-        <div class="row">
-          <div class="k">单张下载超时<small>秒；慢图床到点就放弃、换下一张</small></div>
-          <div class="v"><input type="number" id="numTimeout" min="0" max="300" step="5"
-                 style="width:86px;background:rgba(255,255,255,.06);color:var(--ink);border:1px solid var(--line-2);border-radius:9px;padding:6px 9px;font-family:inherit;font-size:13px"></div>
-        </div>
-        <div class="row">
-          <div class="k">队列剩余<small>还能按顺序换多少张；剩 2 张时会自动补</small></div>
-          <div class="v" id="queueNum" style="color:var(--ink-2);font-size:13px">—</div>
-        </div>
-        <div class="row">
-          <div class="k">累计下载<small>从装上这个程序那天算起</small></div>
-          <div class="v" id="dlTotal" style="color:var(--ink-2);font-size:13px">—</div>
-        </div>
-        <div class="row">
-          <div class="k">不是程序下载的图<small>你自己放进库的；只做记号，不会换到桌面上</small></div>
-          <div class="v" id="strangers" style="color:var(--ink-2);font-size:13px">—</div>
-        </div>
-        <div class="row">
-          <div class="k">库里有多少<small>必应库 / 聚焦库</small></div>
-          <div class="v" id="poolCounts" style="color:var(--ink-2);font-size:13px">—</div>
-        </div>
-        <div class="row">
-          <div class="k">源池状态<small>取图池还剩多少新图</small></div>
-          <div class="v" id="poolLine" style="color:var(--ink-2);font-size:12.5px;text-align:right;max-width:62%">—</div>
-        </div>
-        <div class="row">
-          <div class="k">补货 / 补齐<small>在后台跑，进度看右下角"最近动作"</small></div>
-          <div class="v chips">
-            <span class="chip" id="jobRefill">补几张新图</span>
-            <span class="chip" id="jobBackfill">补漏必应</span>
-            <span class="chip" id="jobArchive">补齐某月</span>
+          <div class="card">
+            <div class="card-h">
+              <h2>最近换过</h2>
+              <span class="muted xs">点一下设为壁纸</span>
+              <div class="right"><button class="btn ghost sm" id="btnAll">全部 ›</button></div>
+            </div>
+            <div class="thumbs" id="hist"></div>
+            <div class="empty" id="histEmpty" style="display:none">还没有换过图</div>
           </div>
         </div>
-        <div class="row">
-          <div class="k">重置源池记录<small>只清下载记录，不动图片文件；之后可能重复下到看过的图</small></div>
-          <div class="v"><span class="chip" id="jobReset">清空记录</span></div>
-        </div>
-        <div class="row">
-          <div class="k">壁纸保存位置<small>改到别的盘会把「必应」「聚焦」两个库搬过去</small></div>
-          <div class="v chips">
-            <span class="chip" id="btnMoveBase">换位置…</span>
+
+        <div class="col">
+          <div class="card">
+            <div class="card-h">
+              <h2>更换节奏</h2>
+              <span class="pill ok"><i></i><span id="cycPill">—</span></span>
+            </div>
+            <div class="chiprow" id="cycChips">
+              <button class="chip cyc-chip" data-v="10">10 分</button>
+              <button class="chip cyc-chip" data-v="30">30 分</button>
+              <button class="chip cyc-chip" data-v="60">1 小时</button>
+              <button class="chip cyc-chip" data-v="240">4 小时</button>
+              <button class="chip cyc-chip" data-v="720">12 小时</button>
+              <button class="chip cyc-chip" data-v="1440">24 小时</button>
+            </div>
+            <div class="meter"><i id="cycMeter"></i></div>
+            <p class="muted xs" id="cycHint">—</p>
+          </div>
+
+          <div class="stats">
+            <div class="stat"><div class="k">图库</div><div class="v" id="statLib">—</div><div class="d">必应 + 聚焦</div></div>
+            <div class="stat"><div class="k">收藏</div><div class="v" id="statFav">—</div><div class="d">打开「只看收藏」单独看</div></div>
+            <div class="stat"><div class="k">队列剩余</div><div class="v" id="statQueue">—</div><div class="d">剩 2 张时自动补</div></div>
+            <div class="stat"><div class="k">累计下载</div><div class="v" id="statDl">—</div><div class="d">从装上那天算起</div></div>
           </div>
         </div>
       </div>
     </section>
 
-    <section class="card lib">
-    <div class="card-h">
-      <h2>浏览图库</h2>
-      <span class="tag" id="libTag">—</span>
-    </div>
-    <div style="display:flex;gap:8px;padding:12px 18px 0;flex-wrap:wrap">
-      <span class="chip on" id="libBing" data-src="bing">必应库</span>
-      <span class="chip" id="libSpot" data-src="spotlight">聚焦库</span>
-      <span class="chip" id="libMore" style="margin-left:auto">加载更多</span>
-    </div>
-    <div class="thumbs" id="lib" style="padding-top:12px"></div>
-    <div class="none" id="libNone" style="display:none">
-      <span id="libNoneText">这个库里还没有图</span>
-      <span class="chip" id="libOpenDir" style="margin-left:8px">打开这个库的文件夹</span>
-    </div>
-  </section>
-  </div>
+    <!-- ============ 2. 图库 ============ -->
+    <section class="screen" id="s-lib">
+      <div class="card">
+        <div class="card-h">
+          <h2>图库</h2>
+          <span class="muted xs" id="libCount">—</span>
+          <div class="right">
+            <span class="chip on lib-chip" data-src="all">全部</span>
+            <span class="chip lib-chip" data-src="bing">必应</span>
+            <span class="chip lib-chip" data-src="spotlight">聚焦</span>
+            <span class="chip lib-chip" data-src="local" id="libLocalChip" style="display:none">本地文件夹</span>
+            <button class="btn ghost sm" id="libFav">只看收藏</button>
+            <button class="btn ghost sm" id="libOpenDir">打开这个库的文件夹</button>
+            <button class="btn ghost sm" id="libReload">刷新</button>
+          </div>
+        </div>
+        <div class="gallery" id="lib"></div>
+        <div class="empty" id="libEmpty" style="display:none">
+          <span id="libEmptyText">正在读取图库…</span>
+          <button class="btn sm" id="libEmptyBtn">重新读一次</button>
+        </div>
+        <div class="loadmore" id="libMoreWrap" style="display:none">
+          <button class="btn ghost sm" id="libMore">加载更多</button>
+        </div>
+        <p class="muted xs" id="libHint" style="margin-top:var(--sp-3)">
+          点缩略图直接设为壁纸；鼠标移上去有「设为壁纸 / 收藏 / 看原图」。缩略图走本机服务，支持缓存。
+        </p>
+      </div>
+    </section>
 
-  <section class="card">
-    <div class="card-h"><h2>最近动作</h2><span class="tag">只在本机</span></div>
-    <div class="log" id="logBox">—</div>
-  </section>
+    <!-- ============ 3. 设置 ============ -->
+    <section class="screen" id="s-set">
+      <div class="setgrid">
+        <div class="card">
+          <div class="card-h"><h2>换图</h2><span class="muted xs">多久换一次、按什么顺序换</span></div>
+          <div class="set">
+            <div class="txt"><b>更换节奏</b><span id="setCycHint">每多少分钟自动换一张</span></div>
+            <div class="ctl"><span class="num muted" id="setCycNum">—</span></div>
+          </div>
+          <div class="set col">
+            <input type="range" id="setCyc" min="5" max="240" step="5" value="30" aria-label="换图间隔（分钟）">
+            <div class="chiprow" id="setCycChips" style="margin-top:var(--sp-2)">
+              <span class="chip cyc-chip" data-v="10">10 分</span>
+              <span class="chip cyc-chip" data-v="30">30 分</span>
+              <span class="chip cyc-chip" data-v="60">1 小时</span>
+              <span class="chip cyc-chip" data-v="240">4 小时</span>
+              <span class="chip cyc-chip" data-v="720">12 小时</span>
+              <span class="chip cyc-chip" data-v="1440">24 小时</span>
+            </div>
+          </div>
+          <div class="set">
+            <div class="txt"><b>自动补新图</b><span>关掉就只在现有图库里轮换</span></div>
+            <div class="ctl"><button class="sw" id="swAuto" aria-label="自动补新图"></button></div>
+          </div>
+          <div class="set">
+            <div class="txt"><b>只在收藏里轮换</b><span>只挑你收藏过的图来换</span></div>
+            <div class="ctl"><button class="sw" id="swFav" aria-label="只在收藏里轮换"></button></div>
+          </div>
+          <div class="set col">
+            <div class="txt"><b>更换模式</b><span id="modeHint">—</span></div>
+            <div class="ctl">
+              <span class="chip" id="modeFocus" data-mode="focus">聚焦模式</span>
+              <span class="chip" id="modeBing" data-mode="bing">必应模式</span>
+            </div>
+          </div>
+          <div class="set">
+            <div class="txt"><b>队列剩余</b><span>还能按顺序换多少张；剩 2 张时会自动补</span></div>
+            <div class="ctl"><span class="num muted" id="queueNum">—</span></div>
+          </div>
+          <div class="set">
+            <div class="txt"><b>源池状态</b><span>取图池还剩多少新图</span>
+              <!-- 同上：这句「抓到尽头 / 进入老图循环」最长有四五十字，
+                   以前挤在右列里两边都变形，改成标题下面整行铺开。 -->
+              <div class="muted xs" id="poolLine" style="margin-top:4px;overflow-wrap:anywhere">—</div>
+            </div>
+          </div>
+          <div class="set col">
+            <div class="txt"><b>补货 / 补齐</b><span>在后台跑，进度看下面的「最近动作」</span></div>
+            <div class="ctl">
+              <span class="chip" id="jobRefill">补几张新图</span>
+              <span class="chip" id="jobBackfill">补漏必应</span>
+              <span class="chip" id="jobArchive">补齐某月</span>
+              <span class="chip" id="jobReset">清空源池记录</span>
+            </div>
+          </div>
+          <div class="set col">
+            <div class="txt"><b>本地文件夹图源</b><span id="localHint">把你自己的照片文件夹也接进来：只记文件名，不搬、不复制、不删；只收 jpg / png / bmp</span></div>
+            <div class="ctl" style="flex-wrap:wrap">
+              <span class="mono muted" id="localDir" style="overflow-wrap:anywhere">未启用</span>
+              <span class="muted xs" id="localCount">—</span>
+            </div>
+          </div>
+          <div class="set col">
+            <div class="txt"><b>换一个文件夹 / 重新扫一遍</b><span>不做目录监听：新丢进去的图，点一下「重新扫一遍」才进队列（一次最多进队 300 张）</span></div>
+            <div class="ctl">
+              <span class="chip" id="btnLocalPick">选目录…</span>
+              <span class="chip" id="btnLocalScan">重新扫一遍</span>
+              <span class="chip" id="btnLocalOpen">打开这个文件夹</span>
+              <span class="chip" id="btnLocalOff">关掉本地图源</span>
+            </div>
+          </div>
+        </div>
 
+        <div class="card">
+          <div class="card-h"><h2>下载</h2><span class="muted xs">画质、张数与回收</span></div>
+          <div class="set">
+            <div class="txt"><b>下载画质</b><span>自动 = 1080p 屏只下 1080p，省一半空间</span></div>
+            <div class="ctl">
+              <select class="selinp" id="selRes">
+                <option value="auto">按屏幕自动</option>
+                <option value="uhd">固定 4K</option>
+              </select>
+            </div>
+          </div>
+          <div class="set">
+            <div class="txt"><b>图库上限</b><span>0 = 不限；超了把看过的、最老的移进回收站</span></div>
+            <div class="ctl"><input class="inp" type="number" id="numLib" min="0" max="2000" step="10"></div>
+          </div>
+          <div class="set">
+            <div class="txt"><b>必应库上限</b><span>0 = 不限</span></div>
+            <div class="ctl"><input class="inp" type="number" id="numBing" min="0" max="2000" step="10"></div>
+          </div>
+          <div class="set">
+            <div class="txt"><b>每轮抓几张</b><span>一轮补几张聚焦图（1–50）</span></div>
+            <div class="ctl"><input class="inp" type="number" id="numRound" min="1" max="50" step="1"></div>
+          </div>
+          <div class="set">
+            <div class="txt"><b>单张下载超时</b><span>秒；慢图床到点就放弃、换下一张</span></div>
+            <div class="ctl"><input class="inp" type="number" id="numTimeout" min="0" max="300" step="5"></div>
+          </div>
+          <div class="set">
+            <div class="txt"><b>单轮抓取上限</b><span>一轮最多抓几张（硬上限）</span></div>
+            <div class="ctl"><input class="inp" type="number" id="numRoundCap" min="1" max="50" step="1"></div>
+          </div>
+          <div class="set">
+            <div class="txt"><b>每日抓取上限</b><span>跨菜单 / 后台 / 面板统一算，换天归零</span></div>
+            <div class="ctl"><input class="inp" type="number" id="numDayCap" min="1" max="200" step="1"></div>
+          </div>
+          <div class="set">
+            <div class="txt"><b>老图回收间隔</b><span>同一张图至少隔这么多天才再轮到</span></div>
+            <div class="ctl"><input class="inp" type="number" id="numRecycle" min="0" max="365" step="1"></div>
+          </div>
+          <div class="set">
+            <div class="txt"><b>累计下载</b><span>从装上这个程序那天算起</span></div>
+            <div class="ctl"><span class="muted" id="dlTotal">—</span></div>
+          </div>
+          <div class="set">
+            <div class="txt"><b>不是程序下载的图</b><span>你自己放进库的；只做记号，不会换到桌面上</span></div>
+            <div class="ctl"><span class="muted" id="strangers">—</span></div>
+          </div>
+          <div class="set">
+            <div class="txt"><b>库里有多少</b><span>必应库 / 聚焦库（本地图源另算）</span></div>
+            <div class="ctl"><span class="muted" id="poolCounts">—</span></div>
+          </div>
+          <!-- 2026-10-25（用户指着这张卡底下的空白说"这里可以加点内容"）：等高网格让矮的
+               一张卡空出 ~145px。与其留白，不如把上面两个上限输入框和实际张数画成三条库容
+               条 —— 必应/聚焦/本地各一行，到顶会变黄，比再堆两行文字有用。 -->
+          <div class="set col">
+            <div class="txt"><b>库容</b><span>已用 / 上限；到顶会把最老的移进回收站，上限填 0 = 不限</span></div>
+            <div class="capbar">
+              <div class="capline"><span class="capname">必应</span><span class="captrack"><i id="capBingBar"></i></span><span class="capnum" id="capBing">—</span></div>
+              <div class="capline"><span class="capname">聚焦</span><span class="captrack"><i id="capSpotBar"></i></span><span class="capnum" id="capSpot">—</span></div>
+              <div class="capline"><span class="capname">本地</span><span class="captrack"><i id="capLocalBar"></i></span><span class="capnum" id="capLocal">—</span></div>
+            </div>
+          </div>
+        </div>
 
+        <div class="card">
+          <div class="card-h"><h2>桌面</h2><span class="muted xs">跟系统桌面有关的几项</span></div>
+          <div class="set">
+            <div class="txt"><b>壁纸填充方式</b><span>跟系统「填充 / 适应」等价</span></div>
+            <div class="ctl">
+              <select class="selinp" id="selStyle">
+                <option value="fill">填充</option>
+                <option value="fit">适应</option>
+                <option value="stretch">拉伸</option>
+                <option value="center">居中</option>
+                <option value="tile">平铺</option>
+                <option value="span">跨区</option>
+                <option value="keep">跟随系统（不改）</option>
+              </select>
+            </div>
+          </div>
+          <!-- 2026-10-25 补：程序第一次改这个值之前会把你的原值记在 config.json 里,
+               这里给那条记录一个出口。没有记录时按钮灰着，点了也不会有任何动作。 -->
+          <div class="set">
+            <div class="txt"><b>还原我原来的填充方式</b><span id="origHint">程序第一次改这个值前会记下你的原值</span></div>
+            <div class="ctl"><button class="btn ghost" id="btnRestoreStyle">还原</button></div>
+          </div>
+          <div class="set">
+            <div class="txt"><b>小图不放大</b><span>开 = 1:1 居中 + 同图模糊底；关 = 拉大铺满（会糊）</span></div>
+            <div class="ctl"><button class="sw" id="swFit" aria-label="小图不放大"></button></div>
+          </div>
+          <div class="set">
+            <div class="txt"><b>桌面快捷方式</b><span id="deskHint">关掉会删掉那个图标</span></div>
+            <div class="ctl"><button class="sw" id="swDesk" aria-label="桌面快捷方式"></button></div>
+          </div>
+          <div class="set">
+            <div class="txt"><b>开机自动换</b><span id="autoHint">关 = 登录后不会自己换</span></div>
+            <div class="ctl"><button class="sw" id="swAutoStart" aria-label="开机自动换"></button></div>
+          </div>
+          <div class="set">
+            <div class="txt"><b>壁纸保存位置</b><span>改到别的盘会把「必应」「聚焦」两个库搬过去</span></div>
+            <div class="ctl"><span class="chip" id="btnMoveBase">换位置…</span></div>
+          </div>
+          <div class="set">
+            <div class="txt"><b>显示器</b><span>本轮只按主屏来；多屏支持暂不做</span></div>
+            <div class="ctl"><span class="chip" id="chipScreen2" title="多屏支持暂不做">主屏 —</span></div>
+          </div>
+          <!-- 2026-10-25（用户："日志框再往下拉"）：日志能显示几行，取决于左边「桌面」卡多高
+               （等高网格）。而「上次换上 / 累计换到桌面」这两个数本来就有、以前哪都没露过
+               —— 补在这里，既是有用的信息，也把日志框顶到 11~12 行。 -->
+          <div class="set">
+            <div class="txt"><b>上次换上</b><span>最近一次真正贴到桌面的时间</span></div>
+            <div class="ctl"><span class="muted" id="lastSwapLine">—</span></div>
+          </div>
+          <div class="set">
+            <div class="txt"><b>累计换到桌面</b><span>装上天数里换过的总次数（同一张重复算）</span></div>
+            <div class="ctl"><span class="num muted" id="shownNum">—</span></div>
+          </div>
+        </div>
 
-  <footer>
-    <span>海风（kele551）　·　图片版权归原提供方，仅个人桌面使用</span>
-    <div class="repo">
-      项目地址
-      <a href="https://gitcode.com/kele551/ms-wallpaper-assistant" target="_blank" rel="noopener">gitcode.com/kele551/ms-wallpaper-assistant</a>
-      <span class="tagline">（主源）</span>
-    </div>
-    <div class="repo">
-      镜像
-      <a href="https://github.com/kele551/ms-wallpaper-assistant" target="_blank" rel="noopener">github.com/kele551/ms-wallpaper-assistant</a>
-      <span class="sep">·</span>
-      <a href="https://atomgit.com/kele551/ms-wallpaper-assistant" target="_blank" rel="noopener">atomgit.com/kele551/ms-wallpaper-assistant</a>
-    </div>
-    <div class="links">
-      <button class="link" id="btnCheckUpd">检查更新</button>
-      <button class="link" id="btnOpenDir">打开数据目录</button>
-      <button class="link" id="btnRefresh">刷新状态</button>
-      <button class="link" id="btnQuit">退出控制台</button>
-    </div>
+        <div class="card">
+          <div class="card-h"><h2>高级</h2><span class="muted xs">看状态 / 排错用</span></div>
+          <div class="set">
+            <div class="txt"><b>版本</b><span>脚本与主程序各自的版本号</span></div>
+            <div class="ctl"><span class="mono muted" id="versionLine">—</span></div>
+          </div>
+          <div class="set">
+            <div class="txt"><b>数据目录</b><span>config.json / state.json / 日志都在这里</span>
+              <!-- 2026-10-25 收边：这条路径以前塞在右边那一列（还限了 70% 宽），
+                   卡片一窄就把「数据目录」那两行字压成三四行，路径自己又顶到右边框。
+                   挪到标题下面独占一行，长路径在卡片内换行，左右都不贴边。 -->
+              <div class="mono muted xs" id="dirsLine" style="margin-top:4px;overflow-wrap:anywhere">—</div>
+            </div>
+            <div class="ctl">
+              <button class="btn sm" id="btnOpenDir2" title="在资源管理器里打开数据目录">打开</button>
+            </div>
+          </div>
+          <!-- 「操作」以前是 .set.col（按钮独占一行、左对齐），和同一张卡里
+               「版本 / 数据目录」的"值贴右边界"是两种语法，看着像漏了一行。三个小按钮
+               一共 ~250px，放得进右列，所以收回普通行，跟标题同一水平线。 -->
+          <div class="set">
+            <div class="txt"><b>操作</b><span>检查更新走的是线上升级源；改错了可以手动还原</span></div>
+            <div class="ctl">
+              <button class="btn sm" id="btnCheckUpd">检查更新</button>
+              <button class="btn sm" id="btnRefresh">刷新状态</button>
+              <button class="btn sm danger" id="btnQuit">退出控制台</button>
+            </div>
+          </div>
+          <div class="set col">
+            <div class="txt"><b>最近动作</b><span>只在本机，最近几行日志</span></div>
+            <div class="log" id="logBox">—</div>
+          </div>
+        </div>
+      </div>
+      <!-- 快捷键是全局提示，不属于「高级」这一张卡，以前挂在卡尾变成卡里多出来的一行 -->
+      <p class="muted xs setfoot">
+        快捷键：<kbd>Space</kbd> 立即换一张 · <kbd>F</kbd> 收藏 · <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 切视图
+      </p>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>桌面壁纸 · 作者 海风（kele551）　·　<a href="https://gitcode.com/kele551/ms-wallpaper-assistant" target="_blank" rel="noopener">gitcode.com/kele551/ms-wallpaper-assistant</a>　·　所有请求只在本机；本页没有任何外部资源</span>
   </footer>
 </div>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
+<!-- 页面内的 JS 错误钩子: 有报错就把内容写进这个隐藏元素（验收时可以 --dump-dom 看） -->
+<div id="jsErr" hidden></div>
 
 <script>
 var TOKEN = "{{BWPANEL_TOKEN}}";
-var S = null;          /* 最近一次状态 */
-var busy = false;
+/* 页面内错误钩子: 任何 JS 报错都记下来, 用无头浏览器 --dump-dom 一看就知道有没有错 */
+window.__errs = [];
+window.onerror = function(m){
+  try {
+    window.__errs.push(String(m));
+    var d = document.getElementById("jsErr");
+    if (d){ d.textContent = window.__errs.join(" | "); d.hidden = false; }
+  } catch (e) {}
+};
+var S = null;                    /* 最近一次 /api/state 的结果 */
+var busy = false;                /* 一次只跑一个动作 */
+var G = { src: "all", fav: false, skip: 0, items: [], more: false, loaded: false };
+var tickTimer = null;
+var cycMin = 30;                 /* 当前间隔(分钟), 只用于前端倒计时 */
+var nextAt = 0;                  /* 下一次自动换的时间戳(毫秒), 0 = 不知道 */
+/* 【2026-10-25 用户「当前预览图没有锁定当前壁纸的图像，关闭窗口[重开]才恢复」】
+   这一页是**打开时拉一次状态**, 之后只有前端计时在跑(服务是单线程 TcpListener,
+   故意不做轮询)。所以后台到点换了一张、或者在别的窗口按了 F1, 这一页的「当前壁纸」
+   大卡就一直停在旧的那张上 —— 看着像预览和桌面不一致, 重开窗口才对上。
+   下面三个变量用来做"不轮询的前提下补拉": ①记最后一次拉取时间; ②倒计时归零那一刻
+   补拉一次(每个 nextAt 只补一次, 不会变成每分钟打一遍); ③标签页切回前台时补拉一次。 */
+var LAST_STATE_AT = 0;           /* 最后一次真的发出 /api/state 的时刻 */
+var CROSS_AT = 0;                /* 已经为哪一个 nextAt 补拉过了 */
+var REVEAL_MIN_GAP = 8000;       /* 切回前台补拉的最小间隔(毫秒) */
 
 function $(id){ return document.getElementById(id); }
-function esc(s){ return String(s == null ? "" : s); }
+function setText(id, t){ var e = $(id); if (e) e.textContent = (t == null ? "" : String(t)); }
+function setHTML(id, t){ var e = $(id); if (e) e.innerHTML = (t == null ? "" : String(t)); }
 
 function toast(msg, bad){
   var t = $("toast");
   t.textContent = msg;
-  t.className = "toast show" + (bad ? " bad" : "");
+  t.className = "toast on" + (bad ? " bad" : "");
   clearTimeout(toast._t);
   toast._t = setTimeout(function(){ t.className = "toast"; }, 2800);
 }
 
+/* 本机接口: 只有 /api/do 与 /api/state, 都带一次性令牌 */
 function api(doName, extra){
   var q = "/api/do?t=" + encodeURIComponent(TOKEN) + "&do=" + encodeURIComponent(doName);
   if (extra){
@@ -441,7 +803,7 @@ function api(doName, extra){
       q += "&" + k + "=" + encodeURIComponent(extra[k]);
     }
   }
-  return fetch(q, {cache:"no-store"}).then(function(r){ return r.json(); })
+  return fetch(q, { cache: "no-store" }).then(function(r){ return r.json(); })
     .then(function(j){
       if (!j) throw new Error("空响应");
       if (j.ok === false && j.error) toast(j.error, true);
@@ -454,18 +816,22 @@ function api(doName, extra){
 function wallUrl(p){
   return p ? ("/api/wall?t=" + encodeURIComponent(TOKEN) + "&p=" + encodeURIComponent(p)) : "";
 }
-
 function baseName(p){
   if (!p) return "";
   var i = Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"));
   return i >= 0 ? p.slice(i + 1) : p;
 }
-
-/* 文件名形如 2026-10-22_标题_地点.jpg —— 拆成日期与说明 */
+/* state.json 里存的名字有的带扩展名、有的不带 —— 比"是不是同一张"时统一去扩展名小写 */
+function sameName(a, b){
+  var sa = String(a || "").replace(/\.[a-z0-9]+$/i, "").toLowerCase();
+  var sb = String(b || "").replace(/\.[a-z0-9]+$/i, "").toLowerCase();
+  return !!sa && sa === sb;
+}
+/* 文件名形如 2026-10-22_标题_地点.jpg —— 拆成日期 / 标题 / 地点 */
 function parseName(name){
   var out = { date: "", title: name || "", place: "" };
   if (!name) return out;
-  var core = name.replace(/\.[a-z0-9]+$/i, "");
+  var core = String(name).replace(/\.[a-z0-9]+$/i, "");
   var m = core.match(/^(\d{4}-\d{2}-\d{2})_(.*)$/);
   if (!m) return out;
   out.date = m[1];
@@ -475,327 +841,774 @@ function parseName(name){
   if (!out.title) out.title = core;
   return out;
 }
+function parseTime(s){
+  if (!s) return 0;
+  var t = Date.parse(String(s).replace(/-/g, "/"));
+  return isNaN(t) ? 0 : t;
+}
+function pad2(n){ return (n < 10 ? "0" : "") + n; }
+function hhmm(ms){
+  var d = new Date(ms);
+  return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+}
+function fmtLeft(minutes){
+  if (minutes < 1) return "0";
+  if (minutes < 60) return String(Math.round(minutes));
+  var h = minutes / 60;
+  return (h >= 10 ? String(Math.round(h)) : (Math.round(h * 10) / 10).toFixed(1));
+}
+function fmtLeftUnit(minutes){
+  return minutes < 60 ? "分" : "小时";
+}
+function fmtCycle(m){
+  if (!m || m <= 0) return "—";
+  if (m % 1440 === 0) return (m / 1440) + " 天";
+  if (m % 60 === 0) return (m / 60) + " 小时";
+  return m + " 分钟";
+}
 
-function fmtNext(s){
-  if (!s || !s.st || !s.cfg || !s.st.lastSwap) return "—";
-  var t = Date.parse(String(s.st.lastSwap).replace(/-/g, "/"));
-  if (isNaN(t)) return "—";
-  var cyc = parseInt(s.cfg.cycle_minutes, 10);
-  if (!cyc || cyc <= 0) return "—";
-  if (s.cfg.bing_only) return "每天换一张（跨天时自动换成当天的必应图）";
-  if (s.cfg.auto_fetch === false) return "不会自动换（可以手动换）";
-  var next = new Date(t + cyc * 60000);
-  var left = Math.round((next.getTime() - Date.now()) / 60000);
-  if (left <= 0) return "随时会换（下一轮检查时）";
-  if (left < 60) return "约 " + left + " 分钟后换";
-  return "约 " + (left / 60).toFixed(1) + " 小时后换";
+/* ── 主题: 默认跟随系统; 手动切换后记住; URL 上 ?theme=light 可强制(截图用) ──
+   【2026-10-24 修 主题两个键打架】右下角「外观」面板存 ui-theme-mode（auto|light|dark），
+   右上角那个旧按钮存 bw-theme（dark|light）。原来两边各写各的，旧键会被面板那套忽略：
+   手动选过的观感刷新后失效。现在读的时候新键优先、写的时候两个键一起写。
+   【2026-10-25 换持久层】面板端口每次开机都是现抢的随机口，换个口就是另一个 origin，
+   localStorage 里的选择跟着一起没了 —— 所以口径统一收到页首的 window.__BWUI 一处：
+   本次点击 > 服务端下发的 seed(config.json) > 本机 localStorage > 跟随系统。
+   这两个函数只保留给右上角那个已经隐藏的旧按钮，行为跟面板一致。 */
+function themeMode(){
+  try {
+    if (window.__BWUI) return __BWUI.mode();
+    var m = localStorage.getItem("ui-theme-mode");
+    var old = localStorage.getItem("bw-theme");
+    /* 只有旧键（右上角老按钮切过主题）的人，在这里一次性搬到新键：
+       页尾"外观"面板只认 ui-theme-mode，不搬的话面板会把旧键的选择当没有、按系统重来一遍。 */
+    if (!m && (old === "dark" || old === "light")) {
+      localStorage.setItem("ui-theme-mode", old);
+      return old;
+    }
+    return m || old || "auto";
+  }
+  catch (e) { return "auto"; }
+}
+function sysTheme(){
+  var dark = true;
+  try { dark = !(window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches); } catch (e) {}
+  return dark ? "dark" : "light";
+}
+function applyTheme(t, remember){
+  document.documentElement.setAttribute("data-theme", t);
+  if (remember){
+    try {
+      localStorage.setItem("bw-theme", t);
+      localStorage.setItem("ui-theme-mode", t);
+    } catch (e) {}
+    /* 老键也搬进 config.json, 否则换次开机这条线又只剩 localStorage */
+    try { if (window.__BWUI) __BWUI.persist("panel_theme", t); } catch (e) {}
+  }
+  var icon = $("themeIcon");
+  if (icon && t === "light"){
+    icon.innerHTML = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>';
+  } else if (icon){
+    icon.innerHTML = '<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>';
+  }
+}
+function initTheme(){
+  var m = String(location.search || "").match(/[?&]theme=(dark|light)\b/);
+  if (m){ applyTheme(m[1], false); return; }
+  var mode = themeMode();
+  if (mode === "dark" || mode === "light"){ applyTheme(mode, false); return; }
+  applyTheme(sysTheme(), false);
+}
+$("themeBtn").addEventListener("click", function(){
+  var cur = document.documentElement.getAttribute("data-theme");
+  applyTheme(cur === "light" ? "dark" : "light", true);
+});
+
+/* ── 视图切换(单页, 不路由) ── */
+function showTab(name){
+  var btns = document.querySelectorAll(".seg-btn");
+  for (var i = 0; i < btns.length; i++){
+    var on = btns[i].getAttribute("data-screen") === name;
+    btns[i].classList.toggle("on", on);
+    btns[i].setAttribute("aria-selected", on ? "true" : "false");
+  }
+  var screens = { now: "s-now", lib: "s-lib", set: "s-set" };
+  for (var k in screens){
+    var el = $(screens[k]);
+    if (el) el.classList.toggle("on", k === name);
+  }
+  if (name === "lib" && !G.loaded) loadGallery(true);
+  /* 刚切到「设置」屏才量得到日志框（其它屏时 display:none 全是 0），顺手把框高补齐 */
+  if (name === "set") fitLog();
+  if (name === "now") tick();
+}
+Array.prototype.forEach.call(document.querySelectorAll(".seg-btn"), function(b){
+  b.addEventListener("click", function(){ showTab(b.getAttribute("data-screen")); });
+});
+var _gs=$("btnGoSet"); if(_gs) _gs.addEventListener("click", function(){ showTab("set"); });
+$("btnAll").addEventListener("click", function(){ showTab("lib"); });
+
+/* ── 倒计时环: 完全前端计时, 不发任何请求 ── */
+function computeNext(){
+  nextAt = 0;
+  if (!S || !S.st || !S.st.lastSwap) return;
+  var t = parseTime(S.st.lastSwap);
+  if (!t) return;
+  if (!cycMin || cycMin <= 0) return;
+  nextAt = t + cycMin * 60000;
+}
+function tick(){
+  var ring = $("ring");
+  var meter = $("cycMeter");
+  if (!nextAt || !cycMin){
+    if (ring) ring.style.setProperty("--p", "0");
+    setHTML("ringTxt", "—");
+    if (meter) meter.style.width = "0%";
+    return;
+  }
+  var total = cycMin * 60000;
+  var left = nextAt - Date.now();
+  var pct = 100 - (left / total) * 100;
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  var leftMin = Math.max(0, left / 60000);
+  var txt = fmtLeft(leftMin);
+  var unit = fmtLeftUnit(leftMin);
+  if (left <= 0){ txt = "即将"; unit = ""; }
+  if (ring) ring.style.setProperty("--p", String(Math.round(pct)));
+  setHTML("ringTxt", txt + (unit ? "<small>" + unit + "</small>" : ""));
+  if (meter) meter.style.width = Math.round(pct) + "%";
+  /* 下次时间文案 */
+  var cfg = (S && S.cfg) || {};
+  var title = "—";
+  if (left <= 0){
+    title = "随时会换（下一轮检查时）";
+  } else if (cfg.bing_only){
+    /* 【2026-10-25 用户「这个描述应该是明天第一次开机切换」】原来写"下一次 16:34 后换成
+       当天的必应图"。那个点是"上一张换上的时刻 + 24 小时"算出来的, 可必应模式压根不看它:
+       后台规则是**每天第一轮巡检换成官方当前那张**(core.ps1 规则 1, 15 分钟一轮),
+       机器整晚开着也会在零点那轮把同一张再贴一遍, 真换新图要等必应发图(约每天 16:00)。
+       所以这里给不出精确到分的时间, 改成说明"什么时候才会换"。 */
+    title = "今天的必应图已在桌面 · 明天开机后第一轮巡检换成当天的新图（必应约每天 16:00 发图）";
+  } else if (cfg.auto_fetch === false){
+    title = "不会自动换（可随时手动换）";
+  } else {
+    title = "下一次 " + hhmm(nextAt) + " 自动更换";
+  }
+  setText("nextTitle", title);
+  /* 顶栏也显示换图时间，而不是笼统的"自动更换中" */
+  var st2;
+  if (!nextAt) st2 = "不会自动换";
+  else if (left <= 0) st2 = "即将换图…";
+  else if (cfg.bing_only) st2 = "必应模式 · 明天开机后换新图";
+  else st2 = hhmm(nextAt) + " 换图 · 还有 " + txt + unit;
+  setText("statusText", st2);
+  /* 【2026-10-25】倒计时走到零的那一刻补拉一次状态 —— 后台换完图, 「当前壁纸」大卡
+     才会跟着换成真在桌面上的那一张。按 nextAt 记名, 一轮换图只补拉一次,
+     机器一直开着也不会变成每分钟打一遍服务。 */
+  if (S && left <= 0 && CROSS_AT !== nextAt){
+    CROSS_AT = nextAt;
+    refresh(false);
+  }
 }
 
 /* ── 渲染 ── */
 function render(s){
+  if (!s || s.ok === false) return;
   S = s;
-  var cfg = s.cfg || {}, st = s.st || {};
+  var cfg = s.cfg || {}, st = s.st || {}, au = s.auto || {}, cnt = s.counts || {};
 
-  $("liveDot").className = "live";
-  $("statusLine").textContent = (cfg.bing_only ? "必应模式 · 每天一张" : "聚焦模式 · 自动更换中") + " · " + fmtNext(s);
-  $("versionLine").textContent = "脚本 v" + (s.scriptVer || "?") + "　·　主程序 v" + (s.launcherVer || "?")
-    + "　·　数据目录 " + ((s.dirs && s.dirs.base) || "");
+  /* 顶栏状态 */
+  var isBing = !!cfg.bing_only;
+  var pill = $("statusPill");
+  pill.className = "pill ok";
+  setText("statusText", (isBing ? "必应模式 · 明天开机后换新图" : "读取下次换图时间…"));
+  setText("segInfo", "脚本 v" + (s.scriptVer || "?") + " · 主程序 v" + (s.launcherVer || "?")
+    + (au.daemon ? " · 后台在跑" : " · 后台没在跑"));
 
   /* 当前壁纸 */
   var p = st.lastWall || "";
+  var bn = parseName(baseName(p));
+  var img = $("heroImg");
   if (p){
-    var bn = parseName(baseName(p));
-    var img = $("heroImg");
     var src = wallUrl(p);
     if (img.getAttribute("src") !== src){
       img.classList.remove("ready");
       img.onload = function(){ img.classList.add("ready"); $("heroEmpty").style.display = "none"; };
-      img.onerror = function(){ img.classList.remove("ready"); $("heroEmpty").style.display = "grid";
-        $("heroEmpty").textContent = "这张图打不开了（可能刚被清理）"; };
+      img.onerror = function(){
+        img.classList.remove("ready");
+        $("heroEmpty").style.display = "grid";
+        setText("heroEmpty", "这张图打不开了（可能刚被清理）");
+      };
       img.src = src;
     }
-    $("heroTitle").textContent = bn.title || baseName(p);
-    $("heroSub").textContent = (bn.place || baseName(p)) + (st.lastSwap ? ("　·　" + st.lastSwap + " 换上") : "");
-    $("curDate").textContent = bn.date || "—";
-    $("heroBadge").textContent = st.shown ? ("已换 " + st.shown + " 次") : "当前壁纸";
+    setText("heroTitle", bn.title || baseName(p));
+    /* 2026-10-24 用户要求：这张卡要能看出「这是哪一天的哪张图」。
+       名字一直是主标题（例如「到灯塔去！」），副行原来只有换上的时间；
+       现在把图片自己的日期放到最前面，日期取自文件名的 YYYY-MM-DD_ 前缀
+       （本机必应目录 137/137 张都是这个命名）。取不到日期就不硬凑，只留换上的时间，
+       依旧不露原始 id / 英文 slug。 */
+    var _imgDay = bn.date ? (bn.date + " 的图") : "";
+    var _when = st.lastSwap ? (String(st.lastSwap).slice(0, 16) + " 换上") : "";
+    setText("heroSub", _imgDay && _when ? (_imgDay + "　·　" + _when) : (_imgDay || _when || "—"));
+    setText("heroBadge", isBing ? "必应模式 · 每日一图" : "当前壁纸");
     $("btnOpenImg").style.display = "";
   } else {
-    $("heroImg").classList.remove("ready");
+    img.classList.remove("ready");
+    img.removeAttribute("src");
     $("heroEmpty").style.display = "grid";
-    $("heroEmpty").textContent = "还没有设置过壁纸，点「立即换一张」";
-    $("heroTitle").textContent = "—";
-    $("heroSub").textContent = "—";
-    $("curDate").textContent = "—";
+    setText("heroEmpty", "还没有设置过壁纸，点「立即换一张」");
+    setText("heroTitle", "—");
+    setText("heroSub", "—");
+    setText("heroBadge", "当前壁纸");
     $("btnOpenImg").style.display = "none";
   }
 
+  /* 显示器: 只显示主屏(多屏本轮不做) */
+  var scr = s.screen || {};
+  var scrTxt = (scr.w && scr.h) ? ("主屏 " + scr.w + "×" + scr.h) : "主屏";
+  setText("chipScreen", scrTxt);
+  setText("chipScreen2", scrTxt);
+  /* 上次换上 / 累计换到桌面：这两个数一直在 state 里，只是以前哪都没露 */
+  setText("lastSwapLine", st.lastSwap ? String(st.lastSwap).slice(0, 19) : "还没换过");
+  setText("shownNum", (st.shown == null ? "—" : st.shown + " 次"));
+
   /* 节奏 */
   var cyc = parseInt(cfg.cycle_minutes, 10);
-  if (!isNaN(cyc)){
-    $("cyc").value = Math.min(240, Math.max(5, cyc));
-    $("cycNum").textContent = cyc >= 1440 ? "24 小时（每天一张）" : (cyc + " 分钟");
-    var chips = $("cycChips").children;
-    for (var i = 0; i < chips.length; i++){
-      chips[i].classList.toggle("on", parseInt(chips[i].dataset.v, 10) === cyc);
-    }
-    /* 必应模式：间隔固定 24 小时，控件锁住（避免用户以为还能改成 30 分钟） */
-    var lockCyc = !!cfg.bing_only;
-    $("cyc").disabled = lockCyc;
-    $("cycChips").classList.toggle("locked", lockCyc);
-    $("cycHint").textContent = lockCyc
-      ? "必应模式下固定 24 小时（每天一张）；切回聚焦模式会还原原来的间隔"
-      : "点一下直接切";
+  if (!isNaN(cyc) && cyc > 0) cycMin = cyc;
+  computeNext();
+  setText("cycPill", fmtCycle(cycMin));
+  setText("setCycNum", fmtCycle(cycMin));
+  var chips = document.querySelectorAll(".cyc-chip");
+  for (var i = 0; i < chips.length; i++){
+    chips[i].classList.toggle("on", parseInt(chips[i].getAttribute("data-v"), 10) === cycMin);
   }
-  $("nextTip").textContent = fmtNext(s);
+  var slider = $("setCyc");
+  if (slider){
+    slider.value = String(Math.min(240, Math.max(5, cycMin)));
+    slider.disabled = isBing;
+  }
+  var cycRow = $("setCycChips");
+  if (cycRow) cycRow.classList.toggle("locked", isBing);
+  /* 【2026-10-25 用户「必应模式，时间没有锁死」】上面两行只锁了「设置」页那一排
+     (setCycChips), 首页「更换节奏」卡片里那排(#cycChips, 10分/30分/1小时/4小时/12小时/24小时)
+     从来没被锁 —— 必应模式下它照样能点, 点完还弹一句"间隔已改成 10 分"。
+     服务端其实钉住了(core.ps1 把 cycle_minutes 强制写回 1440), 所以刷新一下又跳回 24 小时,
+     看着就是"锁了个寂寞"。这里把首页那排一起灰掉, 下面点击处理里再加一道拒收。 */
+  var cycRow2 = $("cycChips");
+  if (cycRow2) cycRow2.classList.toggle("locked", isBing);
+  var hint = isBing
+    ? "必应模式下固定 24 小时（每天一张）；切回聚焦模式会还原原来的间隔"
+    : "点一下直接切；滑块到 4 小时，更长用上面的档位";
+  setText("cycHint", hint);
+  setText("setCycHint", isBing ? "必应模式固定 24 小时" : "每多少分钟自动换一张");
+  setText("nextSub", "每 " + fmtCycle(cycMin) + " · 图库 " + ((cnt.bing || 0) + (cnt.spotlight || 0)) + " 张 · 收藏 "
+    + (s.favCount || 0) + " 张" + (s.local && s.local.count ? (" · 本地 " + s.local.count + " 张") : ""));
 
+  /* 开关类 */
   $("swAuto").className = "sw" + (cfg.auto_fetch === false ? "" : " on");
   $("swFav").className = "sw" + (cfg.fav_only ? " on" : "");
   $("swFit").className = "sw" + (cfg.art_fit_mode === "off" ? "" : " on");
-  var dk = s.desktop || {};
   var dkOn = cfg.desktop_shortcut !== "off";
+  var dk = s.desktop || {};
   $("swDesk").className = "sw" + (dkOn ? " on" : "");
-  $("deskHint").textContent = !dkOn
+  setText("deskHint", !dkOn
     ? "当前：没有桌面图标（打开会在原来的位置重建）"
-    : (dk.exists ? ("当前：图标在 " + (dk.path || "")) : "配置是开，但桌面上找不到图标 —— 关一次再开就会重建");
-  var isBing = !!cfg.bing_only;
+    : (dk.exists ? ("当前：图标在 " + (dk.path || "")) : "配置是开，但桌面上找不到图标 —— 关一次再开就会重建"));
+  $("swAutoStart").className = "sw" + (au.startup ? " on" : "");
+  setText("autoHint", au.startup
+    ? (au.daemon ? "开着 · 后台正在跑" : "开着 · 这次开机没跑起来，点一下会拉起来")
+    : "关 = 登录后不会自己换");
+
+  /* 模式 */
   $("modeFocus").classList.toggle("on", !isBing);
   $("modeBing").classList.toggle("on", isBing);
-  $("modeHint").textContent = isBing
+  setText("modeHint", isBing
     ? "当前是必应模式：只换必应每日一图，一天一张；不抓聚焦、不按间隔轮换"
-    : "当前是聚焦模式：按间隔换「Windows 聚焦」图库里的图（和必应图混着轮换）";
+    : "当前是聚焦模式：按间隔换「Windows 聚焦」图库里的图（和必应图混着轮换）");
+
+  /* 下拉 / 数字 */
   $("selRes").value = (cfg.resolution_mode === "uhd") ? "uhd" : "auto";
   $("selStyle").value = cfg.wallpaper_style || "fill";
+  /* 还原原值那条: 有没有记录由后端说, 页面不自己猜 (2026-10-25 补入口) */
+  var sty = s.style || {};
+  setText("origHint", sty.hasOrig
+    ? ("记着的原值：" + (sty.orig || "（读不出来）") + " —— 还原后以后换图不再动它")
+    : "程序还没改过这个值，没什么要还原的");
+  var brs = $("btnRestoreStyle");
+  if (brs) brs.disabled = !sty.hasOrig;
+  setNum("numLib", cfg.lib_cap == null ? 200 : cfg.lib_cap);
+  setNum("numBing", cfg.bing_cap == null ? 200 : cfg.bing_cap);
+  setNum("numRound", cfg.spotlight_per_cycle == null ? 6 : cfg.spotlight_per_cycle);
+  setNum("numTimeout", cfg.src_timeout_sec == null ? 20 : cfg.src_timeout_sec);
+  setNum("numRoundCap", cfg.fetch_round_cap == null ? 6 : cfg.fetch_round_cap);
+  setNum("numDayCap", cfg.fetch_day_cap == null ? 20 : cfg.fetch_day_cap);
+  setNum("numRecycle", cfg.recycle_min_days == null ? 30 : cfg.recycle_min_days);
 
-  if (document.activeElement !== $("numLib")) $("numLib").value = cfg.lib_cap == null ? 200 : cfg.lib_cap;
-  if (document.activeElement !== $("numBing")) $("numBing").value = cfg.bing_cap == null ? 200 : cfg.bing_cap;
-  if (document.activeElement !== $("numRound")) $("numRound").value = cfg.spotlight_per_cycle == null ? 6 : cfg.spotlight_per_cycle;
-  if (document.activeElement !== $("numTimeout")) $("numTimeout").value = cfg.src_timeout_sec == null ? 20 : cfg.src_timeout_sec;
+  /* 统计 */
+  setText("statLib", ((cnt.bing || 0) + (cnt.spotlight || 0)));
+  setText("statFav", (s.favCount || 0));
+  setText("statQueue", (st.queue == null ? "—" : st.queue));
+  setText("statDl", (au.dlTotal || 0));
+  setText("queueNum", (st.queue == null ? "—" : (st.queue + " 张")));
+  setText("poolCounts", "必应 " + (cnt.bing || 0) + " 张　·　聚焦 " + (cnt.spotlight || 0) + " 张");
+  setText("poolLine", (s.pool && s.pool.line) ? s.pool.line : "—");
+  setText("dlTotal", (au.dlTotal || 0) + " 张");
+  setText("strangers", (au.strangers || 0) + " 张");
 
-  $("queueNum").textContent = (st.queue == null ? "—" : (st.queue + " 张"));
+  /* 本地文件夹图源 */
+  var local = s.local || {};
+  setText("localDir", local.dir ? local.dir : "未启用");
+  setText("localCount", local.dir ? (local.count + " 张") : "—");
+  var lc = $("libLocalChip");
+  if (lc) lc.style.display = local.dir ? "" : "none";
 
-  var cnt = s.counts || {};
-  $("poolCounts").textContent = "必应 " + (cnt.bing || 0) + " 张　·　聚焦 " + (cnt.spotlight || 0) + " 张";
-  $("poolLine").textContent = (s.pool && s.pool.line) ? s.pool.line : "—";
+  /* 库容三条：把上面「图库上限 / 必应库上限」两个输入框和实际张数画成看得见的进度。
+     上限填 0 是不限，画一小截灰条而不是空条，免得看着像"没数据"。 */
+  function capLine(barId, numId, used, cap, off){
+    var b = $(barId), n = $(numId);
+    if (!b || !n) return;
+    var u = +used || 0, c = +cap || 0;
+    b.className = "";
+    if (off) { b.style.width = "0%"; n.textContent = "未启用"; return; }
+    if (!c) { b.style.width = "10%"; n.textContent = u + " 张 · 不限"; return; }
+    b.style.width = Math.max(2, Math.min(100, Math.round(u * 100 / c))) + "%";
+    if (u >= c) b.className = "full";
+    n.textContent = u + " / " + c + " 张";
+  }
+  capLine("capBingBar", "capBing", cnt.bing, cfg.bing_cap, false);
+  capLine("capSpotBar", "capSpot", cnt.spotlight, cfg.lib_cap, false);
+  capLine("capLocalBar", "capLocal", local.count, 0, !local.dir);
 
-  var au = s.auto || {};
-  $("swAutoStart").className = "sw" + (au.startup ? " on" : "");
-  $("autoHint").textContent = au.startup
-    ? (au.daemon ? "开着 · 后台正在跑" : "开着 · 这次开机没跑起来，点一下会拉起来")
-    : "关 = 登录后不会自己换";
-  $("dlTotal").textContent = (au.dlTotal || 0) + " 张";
-  $("strangers").textContent = (au.strangers || 0) + " 张";
+  /* 版本 / 目录 */
+  setText("versionLine", "脚本 v" + (s.scriptVer || "?") + " / 主程序 v" + (s.launcherVer || "?"));
+  setText("dirsLine", s.dataDir || (s.dirs && s.dirs.base) || "—");
+  setText("libCount", "已显示 " + G.items.length + " 张" + (G.fav ? " · 只看收藏" : ""));
 
-  /* 收藏状态 */
+  /* 收藏按钮状态 */
   var favNames = (s.favorites || []).map(function(x){ return x.name; });
   var curName = baseName(p);
   var isFav = favNames.indexOf(curName) >= 0;
-  $("btnFav").textContent = isFav ? "已收藏 ✓" : "收藏这张";
+  setText("btnFav", isFav ? "已收藏 ✓" : "收藏");
   $("btnFav").classList.toggle("on", isFav);
 
-  /* 缩略图 */
-  renderThumbs("hist", s.history || [], {}, curName);
-  renderThumbs("favs", s.favorites || [], {fav: true}, curName);
-  $("histNone").style.display = (s.history && s.history.length) ? "none" : "";
-  $("favNone").style.display = (s.favorites && s.favorites.length) ? "none" : "";
-  $("favTag").textContent = (s.favCount || 0) + " 张";
+  /* 最近换过 */
+  renderHistory(s.history || [], curName);
 
   /* 日志 */
+  renderLog(s.log || []);
+
+  tick();
+}
+
+/* 「最近动作」的框只有 7 行高，服务端一次给 30 条日志、长行还要折行 —— 内容比框高是常态。
+   以前渲染完停在顶部，等于把最新那条藏在滚动条下面：用户想看「刚刚发生了什么」得自己滚，
+   而截图里被横切半截的正是最新那条。所以填完把滚动条钉到底；用户往上翻旧行时不抢他的位置
+   （滚回底部就恢复跟随）。 */
+var LOG_FOLLOW = true;
+function renderLog(lines){
   var lg = $("logBox");
+  if (!lg) return;
   lg.innerHTML = "";
-  (s.log || []).forEach(function(line){
+  (lines || []).forEach(function(line){
     var d = document.createElement("div");
     d.textContent = line;
     lg.appendChild(d);
   });
-  if (!s.log || !s.log.length) lg.textContent = "—";
+  if (!lines || !lines.length) lg.textContent = "—";
+  if (LOG_FOLLOW) lg.scrollTop = lg.scrollHeight;
+  fitLog();
+  /* 网格等高是这一帧之后才最终定下来的，再量一次才吃得满 */
+  if (window.requestAnimationFrame) window.requestAnimationFrame(function(){ fitLog(); });
+}
+/* 日志框高度 = 卡片里剩下的空间，但**只能按整行(18px)取整**：
+   一旦底边落在行中间，最后一条又被横切半截（见 .log 那段注释，别再走回头路）。
+   卡片在等高网格里会被邻居撑高，这块空白与其留着，不如给日志多看几行。
+   2026-10-25（用户："日志框再往下拉"）：上一版只写 maxHeight，而 max-height 只能**封顶**、
+   不能把内容少的框撑大 —— 于是框一直是 8 行（内容自己就那么高），卡片下面空出一截。
+   改成写真实 height，并且量之前先把框压回最小值（见函数里那段注释）。 */
+function fitLog(){
+  var lg = $("logBox");
+  if (!lg || !lg.closest) return;
+  var card = lg.closest(".card");
+  if (!card || !card.offsetWidth) return;   /* 不在「设置」屏时全是 0，量了也白量 */
+  var row = lg.parentElement;
+  var head = row && row.querySelector(".txt");
+  if (!head) return;
+  var MIN = 7, MAX = 20;
+  /* 先退到"最小框"再量，不能退 auto：退 auto 时卡片按 30 条日志的完整高度把自己撑到一千多
+     像素，等高网格的行高跟着涨，量出来的"剩余空间"永远大于上限 —— 空白只是从这张卡挪到
+     隔壁那张卡。退到最小值量到的才是邻居真正给得起的空间，一次填平，也不会自增。 */
+  lg.style.maxHeight = "none";
+  lg.style.height = (MIN * 18 + 2) + "px";
+  var cs = getComputedStyle(card);
+  var rs = getComputedStyle(row);
+  var pad = (parseFloat(cs.paddingBottom) || 0) + (parseFloat(rs.paddingBottom) || 0);
+  var avail = card.getBoundingClientRect().bottom - pad - head.getBoundingClientRect().bottom - 4;
+  var n = Math.floor((avail - 2) / 18);
+  if (!(n >= MIN)) n = MIN;
+  if (n > MAX) n = MAX;
+  var h = (n * 18 + 2) + "px";
+  lg.style.height = h;
+  lg.style.maxHeight = h;
+  if (LOG_FOLLOW) lg.scrollTop = lg.scrollHeight;
+}
+window.addEventListener("resize", function(){ fitLog(); });
+(function(){
+  var lg = $("logBox");
+  if (!lg) return;
+  lg.addEventListener("scroll", function(){
+    LOG_FOLLOW = (lg.scrollHeight - lg.scrollTop - lg.clientHeight) < 8;
+  }, {passive: true});
+})();
+function setNum(id, v){
+  var e = $(id);
+  if (!e) return;
+  if (document.activeElement === e) return;
+  e.value = v;
 }
 
-function renderThumbs(boxId, list, opt, curName, append){
-  var box = $(boxId);
-  if (!append) box.innerHTML = "";
-  list.forEach(function(it){
-    var b = document.createElement("button");
-    b.className = "th" + (it.name === curName ? " on" : "");
-    b.type = "button";
-    b.title = it.name;
-    b.setAttribute("aria-label", "设为壁纸：" + it.name);
-    var im = document.createElement("img");
-    im.loading = "lazy";
-    im.alt = "";
-    im.src = wallUrl(it.path);
-    b.appendChild(im);
-    var bn = parseName(it.name);
-    var d = document.createElement("span");
-    d.className = "d";
-    d.textContent = bn.date ? bn.date.slice(5) : "";
-    b.appendChild(d);
-    if (opt && opt.fav){
-      var f = document.createElement("span");
-      f.className = "fav";
-      f.textContent = "★";
-      b.appendChild(f);
-    }
-    b.addEventListener("click", function(){
-      api("use", {name: it.name}).then(function(){ toast("已设为壁纸"); });
-    });
-    box.appendChild(b);
+/* ── 缩略图 ── */
+function mkBtn(text, cls, onClick){
+  var b = document.createElement("button");
+  b.type = "button";
+  b.className = "btn " + (cls || "");
+  b.textContent = text;
+  b.addEventListener("click", function(e){ e.stopPropagation(); onClick(); });
+  return b;
+}
+/* 「今天」的 yyyy-MM-dd，用来判断换图角标该显示时间还是日期 */
+function todayKey(){
+  var n = new Date();
+  var p = function(x){ return (x < 10 ? "0" : "") + x; };
+  return n.getFullYear() + "-" + p(n.getMonth() + 1) + "-" + p(n.getDate());
+}
+function tileFor(it, opt){
+  var f = document.createElement("figure");
+  var cur = (opt && opt.currentName) || "";
+  var isSel = !!(cur && sameName(it.name, cur));
+  f.className = "tile" + (isSel ? " sel" : "");
+  f.title = it.name || "";
+  f.setAttribute("data-name", it.name || "");
+  var im = document.createElement("img");
+  im.loading = "lazy";
+  im.decoding = "async";
+  im.alt = "";
+  im.src = it.thumb || wallUrl(it.path);
+  /* 2026-10-24 用户要求：加载不出来的（文件已不在库里）直接过滤掉，不留灰块 */
+  im.onerror = function(){ if (f.parentNode) f.parentNode.removeChild(f); };
+  f.appendChild(im);
+  var bn = parseName(it.name);
+  var d = document.createElement("span");
+  d.className = "tile-d";
+  // 【2026-10-25 用户「描述显示不一致」】「最近换过」这一排的角标原来取的是**文件名里的日期**
+  // （聚焦图 = 微软那张图自己的发布日期），于是标题写"最近换过"、角标却是"这图是哪年的"，
+  // 两个口径混在一排里看着就是错的。现在：有"换上时间"(it.at，服务端从 hist_at 带出来)
+  // 就角标写换上的月-日、悬停 tooltip 补一句完整时间；没有才退回图片日期。
+  // 图库/收藏那两排没有"换上时间"这个概念，仍然显示图片自己的日期，不受影响。
+  if (it.at && /^\d{4}-\d{2}-\d{2}/.test(String(it.at))) {
+    var at = String(it.at);
+    // 【2026-10-25 收尾】角标先做成"换上的月-日"，但这一排天天都是当天换的几张，
+    // 四个格子全写"10-25"等于没写、看不出先后。改成：今天的显"时:分"，
+    // 更早的显"月-日"，悬停 tooltip 仍是完整的"换上于 yyyy-MM-dd HH:mm"。
+    d.textContent = (at.slice(0, 10) === todayKey()) ? at.slice(11, 16) : at.slice(5, 10);
+    f.title = (it.name || "") + " · 换上于 " + at.slice(0, 16);
+  } else {
+    d.textContent = bn.date ? bn.date.slice(5) : String(bn.title || "").slice(0, 12);
+  }
+  f.appendChild(d);
+  if (it.fav){
+    var star = document.createElement("span");
+    star.className = "tile-star";
+    star.textContent = "★";
+    f.appendChild(star);
+  }
+  var acts = document.createElement("div");
+  acts.className = "tile-acts";
+  acts.appendChild(mkBtn("设为壁纸", "primary", function(){ useItem(it); }));
+  acts.appendChild(mkBtn(it.fav ? "取消收藏" : "收藏", "", function(){ toggleFav(it); }));
+  acts.appendChild(mkBtn("原图", "ghost", function(){ openOriginal(it); }));
+  f.appendChild(acts);
+  f.addEventListener("click", function(){ useItem(it); });
+  f.setAttribute("tabindex", "0");
+  f.addEventListener("keydown", function(e){
+    if (e.key === "Enter" || e.key === " "){ e.preventDefault(); useItem(it); }
   });
+  return f;
+}
+function renderHistory(list, curName){
+  var box = $("hist");
+  box.innerHTML = "";
+  var shown = 0;
+  /* 【2026-10-25 用户「必应模式下 最近换过 浏览框也应该切换到必应图库」】
+     这一排原来不分库: 切到必应模式以后, 名单里压着的还是上一阵子按间隔轮下来的聚焦图,
+     看着就是"必应模式却给我看聚焦的旧图"。现在按当前模式收口径 ——
+     必应模式只显必应库换过的(srv 端每条带 src), 聚焦模式本来就是两库混着轮, 不收。
+     一条必应的都没有时(刚切过来/必应库空)照旧显最近的, 不留一排空格子。 */
+  var rows = list;
+  if (S && S.cfg && S.cfg.bing_only){
+    var pick = list.filter(function(x){ return x.src === "bing"; });
+    if (pick.length) rows = pick;
+  }
+  // 【2026-10-25】服务端已改成"从最新的一条往前给"，这里只取一行（4 张）。
+  // 原来一行 6 张：单张只有 112px 宽，悬停那排「设为壁纸/收藏/原图」按钮塞不下、
+  // 直接溢出到隔壁格，用户截图反馈"文字比例不和谐"。改成 4 张后单张约 170px，
+  // 与下方图库 .gallery 的格子（minmax(152px)）同一量级，按钮和图的比例就顺了。
+  rows.forEach(function(it){
+    if (shown >= 4) return;
+    var f = tileFor({ name: it.name, path: it.path, thumb: "", fav: false, src: "hist", at: it.at }, { currentName: curName });
+    box.appendChild(f);
+    shown++;
+  });
+  $("histEmpty").style.display = shown ? "none" : "";
 }
 
-/* ── 操作绑定 ── */
+/* ── 动作 ── */
+function useItem(it){
+  if (busy) return;
+  busy = true;
+  api("use", { name: it.name }).then(function(j){
+    busy = false;
+    toast(j && j.ok ? ("已设为壁纸：" + it.name) : "没设上，稍后再点一次", !(j && j.ok));
+    if (j && j.ok){
+      markCurrent(it.name);
+      /* 【2026-10-25】markCurrent 只挪了格子的选中框, 上面那张「当前壁纸」大卡还是旧图 ——
+         用户报的"预览图没锁定当前壁纸"有一半是这个。拉一次状态, 大卡/角标/最近换过一起对上。 */
+      refresh(false);
+    }
+  }, function(){ busy = false; });
+}
+function toggleFav(it){
+  if (busy) return;
+  busy = true;
+  api(it.fav ? "unfav" : "fav", { name: it.name }).then(function(j){
+    busy = false;
+    if (j && j.ok === false) return;
+    toast(it.fav ? "已取消收藏" : "已收藏");
+    if (G.fav) loadGallery(true);
+    else { it.fav = !it.fav; refreshTileStars(); }
+  }, function(){ busy = false; });
+}
+function openOriginal(it){
+  if (it.path) window.open(wallUrl(it.path), "_blank", "noopener");
+  else if (it.thumb) window.open(it.thumb, "_blank", "noopener");
+}
+function markCurrent(name){
+  var tiles = document.querySelectorAll(".gallery .tile, .thumbs .tile");
+  for (var i = 0; i < tiles.length; i++){
+    tiles[i].classList.toggle("sel", sameName(tiles[i].getAttribute("data-name"), name));
+  }
+}
+function refreshTileStars(){
+  /* 只更新星标, 不重拉列表 */
+  var box = $("lib");
+  var tiles = box.querySelectorAll(".tile");
+  for (var i = 0; i < tiles.length; i++){
+    var nm = tiles[i].getAttribute("data-name");
+    var it = null;
+    for (var k = 0; k < G.items.length; k++){ if (G.items[k].name === nm){ it = G.items[k]; break; } }
+    if (!it) continue;
+    var star = tiles[i].querySelector(".tile-star");
+    if (it.fav && !star){
+      var s = document.createElement("span");
+      s.className = "tile-star";
+      s.textContent = "★";
+      tiles[i].appendChild(s);
+    } else if (!it.fav && star){
+      tiles[i].removeChild(star);
+    }
+    var fb = tiles[i].querySelector(".tile-acts .btn:not(.primary):not(.ghost)");
+    if (fb) fb.textContent = it.fav ? "取消收藏" : "收藏";
+  }
+}
+
+/* ── 图库 ── */
+function galleryUrl(){
+  var q = "/?panel=gallery&src=" + encodeURIComponent(G.src) + "&skip=" + G.skip + "&take=48";
+  if (G.fav) q += "&fav=1";
+  return q;
+}
+function loadGallery(reset){
+  if (reset){ G.skip = 0; G.items = []; $("lib").innerHTML = ""; }
+  G.more = false;
+  $("libEmpty").style.display = "none";
+  return fetch(galleryUrl(), { cache: "no-store" })
+    .then(function(r){
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function(arr){
+      if (!arr || !arr.length) {
+        G.loaded = true;
+        G.more = false;
+        if (!G.items.length){
+          $("libEmpty").style.display = "";
+          setText("libEmptyText", G.fav ? "还没有收藏。在当前页点「收藏」，或者在这里的缩略图上点「收藏」"
+                                        : "这个库还没有图（自动换图或点「补几张新图」之后就会有了）");
+        }
+      } else {
+        G.loaded = true;
+        arr.forEach(function(it){ G.items.push(it); });
+        G.skip += arr.length;
+        G.more = arr.length >= 48;
+        var box = $("lib");
+        var cur = baseName(S && S.st ? S.st.lastWall : "");
+        arr.forEach(function(it){ box.appendChild(tileFor(it, { currentName: cur })); });
+      }
+      var shown = G.items.length;
+      setText("libCount", "已显示 " + shown + " 张" + (G.fav ? " · 只看收藏" : "")
+        + (G.src === "all" ? "" : " · " + (G.src === "bing" ? "必应库" : (G.src === "spotlight" ? "聚焦库" : "本地文件夹"))));
+      $("libMoreWrap").style.display = G.more ? "" : "none";
+    })
+    .catch(function(e){
+      $("libEmpty").style.display = "";
+      setText("libEmptyText", "图库读不出来：" + e.message + "（可以点下面重新读一次）");
+      $("libMoreWrap").style.display = "none";
+    });
+}
+Array.prototype.forEach.call(document.querySelectorAll(".lib-chip"), function(chip){
+  chip.addEventListener("click", function(){
+    Array.prototype.forEach.call(document.querySelectorAll(".lib-chip"), function(c){ c.classList.remove("on"); });
+    chip.classList.add("on");
+    G.src = chip.getAttribute("data-src");
+    loadGallery(true);
+  });
+});
+$("libFav").addEventListener("click", function(){
+  G.fav = !G.fav;
+  $("libFav").classList.toggle("on", G.fav);
+  setText("libFav", G.fav ? "只看收藏 ✓" : "只看收藏");
+  loadGallery(true);
+});
+$("libReload").addEventListener("click", function(){ loadGallery(true); });
+$("libOpenDir").addEventListener("click", function(){
+  api("openDir", { name: G.src === "spotlight" ? "spotlight" : (G.src === "local" ? "local" : "bing") }).then(function(j){ if(j && j.ok) toast("已打开：" + (j.path || "?") + "（端口 " + location.port + "）"); else if(j && j.error) toast(j.error, true); });
+});
+$("libMore").addEventListener("click", function(){ loadGallery(false); });
+$("libEmptyBtn").addEventListener("click", function(){ loadGallery(true); });
+
+/* ── 设置项绑定 ── */
 function run(fn){
   if (busy) return;
   busy = true;
   fn().then(function(){ busy = false; }, function(){ busy = false; });
 }
-
-$("btnSwap").addEventListener("click", function(){
-  run(function(){
-    $("btnSwap").disabled = true;
-    return api("swap").then(function(j){
-      $("btnSwap").disabled = false;
-      toast(j && j.ok ? "换好了" : "这一轮没换成，稍后再试", !(j && j.ok));
-    }, function(){ $("btnSwap").disabled = false; });
-  });
-});
-
-$("btnFav").addEventListener("click", function(){
-  run(function(){
-    var isFav = $("btnFav").classList.contains("on");
-    return api(isFav ? "unfav" : "fav").then(function(){
-      toast(isFav ? "已取消收藏" : "已收藏");
-    });
-  });
-});
-
-$("btnOpenImg").addEventListener("click", function(){
-  if (S && S.st && S.st.lastWall) window.open(wallUrl(S.st.lastWall), "_blank", "noopener");
-});
-
-$("cyc").addEventListener("input", function(){
-  $("cycNum").textContent = this.value + " 分钟";
-});
-$("cyc").addEventListener("change", function(){
-  run(function(){ return api("set", {key:"cycle_minutes", value:this.value}).then(function(){ toast("间隔已改成 " + $("cyc").value + " 分钟"); }); }.bind(this));
-});
-
-Array.prototype.forEach.call($("cycChips").children, function(chip){
-  chip.addEventListener("click", function(){
-    run(function(){ return api("set", {key:"cycle_minutes", value:chip.dataset.v}).then(function(){ toast("间隔已改成 " + chip.dataset.v + " 分钟"); }); });
-  });
-});
-
 function bindSw(id, key, getVal){
-  $(id).addEventListener("click", function(){
-    run(function(){ return api("set", {key:key, value:getVal()}).then(function(){ toast("已保存"); }); });
+  var e = $(id);
+  e.addEventListener("click", function(){
+    run(function(){ return api("set", { key: key, value: getVal() }).then(function(){ toast("已保存"); }); });
   });
 }
 bindSw("swAuto", "auto_fetch", function(){ return S && S.cfg && S.cfg.auto_fetch === false ? "true" : "false"; });
 bindSw("swFav", "fav_only", function(){ return S && S.cfg && S.cfg.fav_only ? "false" : "true"; });
 bindSw("swFit", "art_fit_mode", function(){ return S && S.cfg && S.cfg.art_fit_mode === "off" ? "on" : "off"; });
-/* 桌面快捷方式：真建/真删，并把结果回执给用户。
-   关闭 = 把那个 .lnk 从它所在的文件夹里删掉 —— 如果你把这个文件夹挂成了任务栏「工具栏」，
-   工具栏上的入口也会一起消失，所以关闭前必须问一句。 */
+
+/* 桌面快捷方式: 真建 / 真删, 所以关之前问一句 */
 $("swDesk").addEventListener("click", function(){
   var on = !!(S && S.cfg && S.cfg.desktop_shortcut !== "off");
   var dk = (S && S.desktop) || {};
-  if (on) {
+  if (on){
     var where = dk.path ? dk.path : "桌面";
     if (!confirm("关掉桌面快捷方式会把文件删掉：\n\n" + where +
-                 "\n\n如果你把这个文件夹挂在任务栏的「工具栏」上，那个入口也会一起消失。\n确定要关吗？")) return;
+      "\n\n如果你把这个文件夹挂在任务栏的「工具栏」上，那个入口也会一起消失。\n确定要关吗？")) return;
   }
   run(function(){
-    return api("set", {key: "desktop_shortcut", value: on ? "off" : "on"}).then(function(j){
-      toast((j && j.note) ? j.note : (on ? "已关闭桌面快捷方式" : "已打开桌面快捷方式"));
+    return api("set", { key: "desktop_shortcut", value: on ? "off" : "on" }).then(function(j){
+      toast((j && j.note) ? j.note : (on ? "已关闭桌面快捷方式" : "已打开桌面快捷方式"), !(j && j.ok));
+    });
+  });
+});
+$("swAutoStart").addEventListener("click", function(){
+  var on = !!(S && S.auto && S.auto.startup);
+  run(function(){
+    return api("autostart", { value: on ? "off" : "on" }).then(function(j){
+      toast((j && j.note) || "已处理", !(j && j.ok));
     });
   });
 });
 
 $("selRes").addEventListener("change", function(){
-  run(function(){ return api("set", {key:"resolution_mode", value:this.value}).then(function(){ toast("画质档已保存"); }); }.bind(this));
+  var v = this.value;
+  run(function(){ return api("set", { key: "resolution_mode", value: v }).then(function(){ toast("画质档已保存"); }); });
 });
 $("selStyle").addEventListener("change", function(){
-  run(function(){ return api("set", {key:"wallpaper_style", value:this.value}).then(function(){ toast("填充方式已保存"); }); }.bind(this));
+  var v = this.value;
+  run(function(){ return api("set", { key: "wallpaper_style", value: v }).then(function(){ toast("填充方式已保存"); }); });
 });
-
+/* 2026-10-25 补：把「还原我原来的填充方式」接上后端。
+   后端 Restore-BwStyleOrig 会写回注册表那两个值、把设置里那一档对齐, 再把当前这张重设一次立刻生效。
+   没记录时按钮是灰的, 这里再挡一道 —— 老标签页 / 状态还没刷新过来的情况下也不至于白点一次。 */
+$("btnRestoreStyle").addEventListener("click", function(){
+  var sty = (S && S.style) || {};
+  if (!sty.hasOrig) { toast("程序还没改过这个值，没什么要还原的", true); return; }
+  if (!confirm("要把桌面的「填充方式」还原成你原来的值：\n\n" + (sty.orig || "") +
+               "\n\n还原以后换图不会再动它（除非你在上面自己重新选一档）。")) return;
+  run(function(){
+    return api("restore_style").then(function(j){
+      toast((j && j.note) ? j.note : (j && j.ok ? "已还原" : "没还原成功"), !(j && j.ok));
+    });
+  });
+});
 function bindNum(id, key){
   $(id).addEventListener("change", function(){
-    run(function(){ return api("set", {key:key, value:$(id).value}).then(function(){ toast("已保存"); }); });
+    var v = $(id).value;
+    run(function(){ return api("set", { key: key, value: v }).then(function(){ toast("已保存"); }); });
   });
 }
 bindNum("numLib", "lib_cap");
 bindNum("numBing", "bing_cap");
 bindNum("numRound", "spotlight_per_cycle");
 bindNum("numTimeout", "src_timeout_sec");
+bindNum("numRoundCap", "fetch_round_cap");
+bindNum("numDayCap", "fetch_day_cap");
+bindNum("numRecycle", "recycle_min_days");
 
-$("btnCheckUpd").addEventListener("click", function(){
+/* 节奏: 滑块 + 档位 */
+/* 必应模式下"间隔"这一组控件的统一拒收: 界面已经整排置灰点不动了, 这里再兜一层,
+   是因为旧标签页(数据是几分钟前那一份)或者刚点完还没刷新的瞬间仍可能发出去,
+   而服务端只会钉回 1440 —— 前端要是还弹一句"间隔已改成 10 分", 就是骗人。 */
+function bingLocked(){
+  if (!(S && S.cfg && S.cfg.bing_only)) return false;
+  toast("必应模式固定 24 小时（每天一张），先切回聚焦模式才能改间隔", true);
+  refresh(false);
+  return true;
+}
+$("setCyc").addEventListener("input", function(){ setText("setCycNum", fmtCycle(parseInt(this.value, 10))); });
+$("setCyc").addEventListener("change", function(){
+  if (bingLocked()) return;
+  var v = this.value;
+  run(function(){ return api("set", { key: "cycle_minutes", value: v }).then(function(){ toast("间隔已改成 " + fmtCycle(parseInt(v, 10))); }); });
+});
+Array.prototype.forEach.call(document.querySelectorAll(".cyc-chip"), function(chip){
+  chip.addEventListener("click", function(){
+    if (bingLocked()) return;
+    var v = chip.getAttribute("data-v");
+    run(function(){ return api("set", { key: "cycle_minutes", value: v }).then(function(){ toast("间隔已改成 " + fmtCycle(parseInt(v, 10))); }); });
+  });
+});
+
+/* 更换模式: 切过去后端会当场换一张 */
+function setMode(bing){
+  var cur = !!(S && S.cfg && S.cfg.bing_only);
+  if (cur === bing){ toast(bing ? "已经是必应模式" : "已经是聚焦模式"); return; }
   run(function(){
-    toast("正在检查更新…");
-    return api("update").then(function(j){
-      toast(j && j.updated ? "已升级，重新打开控制台生效" : "已是最新版");
+    return api("set", { key: "bing_only", value: bing ? "true" : "false" }).then(function(){
+      toast(bing ? "已切到必应模式：正在换成今天的必应图…" : "已切到聚焦模式：正在按轮换换一张…");
+      /* 换图是后台那一轮干的, 前端这一刻拉状态还来不及。
+         有上限地补拉两次(4 秒 / 12 秒), 只为把「当前壁纸」大卡对上桌面真正那张 ——
+         不做持续轮询: 服务是单线程 TcpListener, 而且这一页的设计就是打开时拉一次。 */
+      setTimeout(function(){ refresh(false); }, 4000);
+      setTimeout(function(){ refresh(false); }, 12000);
     });
   });
-});
-$("btnOpenDir").addEventListener("click", function(){ api("openDir", {name:"data"}); });
-$("btnRefresh").addEventListener("click", function(){ refresh(true); });
-$("btnQuit").addEventListener("click", function(){
-  api("quit").then(function(){
-    $("liveDot").className = "live off";
-    $("statusLine").textContent = "已退出，可以直接关掉这个标签页";
-    toast("控制台已退出");
-  });
-});
-
-function refresh(showTip){
-  return fetch("/api/state?t=" + encodeURIComponent(TOKEN), {cache:"no-store"})
-    .then(function(r){ return r.json(); })
-    .then(function(j){
-      if (j && j.error && !j.cfg) throw new Error(j.error);
-      render(j);
-      if (showTip) toast("已刷新");
-    })
-    .catch(function(e){
-      $("liveDot").className = "live off";
-      $("statusLine").textContent = "连不上本机服务（可能已退出）";
-      if (showTip) toast("刷新失败：" + e.message, true);
-    });
 }
+$("modeFocus").addEventListener("click", function(){ setMode(false); });
+$("modeBing").addEventListener("click", function(){ setMode(true); });
 
-/* ── 图库浏览 ── */
-var libState = { src: "bing", skip: 0 };
-
-function loadLib(src, more){
-  if (!more){ libState.src = src; libState.skip = 0; $("lib").innerHTML = ""; }
-  libState.src = src || libState.src;
-  return api("list", {name: libState.src, value: libState.skip}).then(function(j){
-    if (!j || !j.items) return;
-    if (j.items.length) libState.skip = libState.skip + j.items.length;
-    $("libTag").textContent = "共 " + (j.total || 0) + " 张";
-    var cur = baseName(S && S.st ? S.st.lastWall : "");
-    renderThumbs("lib", j.items, {}, cur, more);
-    $("libNone").style.display = (j.total > 0) ? "none" : "";
-    $("libNoneText").textContent = "这个库里还没有图（" + (j.dir || "") + "）";
-  });
-}
-
-$("libBing").addEventListener("click", function(){
-  $("libBing").classList.add("on"); $("libSpot").classList.remove("on");
-  loadLib("bing", false);
-});
-$("libSpot").addEventListener("click", function(){
-  $("libSpot").classList.add("on"); $("libBing").classList.remove("on");
-  loadLib("spotlight", false);
-});
-$("libMore").addEventListener("click", function(){ loadLib(libState.src, true); });
-$("libOpenDir").addEventListener("click", function(){
-  api("openDir", {name: libState.src === "spotlight" ? "spotlight" : "bing"});
-});
-
-/* ── 后台任务 ── */
+/* 补货 / 补齐 / 重置 / 换位置 */
 function startJob(name, arg, tip){
-  return api("job", {name: name, value: arg}).then(function(){
+  return api("job", { name: name, value: arg }).then(function(){
     toast(tip || "已在后台开始，进度看「最近动作」");
-    setTimeout(function(){ refresh(false); }, 1200);
   });
 }
 $("jobRefill").addEventListener("click", function(){ startJob("refill", "", "开始补新图（后台）"); });
@@ -803,7 +1616,7 @@ $("jobBackfill").addEventListener("click", function(){ startJob("backfill", "", 
 $("jobArchive").addEventListener("click", function(){
   var ym = prompt("补齐哪个月？写成 2024-08 这种样子", "");
   if (!ym) return;
-  if (!/^\d{4}-\d{2}$/.test(ym.trim())) { toast("年月格式不对，要 2024-08 这样", true); return; }
+  if (!/^\d{4}-\d{2}$/.test(ym.trim())){ toast("年月格式不对，要 2024-08 这样", true); return; }
   startJob("archive", ym.trim(), "开始补齐 " + ym.trim() + "（后台）");
 });
 $("jobReset").addEventListener("click", function(){
@@ -817,36 +1630,247 @@ $("btnMoveBase").addEventListener("click", function(){
   startJob("setbase", p, "开始迁移库（后台）");
 });
 
-/* 更换模式：两个按钮直接切（后端会立刻动作，不是等下一轮）
-   切到必应模式 -> 当场换成"今天这张"必应图，之后一天一换；
-   切回聚焦模式 -> 当场按轮换换一张「聚焦」图，恢复按间隔轮换。 */
-function setMode(bing){
-  var cur = !!(S && S.cfg && S.cfg.bing_only);
-  if (cur === bing) { toast(bing ? "已经是必应模式" : "已经是聚焦模式"); return; }
+/* 本地文件夹图源 */
+$("btnLocalPick").addEventListener("click", function(){
+  var p = prompt("把哪个文件夹当图源？\n（只记文件名，不搬、不复制、不删你的照片）\n例如 D:\\我的照片\\风景", "");
+  if (!p) return;
   run(function(){
-    return api("set", {key: "bing_only", value: bing ? "true" : "false"}).then(function(){
-      toast(bing ? "已切到必应模式：正在换成今天的必应图…" : "已切到聚焦模式：正在按轮换换一张…");
-      setTimeout(function(){ refresh(false); }, 7000);
-    });
-  });
-}
-$("modeFocus").addEventListener("click", function(){ setMode(false); });
-$("modeBing").addEventListener("click", function(){ setMode(true); });
-
-/* 开机自动换：不是改配置，是建/删启动项 + 拉后台，所以走单独的动作 */
-$("swAutoStart").addEventListener("click", function(){
-  var on = !!(S && S.auto && S.auto.startup);
-  run(function(){
-    return api("autostart", {value: on ? "off" : "on"}).then(function(j){
-      toast((j && j.note) || "已处理", !(j && j.ok));
+    return api("set", { key: "local_src_dir", value: p }).then(function(j){
+      toast((j && j.ok === false) ? "这个目录没设上" : ("已接入：" + p), !(j && j.ok !== false));
     });
   });
 });
+$("btnLocalScan").addEventListener("click", function(){
+  run(function(){
+    return api("localscan").then(function(j){
+      toast("扫完了" + (j && j.added != null ? ("：" + j.added + " 张进了轮换队列") : ""));
+    });
+  });
+});
+$("btnLocalOff").addEventListener("click", function(){
+  if (!confirm("关掉本地文件夹图源？\n（只是不再从那个文件夹取图，你的照片一张都不会被删）")) return;
+  run(function(){
+    return api("set", { key: "local_src_dir", value: "" }).then(function(){ toast("已关掉本地文件夹图源"); });
+  });
+});
+$("btnLocalOpen").addEventListener("click", function(){ api("openDir", { name: "local" }).then(function(j){ if(j && j.ok) toast("已打开：" + (j.path || "?") + "（端口 " + location.port + "）"); else if(j && j.error) toast(j.error, true); }); });
 
-/* 启动：先拉一次，之后每 20 秒刷新一次（页面没焦点时跳过，省得白跑） */
+/* 顶栏与「当前」页的动作 */
+$("btnSwap").addEventListener("click", function(){
+  run(function(){
+    var b = $("btnSwap");
+    b.disabled = true;
+    return api("swap").then(function(j){
+      b.disabled = false;
+      toast(j && j.ok ? "换好了" : "这一轮没换成，稍后再试", !(j && j.ok));
+    }, function(){ b.disabled = false; });
+  });
+});
+$("btnFav").addEventListener("click", function(){
+  run(function(){
+    var isFav = $("btnFav").classList.contains("on");
+    return api(isFav ? "unfav" : "fav").then(function(){ toast(isFav ? "已取消收藏" : "已收藏"); });
+  });
+});
+$("btnOpenImg").addEventListener("click", function(){
+  if (S && S.st && S.st.lastWall) window.open(wallUrl(S.st.lastWall), "_blank", "noopener");
+});
+var od1 = $("btnOpenDir"); if (od1) od1.addEventListener("click", function(){ api("openDir", { name: "data" }).then(function(j){ if(j && j.ok) toast("已打开：" + (j.path || "?") + "（端口 " + location.port + "）"); else if(j && j.error) toast(j.error, true); }); });
+$("btnOpenDir2").addEventListener("click", function(){ api("openDir", { name: "data" }); });
+$("btnCheckUpd").addEventListener("click", function(){
+  run(function(){
+    toast("正在检查更新…");
+    return api("update").then(function(j){
+      toast(j && j.updated ? "已升级，重新打开控制台生效" : "已是最新版");
+    });
+  });
+});
+$("btnRefresh").addEventListener("click", function(){ refresh(true); });
+$("btnQuit").addEventListener("click", function(){
+  api("quit").then(function(){
+    $("statusPill").className = "pill bad";
+    setText("statusText", "已退出");
+    toast("控制台已退出，可以直接关掉这个标签页");
+  });
+});
+
+/* 键盘: Space 换一张 / F 收藏 / 1 2 3 切视图(Esc 从输入框退出) */
+document.addEventListener("keydown", function(e){
+  var tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
+  if (tag === "input" || tag === "select" || tag === "textarea"){
+    if (e.key === "Escape" && e.target.blur) e.target.blur();
+    return;
+  }
+  if (e.key === " " || e.code === "Space"){ e.preventDefault(); $("btnSwap").click(); }
+  else if (e.key === "f" || e.key === "F"){ e.preventDefault(); $("btnFav").click(); }
+  else if (e.key === "1"){ showTab("now"); }
+  else if (e.key === "2"){ showTab("lib"); }
+  else if (e.key === "3"){ showTab("set"); }
+});
+
+/* 状态: 只在页面自己需要时拉一次, **不轮询**(服务是单线程手写 TcpListener) */
+function setOffline(on, why){
+  var n = $("offNote");
+  if (!n) return;
+  n.hidden = !on;
+  var w = $("offWhy");
+  if (w) w.textContent = on ? ("（" + (why || "无响应") + "）") : "";
+}
+function refresh(showTip){
+  LAST_STATE_AT = Date.now();
+  return fetch("/api/state?t=" + encodeURIComponent(TOKEN), { cache: "no-store" })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (j && j.error && !j.cfg) throw new Error(j.error);
+      if (!j || j.ok === false) throw new Error((j && j.error) || "服务返回了空状态");
+      render(j);
+      setOffline(false);
+      if (showTip) toast("已刷新");
+      return j;
+    })
+    .catch(function(e){
+      $("statusPill").className = "pill bad";
+      setText("statusText", "连不上本机服务");
+      /* 顶栏那颗胶囊会被滚出视野，满屏「—」看着像程序坏了 —— 内容区再钉一条说明。 */
+      setOffline(true, e.message);
+      if (showTip) toast("刷新失败：" + e.message, true);
+    });
+}
+try { $("offRetry").addEventListener("click", function(){ refresh(true); }); } catch (e) {}
+
+/* 启动 */
+initTheme();
 refresh(false);
-loadLib("bing", false);
-setInterval(function(){ if (!document.hidden) refresh(false); }, 20000);
+/* ?tab=lib / ?tab=set 可以直接打开某个视图(截图与"贴个链接给用户"都用得上) */
+var mTab = String(location.search || "").match(/[?&]tab=(now|lib|set)\b/);
+if (mTab) showTab(mTab[1]);
+setInterval(tick, 1000);      /* 只有前端计时, 不发请求 */
+var LAST_BLIND_RETRY = 0;
+document.addEventListener("visibilitychange", function(){
+  if (document.hidden) return;
+  var now = Date.now();
+  /* 【2026-10-25 用户「当前预览图没锁定当前壁纸」】原来切回前台时, 只要页面上已经有数据
+     就只重跑前端计时 —— 人离开这段时间后台换过的图就一直不反映到大卡上。
+     现在切回来补拉一次(距上次拉取不足 8 秒就不重复拉, 免得来回切标签压服务)。 */
+  if (S){
+    if (now - LAST_STATE_AT >= REVEAL_MIN_GAP) refresh(false);
+    else tick();
+    return;
+  }
+  /* 2026-10-25（用户截图：整页「—」）：这一页从没拿到过数据（多半是旧标签页连的是
+     上一次会话的随机端口），切回来时再试一次，能连上就自愈。只在没有数据时试，
+     并且隔 5 秒才试一次——服务是单线程 TcpListener，别把切换标签变成压测。 */
+  if (now - LAST_BLIND_RETRY < 5000) return;
+  LAST_BLIND_RETRY = now;
+  refresh(false);
+});
+</script>
+<!-- ===== 外观：主题三档 + 主色（2026-10-24 四款统一组件） ===== -->
+<style>
+#apFab{z-index:70;width:30px;height:30px;border-radius:50%;flex:none;margin-left:6px;border:1px solid var(--line);background:transparent;color:var(--txt-2);display:grid;place-items:center;cursor:pointer;font-size:13px;padding:0}
+#apFab:hover{color:var(--accent);border-color:var(--accent)}
+#apPop{position:fixed;z-index:71;width:250px;background:var(--card);border:1px solid var(--line-2);
+  border-radius:12px;box-shadow:var(--shadow-2);padding:12px;display:none}
+#apPop.on{display:block}
+.ap-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.ap-lab{font-size:11px;color:var(--txt-3);width:30px;flex:none}
+.ap-seg{display:flex;gap:4px;flex:1}
+.ap-seg button{flex:1;height:26px;border-radius:7px;border:1px solid var(--line);background:transparent;
+  color:var(--txt-2);font-size:11px;cursor:pointer;padding:0}
+.ap-seg button.on{background:color-mix(in srgb,var(--accent) 15%,transparent);border-color:var(--accent);color:var(--accent);font-weight:600}
+.ap-sw{display:flex;gap:8px;flex:1}
+.ap-sw button{width:20px;height:20px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0;flex:none}
+.ap-sw button.on{border-color:var(--txt)}
+.ap-hint{font-size:10px;color:var(--txt-3);line-height:1.5;margin-top:9px}
+#btnTheme,#themeBtn{display:none!important}
+html[data-accent="blue"]{--accent:#4f8cff;--accent-ink:#04122e}
+html[data-accent="green"]{--accent:#3ecf8e;--accent-ink:#062016}
+html[data-accent="violet"]{--accent:#a78bfa;--accent-ink:#1a1030}
+html[data-accent="amber"]{--accent:#f0b429;--accent-ink:#221603}
+html[data-theme="light"][data-accent="blue"]{--accent:#1a5fd0;--accent-ink:#fff}
+html[data-theme="light"][data-accent="green"]{--accent:#0f9d58;--accent-ink:#fff}
+html[data-theme="light"][data-accent="violet"]{--accent:#6d28d9;--accent-ink:#fff}
+html[data-theme="light"][data-accent="amber"]{--accent:#a86f00;--accent-ink:#fff}
+html[data-accent]{--accent-soft:color-mix(in srgb,var(--accent) 14%,transparent);--accent-line:color-mix(in srgb,var(--accent) 45%,transparent)}
+</style>
+<button id="apFab" title="外观：主题与主色" aria-label="外观">◐</button>
+<div id="apPop" role="dialog" aria-label="外观设置">
+  <div class="ap-row"><span class="ap-lab">主题</span><div class="ap-seg" id="apMode">
+    <button type="button" data-m="auto">跟随系统</button><button type="button" data-m="light">亮色</button><button type="button" data-m="dark">暗色</button>
+  </div></div>
+  <div class="ap-row"><span class="ap-lab">主色</span><div class="ap-sw" id="apAcc">
+    <button type="button" data-a="default" title="品牌色"></button><button type="button" data-a="blue" title="蓝" style="background:#4f8cff"></button><button type="button" data-a="green" title="绿" style="background:#3ecf8e"></button><button type="button" data-a="violet" title="紫" style="background:#a78bfa"></button><button type="button" data-a="amber" title="琥珀" style="background:#f0b429"></button>
+  </div></div>
+  <div class="ap-hint">「跟随系统」随 Windows 亮/暗模式自动切换；选择存进程序配置，换端口、重开、换浏览器都在。</div>
+</div>
+<script>
+(function(){
+  var R=document.documentElement, K='ui-theme-mode', A='ui-accent';
+  var media=window.matchMedia?window.matchMedia('(prefers-color-scheme: light)'):null;
+  /* 品牌色给「主色-默认」那颗小方块用。页首现在会提前写 data-accent(防主色闪)，
+     所以读之前先把属性摘掉、读完挂回去 —— 不然量到的是用户选的主色、不是品牌色。 */
+  var savedAcc=R.getAttribute('data-accent'); if(savedAcc) R.removeAttribute('data-accent');
+  var brand=(getComputedStyle(R).getPropertyValue('--accent')||'').trim()||'#888';
+  if(savedAcc) R.setAttribute('data-accent',savedAcc);
+  /* 口径只在页首 __BWUI 一处定义（本次点击 > 服务端 seed > localStorage > 跟随系统）。
+     万一这段被单文件拆开跑在页首之前，回落成原来的 localStorage 读法。 */
+  var U=window.__BWUI||null;
+  function mode(){ try{return (U?U.mode():localStorage.getItem(K)||'auto')}catch(e){return 'auto'} }
+  function acc(){ try{return (U?U.accent():localStorage.getItem(A)||'default')}catch(e){return 'default'} }
+  function apply(){
+    var m=mode();
+    var dark = m==='dark' || (m==='auto' && !(media&&media.matches));
+    R.setAttribute('data-theme', dark?'dark':'light');
+    var a=acc();
+    if(a==='default'){ R.removeAttribute('data-accent'); } else { R.setAttribute('data-accent',a); }
+    sync(m,a);
+  }
+  function sync(m,a){
+    var mb=document.querySelectorAll('#apMode button');
+    for(var i=0;i<mb.length;i++) mb[i].classList.toggle('on', mb[i].getAttribute('data-m')===m);
+    var ab=document.querySelectorAll('#apAcc button');
+    for(var j=0;j<ab.length;j++) ab[j].classList.toggle('on', ab[j].getAttribute('data-a')===a);
+    var fab=document.getElementById('apFab');
+    if(fab) fab.textContent = R.getAttribute('data-theme')==='dark' ? '◐' : '◑';
+  }
+  function setMode(m){
+    if(U){ U.setLS({'ui-theme-mode':m}); U.persist('panel_theme',m); }
+    else { try{localStorage.setItem(K,m)}catch(e){} }
+    apply();
+  }
+  function setAcc(a){
+    if(U){ U.setLS({'ui-accent':a}); U.persist('panel_accent',a); }
+    else { try{localStorage.setItem(A,a)}catch(e){} }
+    apply();
+  }
+  var fab=document.getElementById('apFab'), pop=document.getElementById('apPop');
+  var holder=document.querySelector('.top-r')||document.querySelector('.hbar')||document.querySelector('header');
+  if(holder && fab){ holder.appendChild(fab); if(holder.tagName==='HEADER'){ fab.style.position='fixed'; fab.style.top='10px'; fab.style.right='12px'; } }
+  if(fab) fab.addEventListener('click',function(e){ e.stopPropagation();
+    if(!pop.classList.contains('on')){ var r=fab.getBoundingClientRect();
+      pop.style.right='12px'; pop.style.left='auto'; pop.style.top=(r.bottom+8)+'px'; }
+    pop.classList.toggle('on'); });
+  document.addEventListener('click',function(e){ if(pop && !pop.contains(e.target) && e.target!==fab) pop.classList.remove('on'); });
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape'){ pop && pop.classList.remove('on'); }
+    if((e.key==='t'||e.key==='T') && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target.tagName||''))){
+      e.stopImmediatePropagation(); e.preventDefault();
+      setMode(R.getAttribute('data-theme')==='dark'?'light':'dark');
+    }
+  }, true);
+  document.getElementById('apMode').addEventListener('click',function(e){
+    var b=e.target.closest?e.target.closest('button'):null; if(!b) return; setMode(b.getAttribute('data-m'));
+  });
+  document.getElementById('apAcc').addEventListener('click',function(e){
+    var b=e.target.closest?e.target.closest('button'):null; if(!b) return; setAcc(b.getAttribute('data-a'));
+  });
+  var d=document.querySelector('#apAcc button[data-a="default"]'); if(d) d.style.background=brand;
+  if(media && media.addEventListener) media.addEventListener('change',function(){ if(mode()==='auto') apply(); });
+  else if(media && media.addListener) media.addListener(function(){ if(mode()==='auto') apply(); });
+  var forced=null; try{ forced=new URLSearchParams(location.search).get('theme'); }catch(e){}
+  if(forced==='light'||forced==='dark'){ R.setAttribute('data-theme',forced); sync(mode(),acc()); } else { apply(); }
+  window.__uiTheme={mode:mode,accent:acc,setMode:setMode,setAccent:setAcc};
+})();
 </script>
 </body>
 </html>

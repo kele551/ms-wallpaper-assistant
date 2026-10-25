@@ -14,6 +14,10 @@ daemon.stop
 微软壁纸助手-v*.exe
 # 2026-10-16: 产品更名后带版本号的那份也要挡（此前只挡了旧名，git add -A 会把成品带进公开仓库）
 壁纸助手-v*.exe
+# 2026-10-25 文件名更正: 成品现在叫「桌面壁纸.exe」(唯一来源 launcher.py 的 EXE_STEM),
+# 老名字上面那几条继续挡着 —— 同一次 python build-exe.py 可能两个名字都落过盘。
+桌面壁纸.exe
+桌面壁纸-v*.exe
 *.spec
 build/
 dist/
@@ -41,5 +45,7 @@ secrets/
 .gitee_token
 tools/publish.local.json
 
-# 测试生成目录（tests/gen_ps_test.py 每次重建，不入库）
+# 测试生成目录（三个 gen_*_test.py 每次重建，里面是临时图库/假 state，不入库）
 tests/_t2/
+tests/_t3/
+tests/_t4/

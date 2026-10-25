@@ -17,6 +17,28 @@ import argparse, hashlib, io, json, os, re, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 
+
+def _const_from_launcher(name, fallback):
+    """从 launcher.py 读一个字符串常量（EXE_STEM / APP_NAME），读不到就用 fallback。
+
+    成品文件名是升级链上最脆的一环：version.json 里 launcher.url 指向的附件名
+    必须和真正上传的附件名一字不差，差一个字全体老用户自动升级就 404。
+    2026-10-25 文件名改成 桌面壁纸.exe，名字的唯一来源放 launcher.py 的 EXE_STEM，
+    这里和 tools/publish.py 都只读不写死。
+    """
+    try:
+        with io.open(os.path.join(REPO, 'launcher.py'), encoding='utf-8-sig') as f:
+            m = re.search(r"^%s\s*=\s*'([^']+)'" % name, f.read(), re.M)
+        if m:
+            return m.group(1)
+    except Exception as _e:
+        print('警告: 从 launcher.py 读 %s 失败(%s)，用默认值 %r' % (name, _e, fallback), file=sys.stderr)
+    return fallback
+
+
+EXE_STEM = _const_from_launcher('EXE_STEM', '桌面壁纸')
+EXE_NAME = EXE_STEM + '.exe'
+
 def sha256(p):
     with open(p, 'rb') as f:
         return hashlib.sha256(f.read()).hexdigest().upper()
@@ -76,9 +98,10 @@ def sign_file(raw, out_path, key_path):
 
 def main():
     ap = argparse.ArgumentParser()
-    # 2026-10-12 改名: 成品/附件都叫 壁纸助手.exe (老名「微软壁纸助手.exe」是历史附件名,
-    # 只存在于旧发行页; version.json 指向必须与本次上传的附件名一字不差, 否则全体老用户 404)
-    ap.add_argument('--exe', default=os.path.join(REPO, '壁纸助手.exe'))
+    # 2026-10-25 文件名更正: 成品/附件叫 桌面壁纸.exe。version.json 的 launcher.url
+    # 必须与本次上传的附件名**一字不差**, 否则全体老用户 404 —— 所以名字从 launcher.py 的
+    # EXE_STEM 推导, 不再在这一处写死。(历史附件名「微软壁纸助手.exe」「壁纸助手.exe」只存在于旧发行页。)
+    ap.add_argument('--exe', default=os.path.join(REPO, EXE_NAME))
     ap.add_argument('--out', default=os.path.join(REPO, 'version.json'))
     a = ap.parse_args()
     with io.open(os.path.join(REPO, 'launcher.py'), encoding='utf-8') as f:
@@ -97,7 +120,7 @@ def main():
             'core.ps1': {'sha256': sha256(os.path.join(REPO, 'core.ps1')), 'url': raw + 'core.ps1?ref=main'},
             'menu.ps1': {'sha256': sha256(os.path.join(REPO, 'menu.ps1')), 'url': raw + 'menu.ps1?ref=main'},
         },
-        'launcher': {'sha256': sha256(a.exe), 'url': rel + '壁纸助手.exe',
+        'launcher': {'sha256': sha256(a.exe), 'url': rel + EXE_NAME,
                      'size': os.path.getsize(a.exe)},
     }
     # ① 先写 version.json（签名对象是这份文件的**原始字节**，所以必须先落盘、再签名）

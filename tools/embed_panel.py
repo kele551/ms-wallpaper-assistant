@@ -4,12 +4,16 @@
 #   多一个 panel.html 他们永远收不到。所以页面源码留在 panel.html(好改好审),
 #   发版前用这个脚本同步进 core.ps1。
 import io
+import os
 import re
 import sys
 
-REPO = r"F:\Harness\projects\微软壁纸助手\repo"
-PANEL = REPO + r"\panel.html"
-CORE = REPO + r"\core.ps1"
+# 仓库根由脚本自己的位置推导：以前这里写死过维护者本机的绝对路径(旧目录名还在里面)，
+# 项目目录一改名嵌面板就直接失败，而发版闸门只扫 panel.html、看不见工具脚本里的这种死路径。
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(HERE)
+PANEL = os.path.join(REPO, "panel.html")
+CORE = os.path.join(REPO, "core.ps1")
 BEGIN = "# >>> PANEL_HTML_BEGIN"
 END = "# <<< PANEL_HTML_END"
 

@@ -29,7 +29,7 @@
 用法：
   python tools/preflight_release.py [exe路径] [--offline] [--no-links] [-h]
 
-  exe路径     候选成品（默认 <仓库>/壁纸助手.exe；仓库里不带成品，所以默认会 SKIP 那一节）
+  exe路径     候选成品（默认 <仓库>/桌面壁纸.exe；仓库里不带成品，所以默认会 SKIP 那一节）
   --offline   完全不联网（跳过「链接与徽章」「线上升级源对齐」两节）
   --no-links  只跳过「链接与徽章」一节
   -h, --help  只打印这段说明就退出（不联网、不写任何文件）
@@ -79,9 +79,12 @@ MANUAL = os.path.join(REPO, '使用说明.txt')
 GITHUB_REPO = 'https://github.com/kele551/ms-wallpaper-assistant'
 UA = 'MSWallpaperPreflight/1.0 (+%s)' % GITHUB_REPO
 
-# 旧名：产品 2026-10-12 更名「微软壁纸助手」→「壁纸助手」。文档里**允许**按兼容说明提及旧名，
+# 旧名：产品 2026-10-12 更名「微软壁纸助手」→「壁纸助手」，2026-10-25 文件名再更正为
+# 「桌面壁纸.exe」（和显示名、快捷方式名同一口径）。文档里**允许**按兼容说明提及旧名，
 # 但不许把旧名当成当前文件名/链接引用（差一个字，老用户点下载就 404）。
 LEGACY_NAME = '微软壁纸助手'
+LEGACY_EXE = '壁纸助手.exe'
+LEGACY_NAMES = (LEGACY_NAME, LEGACY_EXE)
 LEGACY_QUALIFIERS = ('旧', '老', '原名', '更名', '改名', '历史', '撤回', '回到',
                      '沿用', '保留', '升级上来')
 
@@ -89,7 +92,7 @@ USAGE = """桌面壁纸发版前自检 —— 用法
 
   python tools/preflight_release.py [候选exe路径] [开关]
 
-  候选exe路径        默认 <仓库>/壁纸助手.exe（仓库里不带成品，默认那一节会 SKIP）
+  候选exe路径        默认 <仓库>/桌面壁纸.exe（仓库里不带成品，默认那一节会 SKIP）
 
 开关:
   -h, --help   只打印这段说明就退出（不联网、不写任何文件）
@@ -386,10 +389,13 @@ check('能读出 launcher.py 的 VERSION', bool(VER), 'VERSION=%r' % VER)
 if not VER:
     finish()
 
-# 产品名与成品名：从 launcher.py 的 APP_NAME 推导（不再写死，改名时少一处漏改）
+# 产品名与成品名：从 launcher.py 推导（不再写死，改名时少一处漏改）
+# 2026-10-25: 成品文件名另有 EXE_STEM（= 桌面壁纸），APP_NAME 只剩数据目录名，两者不再同名。
 _m = re.search(r"APP_NAME\s*=\s*'([^']+)'", _src_launcher)
 APP_NAME = _m.group(1) if _m else ''
-EXE_NAME = (APP_NAME + '.exe') if APP_NAME else '壁纸助手.exe'
+_m = re.search(r"^EXE_STEM\s*=\s*'([^']+)'", _src_launcher, re.M)
+EXE_STEM = _m.group(1) if _m else ''
+EXE_NAME = (EXE_STEM + '.exe') if EXE_STEM else ((APP_NAME + '.exe') if APP_NAME else '桌面壁纸.exe')
 check('能读出 launcher.py 的 APP_NAME', bool(APP_NAME), 'APP_NAME=%r → 成品名 %s' % (APP_NAME, EXE_NAME))
 EXE = _positional[0] if _positional else os.path.join(REPO, EXE_NAME)
 
@@ -609,12 +615,14 @@ check('对外文档里没有私人邮箱域名关键字（连 @ 被拆掉也躲�
 for _f in ('README.md', '使用说明.txt'):
     _bad = []
     for _ln in (_texts.get(_f) or '').splitlines():
-        if LEGACY_NAME in _ln:
-            if re.search(r'https?://\S*' + re.escape(LEGACY_NAME), _ln):
+        for _lg in LEGACY_NAMES:
+            if _lg not in _ln:
+                continue
+            if re.search(r'https?://\S*' + re.escape(_lg), _ln):
                 _bad.append('链接带旧名: ' + _ln.strip()[:60])
             elif not any(q in _ln for q in LEGACY_QUALIFIERS):
                 _bad.append('裸旧名: ' + _ln.strip()[:60])
-    check('%s 里旧名（%s）只出现在兼容说明里' % (_f, LEGACY_NAME), not _bad,
+    check('%s 里旧名（%s）只出现在兼容说明里' % (_f, '、'.join(LEGACY_NAMES)), not _bad,
           '；'.join(_bad[:2]))
 
 # 2026-10-23: 主源 2026-10-17 已迁到 GitCode, 这里原来只认 Gitee 地址 ——

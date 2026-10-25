@@ -28,7 +28,7 @@
 
 <p>🖼 <b>让电脑桌面壁纸自己换，你不用管</b>　·　必应每日一图 + Windows 聚焦</p>
 
-<p><sub>2026-10-12 产品更名：「微软壁纸助手」→「壁纸助手」（仓库名与下载地址不变；界面显示名一直是「桌面壁纸」）</sub></p>
+<p><sub>2026-10-12 产品更名：「微软壁纸助手」→「壁纸助手」；2026-10-25 文件名更正为 <b>桌面壁纸.exe</b>（与界面显示名同一口径）。仓库名与下载地址不变；老机器原地升级后文件名还是旧名，同一个程序，照常自动升级。</sub></p>
 
 <p>作者 <b>海风（kele551）</b>　·　<a href="https://gitcode.com/kele551/ms-wallpaper-assistant">GitCode（主）</a>　·　<a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub（镜像）</a>　·　<a href="https://atomgit.com/kele551/ms-wallpaper-assistant">AtomGit（镜像）</a>　·　<a href="docs/README_EN.md">English</a></p>
 </div>
@@ -91,12 +91,13 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 > **三个平台代码一致**：[GitCode](https://gitcode.com/kele551/ms-wallpaper-assistant)（主源）· [GitHub](https://github.com/kele551/ms-wallpaper-assistant)（镜像）· [AtomGit](https://atomgit.com/kele551/ms-wallpaper-assistant)（代码镜像）。
 > **二进制发行包请从 GitCode（主源）或 GitHub（镜像）下载**；三个平台都收 Issue / PR。
 
-> 约 7.2 MB 的 zip（7,561,140 字节），解压后里面就两样东西：`壁纸助手.exe`（双击这个）+ `使用说明.txt`。
+> 约 7.2 MB 的 zip，解压后里面就两样东西：`桌面壁纸.exe`（双击这个）+ `使用说明.txt`。
+> （2026-10-25 起文件名从旧的 `壁纸助手.exe` 改成 `桌面壁纸.exe`，与界面显示名一致；旧名那份是同一个程序。）
 > 就这一个 exe，不用挑、不用装、不用下一步下一步。
 >
 > **杀软报毒是误报，可以放心。** 程序没有数字签名、又是「单文件自解压」打包、自动升级还会下载脚本再运行，
 > 这三样最容易触发杀软的启发式误判。想自己确认文件没被动过：发行页上写了安装包的 SHA256，
-> 下载后执行 `certutil -hashfile 壁纸助手.exe SHA256` 比对即可；一致就是原版。
+> 下载后执行 `certutil -hashfile 桌面壁纸.exe SHA256` 比对即可；一致就是原版。
 > 处理办法：把这个 exe 加进杀软的信任/排除名单。源码全部公开，可自行查阅。
 >
 > **本次更新了安装包，但版本号没有变**：已装 v2.2.1 的朋友不会收到升级提示（升级是拿线上版本号和本地版本号比的）；
@@ -113,7 +114,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 三步用起来
 
-**第 1 步** —— 解压，双击 `壁纸助手.exe`，浏览器会自动打开控制台。
+**第 1 步** —— 解压，双击 `桌面壁纸.exe`，浏览器会自动打开控制台。
 
 **第 2 步** —— 第一次打开，它会自动下载今天的必应图 + 一批聚焦图，屏幕上会告诉你壁纸存在哪。等几十秒就好。
 
@@ -364,7 +365,8 @@ python build-exe.py --release            # 出成品
 python tools/preflight_release.py        # 发版前自检：全绿才算可用
 ```
 
-- **产物**：仓库根目录的 `壁纸助手.exe`（固定名，日常就这一份）；加 `--release` 还会多出 `壁纸助手-v<版本>.exe` 与发给用户的 `MSWallpaperAssistant-v<版本>.zip`。
+- **产物**：仓库根目录的 `桌面壁纸.exe`（固定名，日常就这一份）；加 `--release` 还会多出 `桌面壁纸-v<版本>.exe` 与发给用户的 `MSWallpaperAssistant-v<版本>.zip`。
+  文件名以 `launcher.py` 的 `EXE_STEM` 为唯一来源；`build-exe.py`、`tools/publish.py`、`tools/make_version_json.py`、发版自检都从那里推导，不再各写一遍。
 - **怎么核对**：`python tools/preflight_release.py` 会查 Python 语法、`.ps1` 的 BOM 与语法、版本一致性、成品与升级源同源等；`[SKIP]` 是「本机没装依赖 / 没有成品 exe / 没联网」，不算失败，`[FAIL]` 一条都不许有。
 - 改完代码要跑哪些命令、容器/CI 里怎么打、键位与设置全表在哪，见 [CONTRIBUTING.md](docs/CONTRIBUTING.md) 第四节；仓库结构与「改哪儿」见 [ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 

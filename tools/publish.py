@@ -97,10 +97,32 @@ GIT_EXE = (GIT_EXEC_PATH + '/git.exe') if GIT_EXEC_PATH else 'git'
 # 纯 API 推 GitHub(含附件), 2026-09-22 重写
 GH_PUSH = os.environ.get('MWA_GH_PUSH') or _CFG.get('gh_push') or str(REPO_DIR / 'tools' / 'github_push.py')
 ZIP_TPL = 'MSWallpaperAssistant-v%s.zip'          # zip 的 ASCII 名不改(仓库英文标识稳定)
+
+
+def _stem_from_launcher(name, fallback):
+    """从 launcher.py 读一个字符串常量（APP_NAME / EXE_STEM），读不到就用 fallback。
+
+    为什么从源码里读而不是在这儿再写一遍：2026-10-25 文件名改成 桌面壁纸.exe 时，
+    发版脚本里 '壁纸助手.exe' 一共散在 5 个文件、十几处；version.json 的 launcher.url
+    和实际上传的附件名差一个字，全体老用户的自动升级就 404。唯一来源放 launcher.py。
+    """
+    try:
+        txt = (REPO_DIR / 'launcher.py').read_text(encoding='utf-8-sig')
+        m = re.search(r"^%s\s*=\s*'([^']+)'" % name, txt, re.M)
+        if m:
+            return m.group(1)
+    except Exception as _e:
+        print('警告: 从 launcher.py 读 %s 失败(%s)，用默认值 %r' % (name, _e, fallback), file=sys.stderr)
+    return fallback
+
 # 2026-10-12 产品改名: 「微软壁纸助手」->「壁纸助手」。GitHub 侧的 ASCII 附件名
 # (MSWallpaperAssistant-vX.Y.Z.exe)同样不改 —— 那条线路怕中文名被削。
-APP_NAME = '壁纸助手'
-EXE_NAME = '壁纸助手.exe'                          # version.json 里写的就是这个名字, 必须传上去
+# 2026-10-25 文件名更正: exe 文件名跟显示名一致 -> 桌面壁纸.exe。
+# APP_NAME 继续表示数据目录名(%LOCALAPPDATA%\壁纸助手), 那个不随文件名改。
+# 两个名字都从 launcher.py 推导(那处是唯一来源), 免得改名时漏改一处就 404。
+APP_NAME = _stem_from_launcher('APP_NAME', '壁纸助手')
+EXE_STEM = _stem_from_launcher('EXE_STEM', APP_NAME)
+EXE_NAME = EXE_STEM + '.exe'                       # version.json 里写的就是这个名字, 必须传上去
 
 # 版本常量所在的文件（发版时改这几处）
 #   · core.ps1 **没有** $global:BWVersion（版本只在 launcher.py 与 menu.ps1 定义，
@@ -236,12 +258,12 @@ def update_readme(ver, commit=True):
     new = txt
     new = re.sub(r'releases/download/v[0-9.]+/', 'releases/download/v%s/' % ver, new)
     new = re.sub(r'MSWallpaperAssistant-v[0-9.]+\.zip', 'MSWallpaperAssistant-v%s.zip' % ver, new)
-    new = re.sub(r'壁纸助手-v[0-9.]+\.exe', '壁纸助手-v%s.exe' % ver, new)
+    new = re.sub(r'%s-v[0-9.]+\.exe' % EXE_STEM, '%s-v%s.exe' % (EXE_STEM, ver), new)
     new = re.sub(r'version-v[0-9.]+', 'version-v%s' % ver, new)
     new = re.sub(r'下载 v[0-9.]+ 安装包', '下载 v%s 安装包' % ver, new)
     new = re.sub(r'当前云端最新版本：v[0-9.]+', '当前云端最新版本：v%s' % ver, new)
     new = re.sub(r'当前最新：v[0-9.]+', '当前最新：v%s' % ver, new)
-    new = re.sub(r'壁纸助手 v[0-9.]+', '壁纸助手 v%s' % ver, new)
+    new = re.sub(r'%s v[0-9.]+' % EXE_STEM, '%s v%s' % (EXE_STEM, ver), new)
     new = re.sub(r'比如 `v[0-9.]+`', '比如 `v%s`' % ver, new)
     new = re.sub(r'桌面壁纸 v[0-9.]+', '桌面壁纸 v%s' % ver, new)   # 2026-10-12: 菜单截图标题行也带版本
     new = re.sub(r'例如 v[0-9.]+', '例如 v%s' % ver, new)
@@ -526,7 +548,7 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
 
     # ③ 升级源：必须和本次 exe 同一份，否则自动升级会校验不过
     plain_exe = REPO_DIR / EXE_NAME
-    tagged_exe = REPO_DIR / ('%s-v%s.exe' % (APP_NAME, ver))
+    tagged_exe = REPO_DIR / ('%s-v%s.exe' % (EXE_STEM, ver))
     if not skip_build and not plain_exe.exists():
         sys.exit('找不到 %s' % plain_exe)
     vj, vsig = make_version_json()

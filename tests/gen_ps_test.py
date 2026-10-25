@@ -22,6 +22,15 @@ os.makedirs(T, exist_ok=True)
 PS = r'''
 $T = '@ROOT@\tests\_t2'
 $out = @()
+# 2026-10-25: 一句写错的检查(比如 Join-Path 少给一个参数)原本只是"这条没记上",
+# 屏幕上一片绿, 其实少验了一条。这里把错误提上来: 当场炸, 宁可见底也不假绿。
+$ErrorActionPreference = 'Stop'
+# 真炸了也别把前面跑完的检查丢掉: 当场把已有结果 + 炸在哪一句写进 out.txt, 再停下来。
+trap {
+  $script:out += ('  [炸] ' + $_.Exception.Message)
+  Set-Content -LiteralPath (Join-Path $T 'out.txt') -Value $out -Encoding UTF8
+  break
+}
 function chk($n, $c, $x) {
   if ($c) { $script:out += ('  [通过] ' + $n) }
   else { $script:out += ('  [失败] ' + $n + ('  ' + [string]$x)) }
@@ -37,10 +46,14 @@ New-Item -ItemType Directory -Force -Path $data | Out-Null
 Copy-Item '@ROOT@\core.ps1' (Join-Path $data 'core.ps1') -Force
 Copy-Item '@ROOT@\壁纸助手.ico' (Join-Path $data '壁纸助手.ico') -Force
 $menuSrc = Get-Content -LiteralPath '@ROOT@\menu.ps1' -Raw -Encoding UTF8
-$cut = $menuSrc.IndexOf('# ---------- 主菜单 ----------')
-if ($cut -lt 1) { $cut = $menuSrc.Length }
+# 2026-10-25 修: 锚点「# ---------- 主菜单 ----------」在 V2.4.0 界面搬进网页控制台之后就没有了,
+# 于是 IndexOf 返回 -1 -> 落到"整份都拷"的兜底 -> 单测把 menu.ps1 **连起面板服务那一段**一起点源了,
+# Start-BwPanelServer 是阻塞的 accept 循环, 结果这套单测一跑就挂 30 分钟(闲置超时)才回得来,
+# 而且看起来像"测试卡死"。锚点换成还在的那一行, 并且**找不到就当场报错**, 不再静默兜底。
+$cut = $menuSrc.IndexOf('# BWPANEL_NOBROWSER=1')
+if ($cut -lt 1) { throw 'menu.ps1 里找不到截断锚点「# BWPANEL_NOBROWSER=1」, 别把起服务那一段也点源了' }
 $menuSrc.Substring(0, $cut) | Set-Content -LiteralPath (Join-Path $data 'menu_test.ps1') -Encoding UTF8
-$fakeExe = Join-Path $data '壁纸助手.exe'
+$fakeExe = Join-Path $data '桌面壁纸.exe'
 Set-Content -LiteralPath $fakeExe -Value 'fake' -Encoding ASCII
 Set-Content -LiteralPath (Join-Path $data 'launcher.txt') -Value $fakeExe -Encoding UTF8
 
@@ -58,8 +71,26 @@ chk '桌面已被测试接管' ((Get-BwDesktopDir) -eq $desk) (Get-BwDesktopDir)
 $ico = Get-BwIconLocation $fakeExe
 chk '图标取自独立的 .ico 文件' ($ico -like '*壁纸助手.ico*') $ico
 
+# ---- 2026-10-25 文件名更正: 三个名字都算「固定名」, 新名优先, 老名不复制第二份 ----
+$fn = Join-Path $T 'fixedname'
+New-Item -ItemType Directory -Force -Path $fn | Out-Null
+foreach ($nm in @('桌面壁纸.exe', '壁纸助手.exe', '微软壁纸助手.exe')) {
+  Set-Content -LiteralPath (Join-Path $fn $nm) -Value 'fake' -Encoding ASCII
+}
+$lt = Join-Path $data 'launcher.txt'
+$ltBak = ''
+if (Test-Path -LiteralPath $lt) { $ltBak = (Get-Content -LiteralPath $lt -Raw -Encoding UTF8) }
+Set-Content -LiteralPath $lt -Value (Join-Path $fn '微软壁纸助手.exe') -Encoding UTF8
+chk '三个名字都在时取新名' ((Get-BwFixedExe) -eq (Join-Path $fn '桌面壁纸.exe')) (Get-BwFixedExe)
+Remove-Item -LiteralPath (Join-Path $fn '桌面壁纸.exe') -Force
+chk '只剩老名时也认(不给老用户复制第二份 exe)' ((Get-BwFixedExe) -eq (Join-Path $fn '壁纸助手.exe')) (Get-BwFixedExe)
+Remove-Item -LiteralPath (Join-Path $fn '壁纸助手.exe') -Force
+chk '最老的「微软壁纸助手.exe」同样认' ((Get-BwFixedExe) -eq (Join-Path $fn '微软壁纸助手.exe')) (Get-BwFixedExe)
+if ($ltBak) { Set-Content -LiteralPath $lt -Value $ltBak -Encoding UTF8 }
+
 # ---- 场景1: 从没建过 -> 建一次 ----
-Ensure-BwConfig | Out-Null
+# (原来这里先调 Ensure-BwConfig, 那条函数早没了: Get-BwConfig 自己就能在没有
+#  config.json 的时候兜底出默认值 —— 见下面重写过的场景7。)
 $c = Get-BwConfig
 Add-Member -InputObject $c NoteProperty desktop_shortcut 'on' -Force
 Save-BwConfig $c
@@ -81,20 +112,24 @@ $r2 = Ensure-BwDesktopShortcut
 chk '第二次不重复创建' ($r2 -eq 'ok') $r2
 
 # ---- 场景3: 用户把它收进文件夹 -> 就地更新, 桌面根不另建 ----
+# 挪进去时故意用**老名字**的文件夹版: 顺手验一遍「老名字就地改成新名字」那条。
 $sub = Join-Path $desk '图标'
 New-Item -ItemType Directory -Force -Path $sub | Out-Null
-Move-Item -LiteralPath $lnk -Destination (Join-Path $sub '微软壁纸助手.lnk') -Force
+$oldLnk = Join-Path $sub '微软壁纸助手.lnk'
+$newLnk = Join-Path $sub '桌面壁纸.lnk'
+Move-Item -LiteralPath $lnk -Destination $oldLnk -Force
 $r3 = Ensure-BwDesktopShortcut
 chk '收进文件夹后就地更新' (@('ok','update') -contains $r3) $r3
-chk '桌面根没有再冒一个' (-not (Test-Path -LiteralPath (Join-Path $desk '微软壁纸助手.lnk'))) $desk
+chk '桌面根没有再冒一个(新旧名字都不算)' ((-not (Test-Path -LiteralPath (Join-Path $desk '桌面壁纸.lnk'))) -and (-not (Test-Path -LiteralPath (Join-Path $desk '微软壁纸助手.lnk')))) $desk
+chk '文件夹里那份改成了新名字' ((Test-Path -LiteralPath $newLnk) -and (-not (Test-Path -LiteralPath $oldLnk))) $newLnk
 $i3 = Get-BwDeskInfo
-chk '记住了新位置' ($i3.path -eq (Join-Path $sub '微软壁纸助手.lnk')) $i3.path
+chk '记住了新位置' ($i3.path -eq $newLnk) $i3.path
 
 # ---- 场景4: 用户删掉它 -> 不再自动建 ----
-Remove-Item -LiteralPath (Join-Path $sub '微软壁纸助手.lnk') -Force
+Remove-Item -LiteralPath $newLnk -Force
 $r4 = Ensure-BwDesktopShortcut
 chk '删掉之后不再重建' ($r4 -eq 'gone') $r4
-chk '桌面根确实还是空的' (-not (Test-Path -LiteralPath (Join-Path $desk '微软壁纸助手.lnk'))) $desk
+chk '桌面根确实还是空的' (-not (Test-Path -LiteralPath (Join-Path $desk '桌面壁纸.lnk'))) $desk
 
 # ---- 场景5: 在设置里关掉再开 -> 允许重建一个 ----
 #     (菜单 [S]-[6] 重新开启时做的正是: 清掉 path 和 created 这两个记号)
@@ -107,11 +142,16 @@ $i5.created = ''
 Save-BwDeskInfo $i5
 $r5 = Ensure-BwDesktopShortcut
 chk '重新开启后能再建一个' ($r5 -eq 'create') $r5
-if (Test-Path -LiteralPath (Join-Path $desk '微软壁纸助手.lnk')) {
-  (Get-Item -LiteralPath (Join-Path $desk '微软壁纸助手.lnk')).LastWriteTime = (Get-Date).AddDays(-3)
+# 上一句没建出来时**当场报失败**, 别静默跳过 —— 以前这个 if 一走空,
+# 「exe 更新后会就地刷新图标」这条就没跑过, 看着一片绿其实少验一条。
+$root5 = Join-Path $desk '桌面壁纸.lnk'
+if (Test-Path -LiteralPath $root5) {
+  (Get-Item -LiteralPath $root5).LastWriteTime = (Get-Date).AddDays(-3)
   (Get-Item -LiteralPath $fakeExe).LastWriteTime = Get-Date
   $r5b = Ensure-BwDesktopShortcut
   chk 'exe 更新后会就地刷新图标' ($r5b -eq 'update') $r5b
+} else {
+  chk 'exe 更新后会就地刷新图标(拿不到快捷方式, 这条没跑成)' $false $root5
 }
 
 # ---- 场景6: 设置里关掉 -> off ----
@@ -121,31 +161,43 @@ Save-BwConfig $c6
 $r6 = Ensure-BwDesktopShortcut
 chk '关掉之后返回 off' ($r6 -eq 'off') $r6
 
-# ---- 场景7: 首次运行不该让客户做选择题 ----
-# 把联网、建快捷方式、"让用户挑位置"这三件都 stub 掉, 单看它是不是自己定了位置。
-$wall = Join-Path $T 'wallpaper'
-$script:selCount = 0
-function Get-BwDefaults {
-  return [PSCustomObject]@{ base = $script:wall; bing = (Join-Path $script:wall '必应');
-                            spotlight = (Join-Path $script:wall '聚焦'); reason = '测试用' }
-}
-function Select-BwBase { param($suggest, $suggestReason)
-  $script:selCount++
-  if ($script:selCount -gt 2) { return $suggest }
-  return ''
-}
-function Invoke-BwUpdate { return $true }
-function Invoke-SpotlightFetch { param($count, [switch]$Quiet) return @() }
-function Ensure-BwDesktopShortcut { return 'ok' }
-function Pause-Bw { }          # 末尾那句"按回车返回菜单", 测试里不该等人敲键盘
+# ---- 场景7 (2026-10-25 重写): 没建过 config.json 时, 保存位置由程序自己定 ----
+# 原来这段测的是文本菜单里的 Invoke-BwFirstRun + Select-BwBase(让用户挑盘)。
+# V2.4.0 界面搬进网页控制台后, 那两条一起删了 —— 现在"第一次存哪"完全由
+# Get-BwDefaultBase / Get-BwDefaults 算, Get-BwConfig 直接拿它兜底, 全程不等键盘。
+# 所以改测这三条, 并把"扫盘找图片文件夹"stub 掉: 自检不该去扫真盘(慢,
+# 而且换台机器结果就变了)。
+function Get-BwSysDriveLetter { return 'C' }
+function Find-BwExistingBase { return $null }
+function Reset-BwBaseCache { $global:BWDefaultBase = ''; $global:BWDefaults = $null }
 
-Invoke-BwFirstRun
-chk '首次运行没有问"壁纸存哪"(没调用选择器)' ($script:selCount -eq 0) ('调用了 ' + $script:selCount + ' 次')
+$wall = Join-Path $T 'wallpaper'
+Reset-BwBaseCache
+function Get-BwPicturesDir { return (Join-Path $T '我的图片') }   # 「图片」在非系统盘(F:)
+$g7a = Get-BwDefaults
+chk '「图片」在非系统盘 -> 壁纸就存它下面' ($g7a.base -eq (Join-Path $T '我的图片\壁纸')) $g7a.base
+
+Reset-BwBaseCache
+function Get-BwPicturesDir { return 'C:\Users\tester\Pictures' }  # 「图片」被放回系统盘
+$g7b = Get-BwDefaults
+chk '「图片」在系统盘又没现成图库 -> 仍用它自己的位置, 不另造文件夹' ($g7b.base -eq 'C:\Users\tester\Pictures\壁纸') $g7b.base
+chk '不会在盘根凭空造一个「图片」跟真「图片」并列' ($g7b.base -notmatch '^[A-Za-z]:\\[^\\/]+$') $g7b.base
+
+# 没有 config.json: Get-BwConfig 该直接给出一套能用的位置, 而不是抛异常或等用户选。
+$cfgBak = $global:CfgPath
+$global:CfgPath = Join-Path $T '没有这个文件.json'
 $c7 = Get-BwConfig
-chk '保存位置自己定好了(推荐位置)' ($c7.bing_save_dir -eq (Join-Path $wall '必应')) $c7.bing_save_dir
-chk '必应目录真的建出来了' (Test-Path -LiteralPath (Join-Path $wall '必应')) (Join-Path $wall '必应')
-chk '聚焦目录真的建出来了' (Test-Path -LiteralPath (Join-Path $wall '聚焦')) (Join-Path $wall '聚焦')
-chk '定义了新的首屏函数 Show-BwFirstRunHead' ((Get-Command Show-BwFirstRunHead -ErrorAction SilentlyContinue) -ne $null) ''
+chk '没有 config.json 时也拿得到必应/聚焦位置' ($c7.bing_save_dir -eq $g7b.bing -and $c7.spotlight_save_dir -eq $g7b.spotlight) ($c7.bing_save_dir + ' / ' + $c7.spotlight_save_dir)
+# 目录是"用的时候建": 把位置指回临时目录(config 另存一份, 不碰 data 里那份), 再验一次真建得出来。
+Add-Member -InputObject $c7 NoteProperty bing_save_dir (Join-Path $wall '必应') -Force
+Add-Member -InputObject $c7 NoteProperty spotlight_save_dir (Join-Path $wall '聚焦') -Force
+$global:CfgPath = Join-Path $T 'probe_config.json'
+Save-BwConfig $c7
+[void](Ensure-BwDirs)
+$global:CfgPath = $cfgBak
+chk '必应目录建出来了' (Test-Path -LiteralPath (Join-Path $wall '必应')) (Join-Path $wall '必应')
+chk '聚焦目录建出来了' (Test-Path -LiteralPath (Join-Path $wall '聚焦')) (Join-Path $wall '聚焦')
+Reset-BwBaseCache
 
 # ---- 安全网: 真桌面必须原样 ----
 $after = @(Get-ChildItem -LiteralPath $realDesk -File -Filter '*.lnk' -ErrorAction SilentlyContinue).Count

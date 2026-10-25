@@ -7,12 +7,12 @@
 
 ## 一、一句话架构
 
-一个 **Python 启动器**（`launcher.py` → 打包成 `壁纸助手.exe`）负责"落地、升级、后台自启"，
+一个 **Python 启动器**（`launcher.py` → 打包成 `桌面壁纸.exe`）负责"落地、升级、后台自启"，
 真正的业务逻辑是两份 **PowerShell 脚本**（`core.ps1` 换壁纸、`menu.ps1` 交互菜单），
 首次运行时由启动器释放到用户数据目录，之后可以**热更新**（不换 exe 也能更新脚本）。
 
 ```
-壁纸助手.exe (launcher.py)
+桌面壁纸.exe (launcher.py)
    ├─ 首次运行：把内嵌的 core.ps1 / menu.ps1 释放到 %LOCALAPPDATA%\壁纸助手 并记版本
    ├─ 双击      ：开控制台 → 调 menu.ps1（菜单）
    ├─ 定时/后台  ：调 core.ps1 -Cycle（换下一张壁纸，不建任何窗口）
@@ -29,7 +29,7 @@
 | `core.ps1` | 核心库：图源下载、保存位置、库上限与清理、设壁纸 | 改图源、改换图逻辑、改清理规则 |
 | `menu.ps1` | 交互菜单（状态、换位置、看日志 `[L]`、检查更新…） | 改菜单文案与选项 |
 | `version.json` | **升级源**：版本号 + `core.ps1`/`menu.ps1` 的 sha256 + `launcher` 指纹；同目录还有 `version.json.sig`（Ed25519 签名） | 发版脚本自动生成，**不要手改** |
-| `build-exe.py` | 打包（PyInstaller 6.22.3，产物 `壁纸助手.exe`） | 改打包参数、内嵌资源 |
+| `build-exe.py` | 打包（PyInstaller 6.22.3，产物 `桌面壁纸.exe`） | 改打包参数、内嵌资源 |
 | `tools/make_version_json.py` | 生成 `version.json`（脚本指纹），并用私钥签出 `version.json.sig` | 发版链路 |
 | `tools/publish.py` | 一键发布：改版本号 → 打包 → 生成升级源 → 双平台提交/发行版 → 验真 | 发版链路 |
 | `tools/preflight_release.py` | **发版前自检闸门**（版本一致性、冷启动、完整升级演练、失败分支、还原） | 发版前必跑；新增检查项 |

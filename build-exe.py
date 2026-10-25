@@ -15,16 +15,16 @@
 
 产物
 ----
-    壁纸助手.exe          固定名字, 日常就用这一份。
+    桌面壁纸.exe          固定名字, 日常就用这一份。
                           「开机自动换壁纸」和桌面快捷方式都指向这个名字,
                           以后升级直接同名覆盖, 链接不会断。
 
-    壁纸助手-vX.Y.Z.exe    只有加 --release 时才生成。名字带版本号,
+    桌面壁纸-vX.Y.Z.exe    只有加 --release 时才生成。名字带版本号,
                              是往 GitHub Release 上传用的那一份。
                              (平时不生成, 免得目录里摆两个看不出该点哪个。)
 
     --release 还会打一个发给客户的 zip (名字纯 ASCII, GitHub 不会因为中文
-    把文件名剥掉), 里面就两样: 壁纸助手.exe + 使用说明.txt。
+    把文件名剥掉), 里面就两样: 桌面壁纸.exe + 使用说明.txt。
     客户下载下来解压, 双击 exe 就能用 —— 不用挑, 不用装, 不用管别的。
 """
 import os
@@ -39,6 +39,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # 2026-10-12 产品改名: 「微软壁纸助手」->「壁纸助手」(去商标前缀)。
 # InternalName/zip 的 ASCII 名(MSWallpaperAssistant)与仓库名不动 —— 那是对外的稳定标识。
 APP_NAME = '壁纸助手'
+# 【2026-10-25 文件名更正】exe 文件名跟着**显示名**走, 叫 桌面壁纸.exe ——
+# 和快捷方式名(桌面壁纸.lnk)、另外三款程序(LIVE直播源.exe / 热点新闻.exe)同一口径。
+# APP_NAME 继续只管**数据目录**(%LOCALAPPDATA%\壁纸助手)和随包 .ico 的文件名:
+# 那两处改名要把老用户的 config/state/图片索引一起搬家, 收益不值那个风险。
+# 老文件名(壁纸助手.exe / 微软壁纸助手.exe)在 core.ps1 里照样是"固定名", 原地覆盖升级保持原名。
+EXE_STEM = '桌面壁纸'
 PAYLOAD_FILES = ['core.ps1', 'menu.ps1', '使用说明.txt', '壁纸助手.ico']
 ICON = '壁纸助手.ico'
 
@@ -78,7 +84,7 @@ VSVersionInfo(
           StringStruct('FileVersion', '{v}'),
           StringStruct('InternalName', 'MSWallpaperAssistant'),
           StringStruct('LegalCopyright', 'Copyright (C) 2026 HaiFeng (kele551)'),
-          StringStruct('OriginalFilename', '壁纸助手.exe'),
+          StringStruct('OriginalFilename', '桌面壁纸.exe'),
           StringStruct('ProductName', '桌面壁纸'),
           StringStruct('ProductVersion', '{v}'),
         StringStruct('Comments', 'gitcode.com/kele551/ms-wallpaper-assistant')
@@ -141,7 +147,7 @@ def main():
             '--icon', os.path.join(HERE, ICON),
             '--version-file', vfile,
             '--add-data', 'payload;payload',
-            '--name', APP_NAME,
+            '--name', EXE_STEM,
             '--distpath', os.path.join(work, 'dist'),
             '--workpath', os.path.join(work, 'build'),
             '--specpath', work,
@@ -153,23 +159,23 @@ def main():
             print('打包失败。')
             return r.returncode
 
-        out = os.path.join(work, 'dist', APP_NAME + '.exe')
+        out = os.path.join(work, 'dist', EXE_STEM + '.exe')
         if not os.path.isfile(out):
             print('打包完了但没找到产物: ' + out)
             return 1
         # 默认只出固定名这一份 -- 拿到手不用挑, 双击就是它。
         # 带版本号那份只有 --release 时才出, 专供 GitHub Release 上传。
-        plain = os.path.join(HERE, APP_NAME + '.exe')
+        plain = os.path.join(HERE, EXE_STEM + '.exe')
         shutil.copy2(out, plain)
         outs = [plain]
         if '--release' in sys.argv:
-            tagged = os.path.join(HERE, '{}-v{}.exe'.format(APP_NAME, version))
+            tagged = os.path.join(HERE, '{}-v{}.exe'.format(EXE_STEM, version))
             shutil.copy2(out, tagged)
             outs.append(tagged)
             # 发给客户的 zip: 解压后双击 exe 就能用, 里面不放任何需要挑的东西
             zp = os.path.join(HERE, 'MSWallpaperAssistant-v{}.zip'.format(version))
             with zipfile.ZipFile(zp, 'w', zipfile.ZIP_DEFLATED) as z:
-                z.write(tagged, APP_NAME + '.exe')          # 包内用固定名, 客户不用挑
+                z.write(tagged, EXE_STEM + '.exe')          # 包内用固定名, 客户不用挑
                 z.write(os.path.join(HERE, '使用说明.txt'), '使用说明.txt')
             outs.append(zp)
         print('')
