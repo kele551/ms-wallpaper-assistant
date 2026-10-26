@@ -86,23 +86,29 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 下载
 
-### 👉 [点这里下载 v2.4.2 安装包](https://github.com/kele551/ms-wallpaper-assistant/releases/download/v2.4.2/MSWallpaperAssistant-v2.4.2.zip)
+### 👉 [点这里下载 v2.4.2（GitCode 直连，约 7.3 MB 的 `桌面壁纸.exe`）](https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v2.4.2/%E6%A1%8C%E9%9D%A2%E5%A3%81%E7%BA%B8.exe)
+
+> 境外仓库国内时常连不通（附件在 `release-assets.githubusercontent.com`，实测这台机器直连 21 秒握不上手），
+> 所以**下载请走 GitCode**：上面这个链接点下去就是 `桌面壁纸.exe`，双击即用，不用解压。
+> 想要 zip（exe + `使用说明.txt`）或 GitHub 那份的，在 [GitHub v2.4.2 发行页](https://github.com/kele551/ms-wallpaper-assistant/releases/tag/v2.4.2)。
+> 两处的 `桌面壁纸.exe` / `MSWallpaperAssistant-v2.4.2.exe` 是同一个文件，SHA256 都是
+> `950954DE209F0CA31F91508DDDED7070B20E9C504FF690BE8DD8E4931FCEBB28`（2026-10-26 从 GitCode 取回逐字节验过）。
 
 > **代码主仓库：[GitHub](https://github.com/kele551/ms-wallpaper-assistant)** —— 2026-10-26 起四款软件只往 GitHub 推，这里永远是最新的一份。
-> [GitCode](https://gitcode.com/kele551/ms-wallpaper-assistant)（2026-10-17～10-26 期间的主源）与 [AtomGit](https://atomgit.com/kele551/ms-wallpaper-assistant) 现在是**镜像**，代码可能滞后于 GitHub；
-> 嫌 GitHub 慢的可以从 [GitCode 发行版](https://gitcode.com/kele551/ms-wallpaper-assistant/releases) 取同一版本的安装包。三个平台都收 Issue / PR。
+> [GitCode](https://gitcode.com/kele551/ms-wallpaper-assistant) 与 [AtomGit](https://atomgit.com/kele551/ms-wallpaper-assistant) 是**镜像**，代码可能滞后于 GitHub，
+> 但**发行版附件与 GitHub 同版本同字节**，所以下载反而推荐走 GitCode。三个平台都收 Issue / PR。
 
-> 约 7.2 MB 的 zip，解压后里面就两样东西：`桌面壁纸.exe`（双击这个）+ `使用说明.txt`。
-> （2026-10-25 起文件名从旧的 `壁纸助手.exe` 改成 `桌面壁纸.exe`，与界面显示名一致；旧名那份是同一个程序。）
 > 就这一个 exe，不用挑、不用装、不用下一步下一步。
+> （2026-10-25 起文件名从旧的 `壁纸助手.exe` 改成 `桌面壁纸.exe`，与界面显示名一致；旧名那份是同一个程序。）
 >
 > **杀软报毒是误报，可以放心。** 程序没有数字签名、又是「单文件自解压」打包、自动升级还会下载脚本再运行，
 > 这三样最容易触发杀软的启发式误判。想自己确认文件没被动过：发行页上写了安装包的 SHA256，
 > 下载后执行 `certutil -hashfile 桌面壁纸.exe SHA256` 比对即可；一致就是原版。
 > 处理办法：把这个 exe 加进杀软的信任/排除名单。源码全部公开，可自行查阅。
 >
-> **本次更新了安装包，但版本号没有变**：已装 v2.2.1 的朋友不会收到升级提示（升级是拿线上版本号和本地版本号比的）；
-> 觉得用着不顺畅（例如**壁纸重复得太快**），可以**重新下载最新安装包**覆盖安装一次，配置与收藏都会保留。
+> **怎么升到 v2.4.2**：装过旧版的朋友，打开控制台点「检查更新 → 立即升级」，或等后台每日自检弹提示
+> （升级是拿线上版本号和本地版本号比的，本地低于 2.4.2 就会提示）；没收到提示、或觉得用着不顺畅
+> （例如**壁纸重复得太快**），就重新下载上面那个包覆盖安装一次，配置与收藏都会保留。
 > 这版安装包新增（都经过实机测试）：
 > - **填充方式（拉伸 / 适应 / 填充）会被记住**：程序第一次动它之前你原来是什么，它先记下来；
 >   想还原：控制台「更换节奏 → 壁纸填充方式」选「跟随系统」（旧版没有这个入口，重新下载后就有）。
@@ -235,7 +241,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 | 问 | 答 |
 |---|---|
-| **双击没反应？** | 多半是安全软件拦了，把它加入信任就行。程序联网只有这几种情况：从 bing.com 与微软官方接口下图、检查更新时访问 Gitee / GitHub、补漏与归档时可能经第三方 GitHub 加速节点（`ghfast.top` / `gh-proxy.com`）中转。**全程没有任何上传行为。** |
+| **双击没反应？** | 多半是安全软件拦了，把它加入信任就行。程序联网只有这几种情况：从 bing.com 与微软官方接口下图、检查更新时访问 GitCode / GitHub、补漏与归档时可能经第三方 GitHub 加速节点（`ghfast.top` / `gh-proxy.com`）中转。**全程没有任何上传行为。** |
 | **中文显示成乱码？** | 系统「非 Unicode 程序语言」要设成「中文(简体, 中国)」。 |
 | **会不会拖慢电脑？** | 只有「开机自动换」开着时后台才有一个进程，平时占 30 MB 左右，绝大多数时间在睡觉。关掉就完全不占。 |
 | **提示某个盘「写不进去」？** | 那是这台机器那个盘的权限设置（常见于用第三方分区工具格的盘），不是程序不支持它。换个盘（控制台「高级 → 壁纸保存位置」），或者把这个程序用管理员身份运行一次让它把目录建好 —— 壁纸放哪个盘都能用。 |
