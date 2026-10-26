@@ -1,20 +1,20 @@
 {
-  "version": "2.4.1",
-  "min_launcher": "2.4.1",
-  "notes": "",
+  "version": "2.4.2",
+  "min_launcher": "2.4.2",
+  "notes": "v2.4.2 更新内容\\n· 修「点图标打不开控制台」：面板端口不再落在浏览器禁行的端口上（6666 这类自动绕开，并当场试开确认可用）\\n· 控制台收成「当前 / 图库 / 设置」三块；主题与配色改进配置文件，换次开机不再丢\\n· 新增「本地文件夹」图源：把自己文件夹里的图插进轮换池\\n· 必应模式锁定当天一图，「最近换过」只列必应图库，顶栏改说「明天开机后换新图」\\n· 图库上限真的执行，新图插队进前 1/3；打开控制台时后台没在跑就当场拉起\\n· 升级源改为 GitHub 优先、GitCode 回落",
   "scripts": {
     "core.ps1": {
-      "sha256": "DFE304BAF61B04F1651E117C78466BA20C2D719B76E98DE5917F69D56AA5A669",
+      "sha256": "D69103362321E8608943C5C15A12E8BD4C648E2AF0A2AE9147AB1C8F224A976C",
       "url": "https://gitcode.com/api/v5/repos/kele551/ms-wallpaper-assistant/raw/core.ps1?ref=main"
     },
     "menu.ps1": {
-      "sha256": "8359C8E4082EE3CF1EF7B5E1D50F2E38F91185ADD4DB47CBE2769132BCC2A9A0",
+      "sha256": "7E76E669A3D31079AC5CB97028D07FB678D3BA48154A28AC6948583170D73803",
       "url": "https://gitcode.com/api/v5/repos/kele551/ms-wallpaper-assistant/raw/menu.ps1?ref=main"
     }
   },
   "launcher": {
-    "sha256": "C9AEF4103AB38C60D0D461D3FEFAD41A21A5EDE3A9BD5922DDFB79904F75C262",
-    "url": "https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v2.4.1/壁纸助手.exe",
-    "size": 7742166
+    "sha256": "B9EE9822A2E34DA05118E1ABC3267DB6307DD9A6B56711248D7E0979880642DF",
+    "url": "https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v2.4.2/桌面壁纸.exe",
+    "size": 7675415
   }
 }
