@@ -20,8 +20,8 @@
 <img alt="Local Only" src="https://img.shields.io/badge/图片-只存本机-brightgreen?style=flat-square">
 <img alt="4K" src="https://img.shields.io/badge/画质-4K-blue?style=flat-square">
 
-<a href="https://gitcode.com/kele551/ms-wallpaper-assistant/releases"><img alt="Download from GitCode" src="https://img.shields.io/badge/%F0%9F%93%A5_%E4%B8%8B%E8%BD%BD-GitCode%E4%B8%BB%E6%BA%90-c71d24?style=flat-square&logo=gitee&logoColor=white&labelColor=3d4552"></a>
-<a href="https://github.com/kele551/ms-wallpaper-assistant"><img alt="GitHub mirror" src="https://img.shields.io/badge/%F0%9F%90%99_%E6%BA%90%E7%A0%81-GitHub%E9%95%9C%E5%83%8F-24292f?style=flat-square&logo=github&logoColor=white&labelColor=3d4552"></a>
+<a href="https://github.com/kele551/ms-wallpaper-assistant/releases"><img alt="Download from GitHub" src="https://img.shields.io/badge/%F0%9F%93%A5_%E4%B8%8B%E8%BD%BD-GitHub%E4%B8%BB%E6%BA%90-24292f?style=flat-square&logo=github&logoColor=white&labelColor=3d4552"></a>
+<a href="https://gitcode.com/kele551/ms-wallpaper-assistant"><img alt="GitCode mirror" src="https://img.shields.io/badge/%F0%9F%90%9E_%E6%BA%90%E7%A0%81-GitCode%E9%95%9C%E5%83%8F-c71d24?style=flat-square&logo=gitee&logoColor=white&labelColor=3d4552"></a>
 <a href="https://www.bilibili.com/video/BV1Tupx6kEBe"><img alt="Bilibili demo" src="https://img.shields.io/badge/%F0%9F%93%BA_%E6%BC%94%E7%A4%BA-B%E7%AB%99%E8%A7%86%E9%A2%91-00a1d6?style=flat-square&logo=bilibili&logoColor=white&labelColor=3d4552"></a>
 <a href="https://github.com/kele551/ms-wallpaper-assistant/issues"><img alt="Issues" src="https://img.shields.io/badge/%F0%9F%90%9E_%E5%8F%8D%E9%A6%88-%E6%8F%90Issue-0969da?style=flat-square&labelColor=3d4552"></a>
 <a href="#支持项目"><img alt="Sponsor" src="https://img.shields.io/badge/%E2%98%95_%E8%B5%9E%E8%B5%8F-%E8%AF%B7%E5%96%9D%E5%92%96%E5%95%A1-ff69b4?style=flat-square&labelColor=3d4552"></a>
@@ -30,7 +30,7 @@
 
 <p><sub>2026-10-12 产品更名：「微软壁纸助手」→「壁纸助手」；2026-10-25 文件名更正为 <b>桌面壁纸.exe</b>（与界面显示名同一口径）。仓库名与下载地址不变；老机器原地升级后文件名还是旧名，同一个程序，照常自动升级。</sub></p>
 
-<p>作者 <b>海风（kele551）</b>　·　<a href="https://gitcode.com/kele551/ms-wallpaper-assistant">GitCode（主）</a>　·　<a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub（镜像）</a>　·　<a href="https://atomgit.com/kele551/ms-wallpaper-assistant">AtomGit（镜像）</a>　·　<a href="docs/README_EN.md">English</a></p>
+<p>作者 <b>海风（kele551）</b>　·　<a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub（主）</a>　·　<a href="https://gitcode.com/kele551/ms-wallpaper-assistant">GitCode（镜像）</a>　·　<a href="https://atomgit.com/kele551/ms-wallpaper-assistant">AtomGit（镜像）</a>　·　<a href="docs/README_EN.md">English</a></p>
 </div>
 
 
@@ -86,10 +86,11 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 下载
 
-### 👉 [点这里下载 v2.4.1 安装包](https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v2.4.1/MSWallpaperAssistant-v2.4.1.zip)
+### 👉 [点这里下载 v2.4.1 安装包](https://github.com/kele551/ms-wallpaper-assistant/releases/download/v2.4.1/MSWallpaperAssistant-v2.4.1.zip)
 
-> **三个平台代码一致**：[GitCode](https://gitcode.com/kele551/ms-wallpaper-assistant)（主源）· [GitHub](https://github.com/kele551/ms-wallpaper-assistant)（镜像）· [AtomGit](https://atomgit.com/kele551/ms-wallpaper-assistant)（代码镜像）。
-> **二进制发行包请从 GitCode（主源）或 GitHub（镜像）下载**；三个平台都收 Issue / PR。
+> **代码主仓库：[GitHub](https://github.com/kele551/ms-wallpaper-assistant)** —— 2026-10-26 起四款软件只往 GitHub 推，这里永远是最新的一份。
+> [GitCode](https://gitcode.com/kele551/ms-wallpaper-assistant)（2026-10-17～10-26 期间的主源）与 [AtomGit](https://atomgit.com/kele551/ms-wallpaper-assistant) 现在是**镜像**，代码可能滞后于 GitHub；
+> 嫌 GitHub 慢的可以从 [GitCode 发行版](https://gitcode.com/kele551/ms-wallpaper-assistant/releases) 取同一版本的安装包。三个平台都收 Issue / PR。
 
 > 约 7.2 MB 的 zip，解压后里面就两样东西：`桌面壁纸.exe`（双击这个）+ `使用说明.txt`。
 > （2026-10-25 起文件名从旧的 `壁纸助手.exe` 改成 `桌面壁纸.exe`，与界面显示名一致；旧名那份是同一个程序。）
@@ -391,4 +392,4 @@ python tools/preflight_release.py        # 发版前自检：全绿才算可用
 
 ---
 
-<p align="center"><sub>© 2026 海风（kele551） · MIT License · <a href="https://gitcode.com/kele551/ms-wallpaper-assistant">GitCode 主仓库</a> · <a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub 镜像</a></sub></p>
+<p align="center"><sub>© 2026 海风（kele551） · MIT License · <a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub 主仓库</a> · <a href="https://gitcode.com/kele551/ms-wallpaper-assistant">GitCode 镜像</a></sub></p>

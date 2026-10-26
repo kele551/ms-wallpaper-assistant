@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# 作者: 海风（kele551）   https://gitcode.com/kele551/ms-wallpaper-assistant
+# 作者: 海风（kele551）   https://github.com/kele551/ms-wallpaper-assistant
 """桌面壁纸（壁纸助手）—— 发版前自检闸门（必须全绿才允许发布）
 
 为什么这个文件在仓库里：
@@ -625,10 +625,11 @@ for _f in ('README.md', '使用说明.txt'):
     check('%s 里旧名（%s）只出现在兼容说明里' % (_f, '、'.join(LEGACY_NAMES)), not _bad,
           '；'.join(_bad[:2]))
 
-# 2026-10-23: 主源 2026-10-17 已迁到 GitCode, 这里原来只认 Gitee 地址 ——
-# 文档跟着主源改完之后反而被判红。改成"两个仓库地址认一个就行"。
-_CANONICAL = ('gitcode.com/kele551/ms-wallpaper-assistant',
-              'github.com/kele551/ms-wallpaper-assistant',
+# 2026-10-23: 这里原来只认 Gitee 地址, 主源搬家后文档反而被判红 —— 改成"几个地址认一个就行"。
+# 2026-10-26: 主源又回到 GitHub(四款软件只往 GitHub 推, GitCode/AtomGit 转为镜像),
+# 但闸门继续认三个域名: 镜像滞后时文档写哪个都该放行, 不该把发版卡在一个域名上。
+_CANONICAL = ('github.com/kele551/ms-wallpaper-assistant',
+              'gitcode.com/kele551/ms-wallpaper-assistant',
               'atomgit.com/kele551/ms-wallpaper-assistant')
 check('README 里有署名「海风（kele551）」与仓库地址',
       ('海风（kele551）' in _rm) and any(u in _rm for u in _CANONICAL))
@@ -821,13 +822,15 @@ else:
         check_warn('GitHub main 的 version.json 版本 == 本地 v%s' % VER,
                    str(_ghv).lstrip('v') == VER,
                    '线上=%s 本地=%s（发布前"仓库更新"属正常）' % (_ghv, VER))
-    # 2026-10-20: 主源已迁到 GitCode（Gitee 自 v2.3.2 起停止更新）。
-    # 再拿 Gitee 比对只会永远"线上=旧版"，把真信号淹掉；这里改成查主源 GitCode。
-    _gcv = _remote_ver('GitCode(主源)',
+    # 2026-10-20: Gitee 自 v2.3.2 起停止更新, 拿它比对只会永远"线上=旧版" —— 换成查 GitCode。
+    # 2026-10-26: 主源回到 GitHub, GitCode 降为镜像; 这条保留是因为**发行包附件仍上传 GitCode**
+    # (version.json 里 scripts/launcher 的下载地址还指它), 两边对不上就是"发布了却没同步镜像"。
+    _gcv = _remote_ver('GitCode(镜像)',
                        'https://gitcode.com/api/v5/repos/kele551/ms-wallpaper-assistant/raw/version.json?ref=main')
     if _gcv:
-        check_warn('GitCode 主源的 version.json 版本 == 本地 v%s' % VER,
-                   str(_gcv).lstrip('v') == VER, '线上=%s 本地=%s' % (_gcv, VER))
+        check_warn('GitCode 镜像的 version.json 版本 == 本地 v%s' % VER,
+                   str(_gcv).lstrip('v') == VER,
+                   '线上=%s 本地=%s（只推 GitHub、没同步 GitCode 时就是这样）' % (_gcv, VER))
 
 # ══════════════════════════════════════════════════════════════════════════
 # ⑪ 网页控制台（V2.4.0 起界面就是它；内嵌副本与源文件必须一致）

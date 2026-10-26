@@ -72,7 +72,10 @@ jobs:
           $vj = Get-Content -Raw version.json | ConvertFrom-Json
           Write-Host ("version.json = " + $vj.version)
           "version.json = $($vj.version)" | Add-Content -Encoding utf8 dist-staging\SHA256SUMS.txt
-          $exe = Get-Item '壁纸助手.exe'
+          # 【2026-10-26 修】成品名 2026-10-25 起跟着显示名走 —— build-exe.py 的 EXE_STEM
+          # 是 '桌面壁纸'，这里还 Get-Item '壁纸助手.exe' 的话这一步直接 throw，CI 恒红。
+          # 名字唯一来源是 launcher.py 的 EXE_STEM，别再在第二处写死。
+          $exe = Get-Item '桌面壁纸.exe'
           Write-Host ("exe 文件版本 = " + $exe.VersionInfo.FileVersion)
           Write-Host ("exe 大小     = " + $exe.Length + " B")
 
@@ -84,7 +87,10 @@ jobs:
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
-          name: 壁纸助手-build-${{ github.sha }}
+          # 【2026-10-26】产物名里的「壁纸助手」是 2026-10-25 之前的旧成品名，现在成品叫
+          # 桌面壁纸.exe。这里跟另外两个仓库(FoxPath-build-<sha> / hotnews-windows-<sha>)
+          # 保持同一口径：ASCII 名 + commit sha，避免中文名在下载端被削。
+          name: ms-wallpaper-assistant-build-${{ github.sha }}
           path: dist-staging/
           if-no-files-found: error
           retention-days: 30

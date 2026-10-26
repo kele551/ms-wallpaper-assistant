@@ -21,8 +21,8 @@
 <img alt="Local Only" src="https://img.shields.io/badge/images-stay%20local-brightgreen?style=flat-square">
 <img alt="4K" src="https://img.shields.io/badge/quality-4K-blue?style=flat-square">
 
-<a href="https://gitcode.com/kele551/ms-wallpaper-assistant/releases"><img alt="Download from GitCode" src="https://img.shields.io/badge/%F0%9F%93%A5_Download-GitCode_primary-2f9e44?style=flat-square&labelColor=3d4552"></a>
-<a href="https://github.com/kele551/ms-wallpaper-assistant"><img alt="GitHub mirror" src="https://img.shields.io/badge/%F0%9F%90%99_Source-GitHub_mirror-24292f?style=flat-square&logo=github&logoColor=white&labelColor=3d4552"></a>
+<a href="https://github.com/kele551/ms-wallpaper-assistant/releases"><img alt="Download from GitHub" src="https://img.shields.io/badge/%F0%9F%93%A5_Download-GitHub_primary-2f9e44?style=flat-square&logo=github&logoColor=white&labelColor=3d4552"></a>
+<a href="https://gitcode.com/kele551/ms-wallpaper-assistant"><img alt="GitCode mirror" src="https://img.shields.io/badge/%F0%9F%90%9E_Source-GitCode_mirror-c71d24?style=flat-square&logo=gitee&logoColor=white&labelColor=3d4552"></a>
 <a href="https://www.bilibili.com/video/BV1Tupx6kEBe"><img alt="Bilibili demo" src="https://img.shields.io/badge/%F0%9F%93%BA_Demo-Bilibili_video-00a1d6?style=flat-square&logo=bilibili&logoColor=white&labelColor=3d4552"></a>
 <a href="https://github.com/kele551/ms-wallpaper-assistant/issues"><img alt="Issues" src="https://img.shields.io/badge/%F0%9F%90%9E_Feedback-Issues_welcome-0969da?style=flat-square&labelColor=3d4552"></a>
 <a href="#support-the-project"><img alt="Sponsor" src="https://img.shields.io/badge/%E2%98%95_Buy%20me-Buy_me_a_coffee-ff69b4?style=flat-square&labelColor=3d4552"></a>
@@ -55,7 +55,7 @@ images stay on your own machine.
 > Not affiliated with, endorsed by, or sponsored by any image provider. "Bing" and "Windows
 > Spotlight" are used only to describe where the images come from.
 
-> 作者 / Author: **HaiFeng (kele551)** · GitCode（主源）: <https://gitcode.com/kele551/ms-wallpaper-assistant> · GitHub（镜像）: <https://github.com/kele551/ms-wallpaper-assistant> · AtomGit（镜像，代码）: <https://atomgit.com/kele551/ms-wallpaper-assistant>
+> 作者 / Author: **HaiFeng (kele551)** · GitHub（主源 / primary）: <https://github.com/kele551/ms-wallpaper-assistant> · GitCode（镜像 / mirror）: <https://gitcode.com/kele551/ms-wallpaper-assistant> · AtomGit（镜像 / mirror, code）: <https://atomgit.com/kele551/ms-wallpaper-assistant>
 
 ---
 
@@ -80,8 +80,8 @@ images stay on your own machine.
 
 ## Download
 
-- GitHub Releases: <https://github.com/kele551/ms-wallpaper-assistant/releases>
-- GitCode Releases (main, China): <https://gitcode.com/kele551/ms-wallpaper-assistant/releases>
+- GitHub Releases (primary, always the newest): <https://github.com/kele551/ms-wallpaper-assistant/releases>
+- GitCode Releases (mirror, China; may lag GitHub): <https://gitcode.com/kele551/ms-wallpaper-assistant/releases>
 
 Unzip the archive and double-click `桌面壁纸.exe` (Windows 10/11 x64). Installs made before the 2026-10-12 rename (`微软壁纸助手.exe`) or before the 2026-10-25 file-name fix (`壁纸助手.exe`) keep their old file name — same program, and in-place upgrades preserve whatever name you already have. The UI is a
 control panel in your browser (Chinese); click **立即换一张** to switch now, and the
@@ -164,5 +164,5 @@ updates or issue replies.
 
 ---
 
-<p align="center"><sub>© 2026 海风（kele551） · MIT License · <a href="https://gitcode.com/kele551/ms-wallpaper-assistant">GitCode</a> · <a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub</a></sub></p>
+<p align="center"><sub>© 2026 海风（kele551） · MIT License · <a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub (primary)</a> · <a href="https://gitcode.com/kele551/ms-wallpaper-assistant">GitCode (mirror)</a></sub></p>
 

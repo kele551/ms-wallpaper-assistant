@@ -46,18 +46,32 @@ $e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile("core.p
 - 在 PR / 回复里写清**你跑过哪些命令、结果如何** —— 这个仓库的"契约"是 `tools/preflight_release.py`，能全绿最好；
 - 测试会真的启动程序并换掉当前桌面壁纸，跑之前心里有数。
 
-## 平台（三个，代码一致）
+## 平台（主仓库：GitHub）
 
-代码同时镜像到三处：**Gitee（主源）** / **GitHub（镜像）** / **AtomGit（代码镜像）**。
-**二进制发行包只发 Gitee 与 GitHub** —— AtomGit 目前没有附件上传接口（它的 Release 只提供源码归档）。
+**2026-10-26 起四款软件只往 GitHub 推**，所以 GitHub 是主仓库，其余三条是历史镜像：
+
+| 平台 | git remote | 状态 |
+| --- | --- | --- |
+| GitHub `github.com/kele551/ms-wallpaper-assistant` | `github` | **主仓库**，永远是最新的一份 |
+| GitCode `gitcode.com/kele551/ms-wallpaper-assistant` | `origin` | 镜像（2026-10-17～10-26 曾为主源），代码可能滞后 |
+| AtomGit `atomgit.com/kele551/ms-wallpaper-assistant` | 未配 | 镜像；Release 无附件上传接口（只有源码归档） |
+| Gitee（kele551 / ms-wallpaper-assistant） | 未配 | **自 v2.3.2 起停止同步** —— 那条线上是旧代码，别再写它的地址(连发版闸门都盯着这个) |
+
+**二进制发行包发 GitHub 与 GitCode** 两处（AtomGit 传不了附件）。
 
 ```powershell
-git push origin main --tags                     # Gitee（本仓库 origin 就是 Gitee）
-git push atomgit main --tags                    # AtomGit（令牌走 GIT_ASKPASS，不会出现在命令行）
-# GitHub 侧走工作区的纯 REST 工具（见维护者工作区工具说明）
+git push github main --tags                   # 主仓库，必推
+git push origin main --tags                   # GitCode 镜像：推了才谈"代码一致"，不推就别在文档里承诺一致
 ```
 
-三个平台改完都要推，**内容必须逐字节一致**（判定方法：`git diff atomgit/main origin/main` 应为空）。
+⚠ 只推 GitHub 时有一条链路会脱节：`version.json` 里 `scripts` / `launcher` 的**下载地址**
+目前由 `tools/make_version_json.py` 写成 GitCode 的绝对地址，而 GitHub 会把中文附件名削掉
+（`桌面壁纸.exe` → 见 publish.py 里 `MSWallpaperAssistant-v*.exe` 那段）。
+要在 GitHub 单独发布，得同时改那两处地址 —— 客户端读哪份 `version.json` 见 `core.ps1` 的
+`$global:BWUpdateUrls`（已按"先 GitHub 后 GitCode"排）。
+
+镜像与主仓库**内容不必逐字节一致**（镜像会滞后），但同一个 tag 的源码必须同源：
+判定方法 `git diff github/main <镜像>/main` 只允许出现"镜像还没收到"的那些提交。
 
 ## 任务从哪来
 

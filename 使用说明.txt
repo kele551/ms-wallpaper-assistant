@@ -1,5 +1,5 @@
 桌面壁纸 · 使用说明（v2.4.1 起界面是网页控制台；版本号也写在 exe 属性里）
-作者: 海风（kele551）   https://gitcode.com/kele551/ms-wallpaper-assistant
+作者: 海风（kele551）   https://github.com/kele551/ms-wallpaper-assistant
 ================================
 
 绿色版: 不用安装, 不写自启动注册表项、不装服务与计划任务, 不需要管理员权限。
@@ -385,8 +385,8 @@
 
 有问题 / 想提意见:
   去仓库提 Issue 最快, 别人也能看到、一起看:
-    https://gitcode.com/kele551/ms-wallpaper-assistant/issues
-    GitHub 镜像: https://github.com/kele551/ms-wallpaper-assistant/issues
+    https://github.com/kele551/ms-wallpaper-assistant/issues
+    GitCode 镜像: https://gitcode.com/kele551/ms-wallpaper-assistant/issues
 
   反馈时带上这几样能省一轮来回:
     - Windows 版本 (设置 - 系统 - 关于)
@@ -394,5 +394,5 @@
     - 「壁纸助手数据\wallpaper.log」末尾十几行 (便携老目录名「微软壁纸助手数据」同理)
 
 
-开源: https://gitcode.com/kele551/ms-wallpaper-assistant
+开源: https://github.com/kele551/ms-wallpaper-assistant
 许可: MIT

@@ -87,7 +87,7 @@ VSVersionInfo(
           StringStruct('OriginalFilename', '桌面壁纸.exe'),
           StringStruct('ProductName', '桌面壁纸'),
           StringStruct('ProductVersion', '{v}'),
-        StringStruct('Comments', 'gitcode.com/kele551/ms-wallpaper-assistant')
+        StringStruct('Comments', 'github.com/kele551/ms-wallpaper-assistant')
         ]
       )
     ]),

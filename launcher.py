@@ -2,7 +2,7 @@
 """
 壁纸助手 - 绿色单文件版启动器。
 
-作者: 海风（kele551）   https://gitcode.com/kele551/ms-wallpaper-assistant
+作者: 海风（kele551）   https://github.com/kele551/ms-wallpaper-assistant
 
 设计要点
 --------

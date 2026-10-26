@@ -1,5 +1,5 @@
 ﻿# 桌面壁纸 - 核心库
-# 作者: 海风（kele551）   https://gitcode.com/kele551/ms-wallpaper-assistant
+# 作者: 海风（kele551）   https://github.com/kele551/ms-wallpaper-assistant
 # 协作: Cindy（只在源码里留档，不出现在界面上）
 param([switch]$Update, [switch]$Cycle, [switch]$DryRun, [string]$PanelReq, [string]$PanelOut, [string]$PanelExport, [string]$PanelJob, [string]$PanelJobArg)
 $global:BWRoot = $PSScriptRoot
@@ -775,9 +775,18 @@ function Repair-BwConfig([psobject]$c) {
 # 下载后**必须校验 SHA256**: 对不上就整批放弃, 继续用旧脚本(绝不半个包)。
 $global:BWUpdateFile = Join-Path $global:BWRoot 'update.json'
 $global:BWUpdateUrls = @(
-  # 2026-10-17: 主源切到 GitCode（国内、快、下载数可统计）；Gitee / GitHub 保留兜底。
-  'https://gitcode.com/api/v5/repos/kele551/ms-wallpaper-assistant/raw/version.json?ref=main',
-  'https://raw.githubusercontent.com/kele551/ms-wallpaper-assistant/main/version.json'
+  # 【2026-10-26 顺序更正】主源换回 GitHub —— 原因是"取到就用、取到就停"：
+  # 下面这个循环拿到**第一份能验签的 version.json** 就直接 return(见 1037 行起的 foreach),
+  # 不会再看后面的地址。所以排在第一位的那个, 必须是**还在往上推代码的那个仓库**:
+  # 现在四款软件只推 GitHub, GitCode 那条线已经不再同步了 —— 它停在过去那一版,
+  # 排在前面就等于"永远回答已是最新版", 升级通道被自己堵死(和 2026-10-20 那次
+  # "Gitee 停止更新后脚本地址不能再指 Gitee"是同一个坑)。
+  # GitCode 仍留作兜底: 哪天恢复同步、或 GitHub 抽风时它还能顶一下。
+  # 注意: version.json 里 scripts/launcher 的**下载地址**是写死的绝对地址(由
+  # tools/make_version_json.py 生成, 目前指 GitCode 附件), 与本表无关;
+  # 真要单平台发布, 那两处必须一起改, 且 GitHub 会削掉中文附件名 —— 见日记 2026-10-26。
+  'https://raw.githubusercontent.com/kele551/ms-wallpaper-assistant/main/version.json',
+  'https://gitcode.com/api/v5/repos/kele551/ms-wallpaper-assistant/raw/version.json?ref=main'
 )
 function Get-BwVerTuple([string]$v) {
   $out = @()
@@ -5394,7 +5403,7 @@ $global:BwPanelHtml = @'
 <!DOCTYPE html>
 <!--
   桌面壁纸 · 控制台
-  作者: 海风（kele551）   https://gitcode.com/kele551/ms-wallpaper-assistant
+  作者: 海风（kele551）   https://github.com/kele551/ms-wallpaper-assistant
   说明: 由 menu.ps1 起本地服务后打开; 只与本机 127.0.0.1 通信, 不联网、不引外部资源。
         页面里的 {{BWPANEL_TOKEN}} 由脚本在返回时替换成一次性令牌。
   2026-10-24 UI 整改: 分「当前 / 图库 / 设置」三块(单页切换, 不路由);
@@ -6140,7 +6149,7 @@ $global:BwPanelHtml = @'
   </main>
 
   <footer class="foot">
-    <span>桌面壁纸 · 作者 海风（kele551）　·　<a href="https://gitcode.com/kele551/ms-wallpaper-assistant" target="_blank" rel="noopener">gitcode.com/kele551/ms-wallpaper-assistant</a>　·　所有请求只在本机；本页没有任何外部资源</span>
+    <span>桌面壁纸 · 作者 海风（kele551）　·　<a href="https://github.com/kele551/ms-wallpaper-assistant" target="_blank" rel="noopener">github.com/kele551/ms-wallpaper-assistant</a>　·　所有请求只在本机；本页没有任何外部资源</span>
   </footer>
 </div>
 

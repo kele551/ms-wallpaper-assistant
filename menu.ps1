@@ -1,5 +1,5 @@
 ﻿# 桌面壁纸 - 控制台入口
-# 作者: 海风（kele551）   https://gitcode.com/kele551/ms-wallpaper-assistant
+# 作者: 海风（kele551）   https://github.com/kele551/ms-wallpaper-assistant
 #
 # 2026-10-23（V2.4.0）: 界面从"文本菜单"整体改成"网页控制台"。
 #   * 本文件只做三件事: 隐藏控制台窗口 → 起本地服务 → 打开浏览器。
