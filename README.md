@@ -86,7 +86,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 下载
 
-### 👉 [点这里下载 v2.4.1 安装包](https://github.com/kele551/ms-wallpaper-assistant/releases/download/v2.4.1/MSWallpaperAssistant-v2.4.1.zip)
+### 👉 [点这里下载 v2.4.2 安装包](https://github.com/kele551/ms-wallpaper-assistant/releases/download/v2.4.2/MSWallpaperAssistant-v2.4.2.zip)
 
 > **代码主仓库：[GitHub](https://github.com/kele551/ms-wallpaper-assistant)** —— 2026-10-26 起四款软件只往 GitHub 推，这里永远是最新的一份。
 > [GitCode](https://gitcode.com/kele551/ms-wallpaper-assistant)（2026-10-17～10-26 期间的主源）与 [AtomGit](https://atomgit.com/kele551/ms-wallpaper-assistant) 现在是**镜像**，代码可能滞后于 GitHub；
@@ -141,7 +141,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 
 ```
-┌ 桌面壁纸 · 控制台 ─────────────────────── 脚本 v2.4.1 · 主程序 v2.4.1 ┐
+┌ 桌面壁纸 · 控制台 ─────────────────────── 脚本 v2.4.2 · 主程序 v2.4.2 ┐
 │                                                                        │
 │  当前壁纸                      更换节奏                                │
 │   [大图]                        ── 间隔滑块（5~1440 分钟）+ 常用档位   │
