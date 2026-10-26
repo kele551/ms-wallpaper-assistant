@@ -7890,14 +7890,65 @@ function ConvertTo-BwPanelJson($v) {
 #   HttpListener 在部分机器上需要 URL 保留(要管理员), 换台机器就可能起不来;
 #   TcpListener 只要绑 127.0.0.1, 普通用户一定开得起来。这里只服务一个本地页面,
 #   不需要完整 HTTP 实现 —— 读到空行就够, 只处理 GET。
-function Get-BwPanelPort {
+# 【2026-10-26 修】浏览器自己有一张「不安全端口」禁行表：Firefox 在
+#   netwerk/base/nsIOService.cpp 的 kRestrictedPorts（83 项），Chromium/Edge 在
+#   net/base/port_util.cc（79 项，是前者的子集，只少 4190/6679）。**撞上就直接
+#   ERR_UNSAFE_PORT，浏览器连请求都不发** —— 服务端完全不知道有人来过。
+#   现场：本机 11:33 系统随机发到 6666（IRC 备选端口），日志「面板: 本地服务已启动
+#   -> http://127.0.0.1:6666/」，我用脚本取同一地址能拿到完整 108,934 B 页面、
+#   /api/state 也 200，用户点图标却「控制台打不开」，连点三次全被「已经在跑, 直接复用」
+#   指回这个死端口。所以端口不能全交给系统随机发。
+# 这张表取两家并集，另外把 1024 以下一并排除（特权段，也容易撞上别人的服务）。
+$global:BwBannedBrowserPorts = @(
+  0, 1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95,
+  101, 102, 103, 104, 109, 110, 111, 113, 115, 117, 119, 123, 135, 137, 139, 143, 161, 179,
+  389, 427, 465, 512, 513, 514, 515, 526, 530, 531, 532, 540, 548, 554, 556, 563, 587, 601,
+  636, 989, 990, 993, 995, 1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566,
+  6665, 6666, 6667, 6668, 6669, 6679, 6697, 10080
+)
+
+function Test-BwBrowserSafePort {
+  param([int]$Port)
+  if ($Port -lt 1024) { return $false }
+  if ($global:BwBannedBrowserPorts -contains $Port) { return $false }
+  return $true
+}
+
+# 系统随机发一个端口（发不到就回 0）。单独拆出来是为了能被测试替换掉：
+# 「系统发到禁行端口时到底会不会绕开」这件事，本机动态端口段会变（今天压到 1254–1453，
+# 过一会儿又跳到 52000+），拿真机运气当判据的测试必然时灵时不灵，不如把这里做成可注入的桩。
+function Get-BwPanelOsPort {
   try {
     $l = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, 0)
     $l.Start()
     $p = ([System.Net.IPEndPoint]$l.LocalEndpoint).Port
     $l.Stop()
     return $p
-  } catch { return 0 }
+  } catch {
+    return 0
+  }
+}
+
+function Get-BwPanelPort {
+  # 1) 先让系统发几次 —— 它一般给 49152+ 的动态私有段，既快又不会撞已在听的端口。
+  for ($i = 0; $i -lt 8; $i++) {
+    $p = Get-BwPanelOsPort
+    if ((Test-BwBrowserSafePort $p)) { return $p }
+    Log ('面板: 系统发到 ' + $p + ' 是浏览器禁行端口, 换一个再试')
+  }
+  # 2) 连着 8 次都不走运（本机就被 Hyper-V 的端口保留段挤到过低端口）：
+  #    自己在 49153–65534 里挑一个当场试开一次，开得了才用。
+  for ($i = 0; $i -lt 40; $i++) {
+    $p = Get-Random -Minimum 49153 -Maximum 65535
+    if (-not (Test-BwBrowserSafePort $p)) { continue }
+    $free = $false
+    try {
+      $l2 = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, $p)
+      $l2.Start(); $l2.Stop(); $free = $true
+    } catch { $free = $false }
+    if ($free) { return $p }
+  }
+  return 0
 }
 
 function Send-BwPanelResponse($stream, [int]$code, [string]$type, [byte[]]$body, [string]$cache = 'no-store',

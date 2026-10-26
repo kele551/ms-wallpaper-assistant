@@ -16,6 +16,8 @@
    4. payload 释放: core.ps1 / menu.ps1 / 说明 / ico 与源码逐字节一致
    5. 版本资源: exe 里写的版本号要和 launcher.py 里的一致
    6. 图标: exe 内嵌的大图要和源码 .ico 里那张是同一张
+   9. 面板端口: exe 里那份 core.ps1 必须过滤浏览器禁行端口(2026-10-26 控制台打不开)
+      —— 行为实测另见 tests/test_panel_port.py
 """
 import hashlib
 import os
@@ -222,6 +224,19 @@ check('exe 退出码 0', r.returncode == 0, r.returncode)
 txt8 = open(os.path.join(want1, 'launcher.txt'), encoding='utf-8').read().strip()
 check('launcher.txt 已自愈到新 exe 路径',
       os.path.abspath(txt8) == os.path.abspath(exe8), '%s != %s' % (txt8, exe8))
+
+# ============ 9. 面板端口: 不许把控制台起在浏览器禁行端口上 ============
+title('9. exe 里那份 core.ps1 的面板端口选择 -> 过滤浏览器禁行端口 (2026-10-26 控制台打不开)')
+core9 = open(os.path.join(want1, 'core.ps1'), encoding='utf-8', errors='replace').read()
+body9 = core9[core9.index('function Get-BwPanelPort'):] if 'function Get-BwPanelPort' in core9 else ''
+body9 = body9[:body9.index('\nfunction ')] if '\nfunction ' in body9 else body9
+check('有 Test-BwBrowserSafePort 这个判据', 'function Test-BwBrowserSafePort' in core9)
+check('Get-BwPanelPort 真的在调用它', ('Test-BwBrowserSafePort' in body9), body9[:60])
+check('禁行表里有 6666(今天实际踩到的那个)', '6666' in core9[core9.index('$global:BwBannedBrowserPorts'):core9.index('function Test-BwBrowserSafePort')])
+check('不再是"系统发什么就用什么"的裸实现', 'Get-BwPanelOsPort' in body9 and 'Test-BwBrowserSafePort' in body9, body9[:80])
+check('系统发到禁行端口时有日志可循', '浏览器禁行端口' in body9)
+check('兜底端口当场试开', 'function Get-BwPanelOsPort' in core9 and core9.count('TcpListener') >= 2)
+# 行为口径由 tests/test_panel_port.py 跑 PowerShell 实测，这里只钉住 exe 里带上了这套逻辑
 
 print('-' * 70)
 print('全部通过' if ok_all else '有用例失败 —— 别发布')
