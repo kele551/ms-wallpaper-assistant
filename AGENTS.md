@@ -54,10 +54,10 @@ $e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile("core.p
 | --- | --- | --- |
 | GitHub `github.com/kele551/ms-wallpaper-assistant` | `github` | **主仓库**，永远是最新的一份 |
 | GitCode `gitcode.com/kele551/ms-wallpaper-assistant` | `origin` | 镜像（2026-10-17～10-26 曾为主源），代码可能滞后 |
-| AtomGit `atomgit.com/kele551/ms-wallpaper-assistant` | 未配 | 镜像；Release 无附件上传接口（只有源码归档） |
+| AtomGit `atomgit.com/kele551/ms-wallpaper-assistant` | 未配 | 镜像；它会跟着 GitHub 把发行版**附件**一起镜像过来（2026-10-26 实测，早先"传不了附件"的说法已过期） |
 | Gitee（kele551 / ms-wallpaper-assistant） | 未配 | **自 v2.3.2 起停止同步** —— 那条线上是旧代码，别再写它的地址(连发版闸门都盯着这个) |
 
-**二进制发行包发 GitHub 与 GitCode** 两处（AtomGit 传不了附件）。
+**二进制发行包发 GitHub 与 GitCode** 两处（AtomGit 不用手动传：它镜像 GitHub 的发行版与附件）。
 
 ```powershell
 git push github main --tags                   # 主仓库，必推

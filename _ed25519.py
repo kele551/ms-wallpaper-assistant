@@ -11,7 +11,7 @@ Ed25519 的参考实现很短（Bernstein 等人论文附带的 Python 版），
   · 发布端（tools/make_version_json.py）：用私钥给 version.json 签名
   · 客户端（launcher.py --verify-update）：用内置公钥验签，**验不过就拒绝升级**
 
-这样即便 Gitee 账号被盗、有人推了恶意 version.json + 恶意 exe，
+这样即便 GitCode 账号被盗、有人推了恶意 version.json + 恶意 exe，
 没有私钥就签不出合法签名，客户端会直接拒绝。
 
 正确性按 RFC 8032 官方测试向量验证。

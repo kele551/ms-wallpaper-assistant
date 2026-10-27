@@ -42,7 +42,9 @@ secrets/
 *.key
 
 # 本机私有：发布令牌与发布脚本的本机配置（绝不入库）
+# 2026-10-26 主源迁到 GitCode；.gitee_token 是停更前的老文件名，留着继续.ignore
 .gitee_token
+.gitcode_token
 tools/publish.local.json
 
 # 测试生成目录（三个 gen_*_test.py 每次重建，里面是临时图库/假 state，不入库）

@@ -1,28 +1,35 @@
 # -*- coding: utf-8 -*-
 """
-壁纸助手 —— 一键发布流水线
+壁纸助手 —— 一键发布流水线（GitCode 主源 + GitHub 镜像）
 
-依赖: 一枚 Gitee 私人令牌(仅勾 projects 权限), 存一次, 之后长期复用。
-GitHub 侧走一个纯 REST 的推送脚本（用环境变量 MWA_GH_PUSH 指定；用 gh 的令牌），
-不需要 github.com 的 git 端口 —— 那条线路时通时断。
+依赖: 一枚 GitCode 私人令牌(存一次, 之后长期复用)。HTTP 层只用 Python 标准库 ——
+本机没装第三方 HTTP 库, 以前那版依赖它, 结果在这台机器上整条流水线跑不起来,
+只能临时手搓脚本发版（2026-10-26 就是这个坑）。
+GitHub 侧走本机登录态的 gh.exe（它自己会挑线路，比手搓 REST 稳）。
+
+2026-10-26 换目标: 老的那家已停更、客户端也不再从它取任何地址，所以发布目标定为
+GitCode（国内主源）+ GitHub（国外镜像）。AtomGit 不用推 —— 它按分钟级自动镜像 GitHub。
 
 用法:
     python tools/publish.py set-token <令牌>         # 存令牌并验证
     python tools/publish.py whoami                   # 看令牌是否有效
-    python tools/publish.py release 2.1.1            # 只发 Gitee
-    python tools/publish.py release 2.1.1 --github   # 双平台(用户要求两个都发)
-    python tools/publish.py release 2.1.1 --skip-build   # 已有 exe, 只做发布
-    python tools/publish.py release 2.1.1 --notes 文件.md # 指定发布说明
+    python tools/publish.py release 2.4.2            # 只发 GitCode
+    python tools/publish.py release 2.4.2 --github   # 双平台(用户要求两个都发)
+    python tools/publish.py release 2.4.2 --skip-build   # 已有 exe, 只做发布
+    python tools/publish.py release 2.4.2 --notes 文件.md # 指定发布说明
+    python tools/publish.py verify 2.4.2             # 只读：线上验真，什么都不发
 
 release 子命令依次做:
     ① 改三处版本号 (core.ps1 / menu.ps1 / launcher.py)
     ② 打包 (build-exe.py --release)  ->  exe / 带版本号 exe / ASCII 名 zip
     ③ 生成升级源 version.json (必须与本次 exe 同一份, 否则老客户端校验不过)
-    ④ 提交 + 打 tag + 推 Gitee
-    ⑤ Gitee 建发行版 + 上传附件(zip / exe / version.json)
-    ⑥ README 下载链接指向新版 -> 提交推送
-    ⑦ 同步 GitHub (代码 + tag + Release + 附件, 走 REST)
-    ⑧ 验真: 每个附件从两个平台下载回来比对 SHA256
+    ③+ 提交 + 打 tag + **只推 tag**（main 留到最后，见下）
+    ④ GitCode 建发行版 + 上传附件(zip / exe / version.json / .sig)
+    ⑤ README 下载链接指向新版
+    ⑥ 同步 GitHub (代码 + tag + Release + 附件, 走 gh.exe)
+    ⑦ 验真: 每个附件从两个平台下载回来比对 SHA256
+    ⑧ **main 最后推** —— 升级源就是 main 上那份 version.json，它一上线全体老用户
+       立刻开始提示升级，那时附件必须已经躺好；然后回读线上 version.json + .sig 真验一遍签
 """
 import os
 import re
@@ -34,10 +41,12 @@ import zipfile
 import io
 import hashlib
 import subprocess
-from urllib.parse import quote
+import urllib.error
+import urllib.parse
+from urllib import request as _rq
 from pathlib import Path
 
-import requests
+quote = urllib.parse.quote          # 老代码里直接用 quote()，这里补个名字
 
 # 2026-10-12 修(发布现场崩过一次): Windows 控制台默认 GBK ——
 # build-exe.py 子进程按 GBK 打中文路径, 本脚本按 UTF-8 解码得到一个 �,
@@ -52,15 +61,20 @@ except Exception:
 REPO_DIR = Path(__file__).resolve().parent.parent
 OWNER, REPO = 'kele551', 'ms-wallpaper-assistant'
 BRANCH = 'main'
-GITEE_API = 'https://gitee.com/api/v5'
-GITEE_WEB = 'https://gitee.com'
+GC_API = 'https://gitcode.com/api/v5'
+GC_WEB = 'https://gitcode.com'
+GH_REPO = '%s/%s' % (OWNER, REPO)
+# 2026-10-26: 发布目标换成 GitCode(国内主源) + GitHub(国外镜像)。
+# 老的那家已停更，客户端也不再从它取任何地址；工具里留着一个会写字节的主源，
+# 迟早发出"线上取不到"的版本，所以整条链路一起换掉。
+REMOTES = ('origin', 'github')          # 本仓库 origin 就是 GitCode
 # ---- 本机私有配置（可选，永不进仓库）----------------------------------------
 # 公开仓库里不写任何维护者本机路径。本机要用的解释器 / git / 推送脚本 / gh / 令牌位置，
 # 一律按：① 环境变量 → ② 本机私有配置 ~/.mwa-publish.json → ③ 与机器无关的默认值。
 # 私有配置文件示例（放在用户主目录，文件名前面有个点）：
 #   {"python": "C:\\\\Python313\\\\python.exe", "git_dir": "C:\\\\Program Files\\\\Git\\\\mingw64\\\\bin",
-#    "gh_push": "D:\\\\tools\\\\github_push.py", "gh": "C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe",
-#    "token_file": "D:\\\\private\\\\gitee_token"}
+#    "gh": "F:\\\\Harness\\\\toolchain\\\\gh\\\\bin\\\\gh.exe", "git_proxy": "http://127.0.0.1:8787",
+#    "token_file": "D:\\\\private\\\\gitcode_token"}
 _CFG_PATH = Path.home() / '.mwa-publish.json'
 _CFG = {}
 if _CFG_PATH.is_file():
@@ -69,9 +83,9 @@ if _CFG_PATH.is_file():
     except Exception as _e:
         print('警告: %s 解析失败(%s)，按"没有本机配置"继续' % (_CFG_PATH, _e), file=sys.stderr)
 
-_ENV_TOKEN_FILE = os.environ.get('GITEE_TOKEN_FILE') or _CFG.get('token_file')
-# 都没给就落到仓库内的 .gitee_token（已 gitignore）；也可以直接用环境变量 GITEE_TOKEN 传令牌本身
-TOKEN_CANDIDATES = [_ENV_TOKEN_FILE] if _ENV_TOKEN_FILE else [str(REPO_DIR / '.gitee_token')]
+_ENV_TOKEN_FILE = os.environ.get('GITCODE_TOKEN_FILE') or _CFG.get('token_file')
+# 都没给就落到仓库内的 .gitcode_token（已 gitignore）；也可以直接用环境变量 GITCODE_TOKEN 传令牌本身
+TOKEN_CANDIDATES = [_ENV_TOKEN_FILE] if _ENV_TOKEN_FILE else [str(REPO_DIR / '.gitcode_token')]
 TOKEN_FILE = Path(TOKEN_CANDIDATES[0])
 # 打包 / 子脚本用的解释器：默认就用当前这个解释器
 PY = os.environ.get('MWA_PY') or _CFG.get('python') or sys.executable
@@ -94,8 +108,11 @@ def _find_git_dir():
 GIT_EXEC_PATH = _find_git_dir()
 # 有绝对路径就用绝对路径: 有的执行环境按名字找不到 git(WinError 2)
 GIT_EXE = (GIT_EXEC_PATH + '/git.exe') if GIT_EXEC_PATH else 'git'
-# 纯 API 推 GitHub(含附件), 2026-09-22 重写
-GH_PUSH = os.environ.get('MWA_GH_PUSH') or _CFG.get('gh_push') or str(REPO_DIR / 'tools' / 'github_push.py')
+# GitHub 侧走本机登录态的 gh.exe(2026-10-26 起): 它自己会挑直连/端口, 比手搓 REST 稳,
+# 也不依赖那个从没入库过的 tools/github_push.py。
+GH = os.environ.get('MWA_GH') or _CFG.get('gh') or shutil.which('gh') or 'gh'
+# GitHub 的 git 端口在这台机器上时通时断，失败时借本地代理重试（只在命令行 -c 上带，不改 config）
+GIT_PROXY = os.environ.get('MWA_GIT_PROXY') or _CFG.get('git_proxy') or 'http://127.0.0.1:8787'
 ZIP_TPL = 'MSWallpaperAssistant-v%s.zip'          # zip 的 ASCII 名不改(仓库英文标识稳定)
 
 
@@ -148,7 +165,7 @@ def save_token(tok):
 
 
 def load_token():
-    t = os.environ.get('GITEE_TOKEN')
+    t = os.environ.get('GITCODE_TOKEN')
     if t:
         return t.strip()
     for c in TOKEN_CANDIDATES:
@@ -158,15 +175,29 @@ def load_token():
     return None
 
 
-def api(method, path, token, **kw):
-    p = dict(kw.get('params') or {})
-    p['access_token'] = token
-    kw['params'] = p
-    kw.setdefault('timeout', 60)
-    r = requests.request(method, GITEE_API + path, **kw)
-    if r.status_code >= 400:
-        raise RuntimeError('API %s %s -> %s %s' % (method, path, r.status_code, r.text[:300]))
-    return r.json() if r.text.strip() else {}
+def api(method, path, token, payload=None, timeout=120, extra=None, headers=None):
+    """GitCode v5 接口：令牌走 access_token 查询参数；HTTP 层只用标准库（本机没装第三方库）。
+
+    2026-10-26 实测：GitCode 建发行版的响应里**没有 id 字段**，所以一切都按 tag 寻址；
+    它也没有老平台那套 attach_files 接口（一律 404/405），附件要走 upload_url + PUT。
+    """
+    p = {'access_token': token}
+    p.update(extra or {})
+    url = GC_API + path + '?' + urllib.parse.urlencode(p)
+    hd = {'User-Agent': 'mwa-publish'}
+    hd.update(headers or {})
+    data = None
+    if payload is not None:
+        data = json.dumps(payload).encode('utf-8')
+        hd['Content-Type'] = 'application/json'
+    req = _rq.Request(url, data=data, headers=hd, method=method)
+    try:
+        with _rq.urlopen(req, timeout=timeout) as r:
+            body = r.read()
+    except urllib.error.HTTPError as e:
+        raise RuntimeError('API %s %s -> %s %s'
+                           % (method, path, e.code, e.read()[:300].decode('utf-8', 'replace')))
+    return json.loads(body.decode('utf-8', 'replace')) if body.strip() else {}
 
 
 # ---------- 本地改动 ----------
@@ -227,22 +258,75 @@ def run(cmd, cwd=REPO_DIR, env=None, check=True):
     return out
 
 
-def git_commit_push(ver, files):
+GIT_ID = ['-c', 'user.name=海风（kele551）',
+          '-c', 'user.email=kele551@users.noreply.github.com']
+# 全局 git config 里没有身份（用户要求不改 config），所以每次提交/打标签都显式带上。
+
+
+def _git_raw(args):
+    """跑一条 git，返回 (退出码, 输出)。推送成败只信退出码 + 远端 sha。"""
+    e = os.environ.copy()
+    if GIT_EXEC_PATH:
+        e['GIT_EXEC_PATH'] = GIT_EXEC_PATH
+        e['PATH'] = GIT_EXEC_PATH.replace('/', os.sep) + os.pathsep + e.get('PATH', '')
+    args = list(args)
+    if args and args[0] == 'git':
+        args[0] = GIT_EXE.replace('/', os.sep)
+    print('   $', ' '.join(args))
+    r = subprocess.run(args, cwd=str(REPO_DIR), env=e,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    return r.returncode, r.stdout.decode('utf-8', 'replace')
+
+
+def _push(remote, ref):
+    """推一个 ref；GitHub 那条线本机时不时裸连不上，失败就带一次本地代理重试。
+
+    代理只在"这次推送"上用 -c 传进去（不落 git config）。推完一律 ls-remote 复核远端 sha：
+    退出码只说明"命令没崩"，说明不了"远端变了"（管道还会把真实状态吞掉，踩过）。
+    """
+    if remote not in _git_raw(['git', 'remote'])[1]:
+        print('   跳过 %s：本仓库没有这个 remote' % remote)
+        return False
+    want = _git_raw(['git', 'rev-parse', 'HEAD' if ref == BRANCH else ref])[1].split()[-1]
+    code, out = _git_raw(['git', 'push', remote, ref])
+    if code != 0:
+        print('   裸推失败(%s)，带本地代理 %s 再试一次' % (out.strip()[-160:], GIT_PROXY))
+        code, out = _git_raw(['git', '-c', 'http.https://github.com/.proxy=' + GIT_PROXY,
+                              'push', remote, ref])
+        if code != 0:
+            print('   带代理也失败:', out.strip()[-200:])
+    got = (_git_raw(['git', 'ls-remote', remote, ref])[1].split() or ['', ''])[1:2]
+    if got and got[0] == want:
+        print('   pushed %s -> %s（远端 sha %s… 与本地一致）' % (ref, remote, want[:10]))
+        return True
+    raise RuntimeError('推送 %s -> %s 没生效：本地 %s，远端 %s'
+                       % (ref, remote, want[:10], (got or ['(取不到)'])[0][:10]))
+
+
+def git_commit_and_tag(ver, files):
+    """提交 + 打 tag + **只推 tag**：升级源是 main 上那份 version.json，main 要等附件就位再推。"""
     run(['git', 'add'] + files)
     msg = 'release: v%s' % ver
     if run(['git', 'diff', '--cached', '--name-only']).strip():
-        run(['git', '-c', 'user.name=kele551', '-c', 'user.email=kele551@users.noreply.github.com',
-             'commit', '-m', msg])
+        run(['git'] + GIT_ID + ['commit', '-m', msg])
     else:
         print('   工作区没有新改动, 跳过本次提交(只补发版)')
-    if not run(['git', 'tag', '-l', 'v%s' % ver]).strip():
-        run(['git', '-c', 'user.name=kele551', '-c', 'user.email=kele551@users.noreply.github.com',
-             'tag', '-a', 'v%s' % ver, '-m', 'v%s' % ver])   # 打 tag 同样要显式带身份
-        run(['git', 'push', 'origin', 'v%s' % ver])
+    tag = 'v%s' % ver
+    if not run(['git', 'tag', '-l', tag]).strip():
+        run(['git'] + GIT_ID + ['tag', '-a', tag, '-m', tag])   # 打 tag 同样要显式带身份
     else:
-        print('   tag v%s 已存在, 不重复创建' % ver)
-    run(['git', 'push', 'origin', BRANCH])
-    print('③ 代码与 tag 已推 Gitee')
+        print('   tag %s 已存在, 不重复创建' % tag)
+    for remote in REMOTES:
+        _push(remote, tag)
+    print('③ 代码已提交、tag %s 已推 %s（main 还没推 —— 附件就位后再推，顺序是铁律）'
+          % (tag, '+'.join(REMOTES)))
+
+
+def git_push_branch():
+    """附件验真通过之后，才让升级源在两个平台上生效。"""
+    for remote in REMOTES:
+        _push(remote, BRANCH)
+    print('③+ main 已推 %s —— 此刻起线上才开始提示升级' % '+'.join(REMOTES))
 
 
 def update_readme(ver, commit=True):
@@ -276,57 +360,80 @@ def update_readme(ver, commit=True):
         if not commit:
             print('⑤ README 已更新到 v%s (交给本次提交一起推)' % ver)
             return True
+        # 2026-10-26: 这里原来会当场 `git push origin main` —— 那是"升级源先生效、附件还没就位"
+        # 的窗口，用户点升级会 404。现在一律并进本次发布提交，由 git_push_branch() 最后统一推。
         run(['git', 'add', 'README.md'])
-        run(['git', '-c', 'user.name=kele551', '-c', 'user.email=kele551@users.noreply.github.com',
-             'commit', '-m', 'docs: README 指向 v%s' % ver])
-        run(['git', 'push', 'origin', BRANCH])
-        print('⑤ README 已更新并推送')
+        run(['git'] + GIT_ID + ['commit', '-m', 'docs: README 指向 v%s' % ver])
+        print('⑤ README 已更新并提交（推送留到附件验真之后）')
     else:
         print('⑤ README 无变化')
     return new != txt
 
 
 # ---------- 发行版 ----------
-def gitee_release(ver, token, assets, notes):
-    tag = 'v%s' % ver
-    # 已存在则复用
-    rel = None
+def _gc_get_release(tag, token):
+    """按 tag 取发行版。GitCode 的响应里**没有 id 字段**，所以一切按 tag 寻址。"""
     try:
-        rel = api('GET', '/repos/%s/%s/releases/tags/%s' % (OWNER, REPO, tag), token)
+        return api('GET', '/repos/%s/%s/releases/tags/%s' % (OWNER, REPO, quote(tag)), token)
     except Exception:
-        rel = None
-    if rel and rel.get('id'):
-        print('④ 发行版已存在, id =', rel['id'])
+        return None
+
+
+def gitcode_release(ver, token, assets, notes):
+    """GitCode：建发行版 + 逐个附件走"取上传地址 → PUT 原始字节"两步（2026-10-26 实测）。
+
+    老平台那套 attach_files 接口在 GitCode 一律 404/405，别再试。
+    同名附件：大小一致就当已传好跳过；**大小不同必须人工到网页上删掉旧的** ——
+    GitCode 没有可靠的删除附件接口，宁可停下来也不能让线上留两份不同字节的同名包。
+    """
+    tag = 'v%s' % ver
+    rel = _gc_get_release(tag, token)
+    if rel and rel.get('tag_name') == tag:
+        print('④ GitCode 发行版已存在:', tag, '| 附件', len(rel.get('assets') or []), '个')
     else:
-        rel = api('POST', '/repos/%s/%s/releases' % (OWNER, REPO), token, json={
+        rel = api('POST', '/repos/%s/%s/releases' % (OWNER, REPO), token, payload={
             'tag_name': tag,
             'name': tag,
             'body': notes or ('v%s' % ver),
             'target_commitish': BRANCH,
             'prerelease': False,
         })
-        print('④ 发行版已创建, id =', rel.get('id'))
-    rid = rel['id']
-
-    # 同名附件先删, 避免重复；然后逐个上传
-    exist = api('GET', '/repos/%s/%s/releases/%s/attach_files' % (OWNER, REPO, rid),
-                token)
-    have = {a.get('name'): a['id'] for a in (exist if isinstance(exist, list) else [])}
+        if not rel or not rel.get('tag_name'):
+            raise RuntimeError('GitCode 建发行版失败: %s' % json.dumps(rel, ensure_ascii=False)[:300])
+        print('④ GitCode 发行版已创建:', rel.get('tag_name'))
+    have = {a.get('name'): a for a in ((_gc_get_release(tag, token) or {}).get('assets') or [])}
     for path in assets:
-        name = os.path.basename(str(path))
-        if name in have:
-            api('DELETE', '/repos/%s/%s/releases/%s/attach_files/%s'
-                % (OWNER, REPO, rid, have[name]), token)
-            print('   旧附件已删:', name)
-        with open(str(path), 'rb') as f:
-            r = requests.post(
-                '%s/repos/%s/%s/releases/%s/attach_files' % (GITEE_API, OWNER, REPO, rid),
-                params={'access_token': token},
-                files={'file': (name, f, 'application/octet-stream')},
-                timeout=1800)
-        if r.status_code >= 400:
-            raise RuntimeError('附件上传失败 %s %s %s' % (name, r.status_code, r.text[:200]))
-        print('   附件已上传:', name, os.path.getsize(str(path)), 'B')
+        p = str(path)
+        name = os.path.basename(p)
+        size = os.path.getsize(p)
+        old = have.get(name)
+        if old and old.get('size') == size:
+            print('   附件已在（同名同大小，跳过）:', name, size, 'B')
+            continue
+        if old:
+            raise RuntimeError('GitCode 上同名附件字节不同（线上 %s B / 本地 %d B）：%s\n'
+                               '请到 %s/%s/%s/releases/tag/%s 删掉旧附件再重发。'
+                               % (old.get('size'), size, name, GC_WEB, OWNER, REPO, tag))
+        j = api('GET', '/repos/%s/%s/releases/%s/upload_url' % (OWNER, REPO, quote(tag)),
+                token, extra={'file_name': name}, timeout=120)
+        up = (j or {}).get('url') or ((j or {}).get('data') or {}).get('url')
+        hd = (j or {}).get('headers') or ((j or {}).get('data') or {}).get('headers') or {}
+        if not up:
+            raise RuntimeError('拿不到 GitCode 上传地址: %s' % json.dumps(j, ensure_ascii=False)[:200])
+        data = io.open(p, 'rb').read()
+        h = dict(hd)
+        h['Content-Length'] = str(len(data))
+        req = _rq.Request(up, data=data, headers=h, method='PUT')
+        with _rq.urlopen(req, timeout=1800) as r:
+            if r.status not in (200, 201, 204):
+                raise RuntimeError('附件 PUT 失败 %s -> %s' % (name, r.status))
+        print('   附件已上传:', name, size, 'B')
+    chk = _gc_get_release(tag, token) or {}
+    names = [a.get('name') for a in (chk.get('assets') or [])]
+    missing = [os.path.basename(str(p)) for p in assets if os.path.basename(str(p)) not in names]
+    if missing:
+        raise RuntimeError('GitCode 回读缺少附件（平台没登记上）: %s' % ', '.join(missing))
+    print('   下载页:', '%s/%s/%s/releases/tag/%s' % (GC_WEB, OWNER, REPO, tag))
 
 
 def make_version_json():
@@ -344,33 +451,110 @@ def make_version_json():
     return vj, sig
 
 
+def _gh(args):
+    cmd = [GH] + args
+    print('   $', ' '.join(cmd[:7]), '...' if len(cmd) > 7 else '')
+    r = subprocess.run(cmd, cwd=str(REPO_DIR), capture_output=True, text=True,
+                       encoding='utf-8', errors='replace', timeout=1800)
+    return r.returncode, ((r.stdout or '') + (r.stderr or ''))
+
+
 def sync_github(ver, assets, notes_file):
-    """代码 + tag + Release + 附件，全部走 api.github.com / uploads.github.com。"""
-    cmd = [PY, GH_PUSH, '--dir', str(REPO_DIR), '--repo', '%s/%s' % (OWNER, REPO),
-           '--branch', BRANCH, '--tag', 'v%s' % ver,
-           '--message', 'release: v%s' % ver]
-    for a in assets:
-        cmd += ['--asset', str(a)]
-    if notes_file and os.path.exists(notes_file):
-        cmd += ['--notes-file', str(notes_file)]
-    run(cmd)
+    """GitHub 侧走 gh.exe（本机登录态自己挑线路），不用 github.com 的 git 端口。
+
+    两个写死的坑：`release create` 不能带 --target（tag 已推上去，带了报 already exists）；
+    中文附件名会被 GitHub 削坏，所以 GitHub 那份一律用 ASCII 名（见 gh_assets）。
+    """
+    tag = 'v%s' % ver
+    code, out = _gh(['release', 'create', tag, '--title', tag,
+                     '--notes-file', str(notes_file), '--repo', GH_REPO])
+    if code != 0 and 'already exists' not in out.lower():
+        raise RuntimeError('gh release create 失败: %s' % out.strip()[-400:])
+    if code != 0:
+        print('   GitHub 发行版已存在, 继续补附件')
+    code, out = _gh(['release', 'upload', tag, '--clobber'] +
+                    [str(a) for a in assets] + ['--repo', GH_REPO])
+    if code != 0:
+        raise RuntimeError('gh release upload 失败: %s' % out.strip()[-400:])
     print('⑥ GitHub 代码 / tag / Release / 附件 已同步')
 
 
-def _download(url):
-    for _ in range(3):
-        try:
-            r = requests.get(url, timeout=900)
-            if r.status_code == 200:
-                return r.content
-        except Exception:
-            pass
+# 两条超时口径必须分开（2026-10-26 热点那边踩过，这里一起收掉，免得下次发版重演）：
+#   SOCK_TMO  一条连接上「一次 recv」的上限 —— 链路断了 60 s 就该换下一条，
+#             而不是像从前那样 900 s × 3 轮：那等于"卡死了也看不出来"。
+#   DEADLINE  **总时长**预算 —— 本机走代理从 GitHub 取字节的实测速率只有 ~48 KB/s，
+#             十几兆的附件本来就要五六分钟；慢不等于错，但到点必须收。
+SOCK_TMO = int(os.environ.get('MWA_SOCK_TMO') or 60)
+DEADLINE_SMALL = int(os.environ.get('MWA_DEADLINE_SMALL') or 180)
+DEADLINE_BIG = int(os.environ.get('MWA_DEADLINE_BIG') or 900)
+
+
+def _progress(label, got, expect, secs):
+    print('  … %s 已取回 %.1f MB / %.1f MB（%.0f KB/s，用了 %d s）'
+          % (label, got / 1048576.0, expect / 1048576.0 if expect else 0,
+             got / max(secs, 1) / 1024.0, int(secs)))
+    sys.stdout.flush()
+
+
+def _download(url, timeout=SOCK_TMO, tries=2, headers=None, deadline=None, expect=0, label=''):
+    """取一个 URL 的原始字节；失败重试，GitHub 那侧再借一次本地代理。
+
+    边下边攒、每 15 秒报一次进度；超过 deadline **整条放弃**（重试只会再扔进去十分钟）。
+    """
+    ops = [_rq.build_opener(_rq.ProxyHandler({}))]
+    if GIT_PROXY and 'github' in url:
+        ops.append(_rq.build_opener(_rq.ProxyHandler(
+            {'http': GIT_PROXY, 'https': GIT_PROXY})))
+    hd = {'User-Agent': 'mwa-verify', 'Accept-Encoding': 'identity'}
+    hd.update(headers or {})
+    for _ in range(tries):
+        for op in ops:
+            t0 = time.time()
+            next_report = 15
+            try:
+                req = _rq.Request(url, headers=hd)
+                with op.open(req, timeout=timeout) as r:
+                    if r.status != 200:
+                        continue
+                    buf = bytearray()
+                    over = False
+                    while True:
+                        # read1：有多少取多少。read(n) 会一直等到凑满 n 字节或连接关闭 ——
+                        # 那种慢链路下 deadline 永远轮不到（2026-10-26 那 15 MB 就是这么空转到没人知道在跑还是卡死）。
+                        chunk = (r.read1(262144) if hasattr(r, "read1") else r.read(262144))
+                        if not chunk:
+                            break
+                        buf += chunk
+                        spent = time.time() - t0
+                        if spent >= next_report:
+                            _progress(label or url.split('//')[-1][:52], len(buf), expect, spent)
+                            next_report = spent + 15
+                        if deadline and spent > deadline:
+                            print('  x %s 总时长预算 %d s 用尽：只取回 %d B / 需要 %d B'
+                                  '（这是链路慢，不代表包有问题；要等它就调大预算环境变量）'
+                                  % (label or url.split('//')[-1][:52], deadline,
+                                     len(buf), expect))
+                            sys.stdout.flush()
+                            over = True
+                            break
+                    if over:
+                        return None
+                    if buf:
+                        return bytes(buf)
+            except Exception:
+                continue
         time.sleep(4)
     return None
 
 
+def _api_json(url, headers=None, timeout=120):
+    req = _rq.Request(url, headers=headers or {'User-Agent': 'mwa-verify'})
+    with _rq.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode('utf-8', 'replace'))
+
+
 def _download_github_asset(ver, name):
-    """从 GitHub 取回发行版附件内容。
+    """从 GitHub 取回发行版附件内容（走 api.github.com 的 assets 接口）。
 
     2026-10-07 加：`github.com/.../releases/download/...` 在这条线路上时通时断，
     验真会误报「下载失败」。而 **api.github.com 一直通**，所以直连失败就改走
@@ -381,18 +565,22 @@ def _download_github_asset(ver, name):
     except Exception:
         return None
     h = {'Authorization': 'Bearer ' + tok, 'Accept': 'application/vnd.github+json',
-         'User-Agent': 'dsh-verify'}
+         'User-Agent': 'mwa-verify'}
     try:
-        rel = requests.get('https://api.github.com/repos/%s/%s/releases/tags/v%s'
-                           % (OWNER, REPO, ver), headers=h, timeout=120).json()
+        rel = _api_json('https://api.github.com/repos/%s/%s/releases/tags/v%s'
+                        % (OWNER, REPO, ver), h)
         for a in rel.get('assets', []):
             if a.get('name') == name:
                 hh = dict(h)
                 hh['Accept'] = 'application/octet-stream'
-                r = requests.get(a['url'], headers=hh, timeout=1800)
-                if r.status_code == 200:
+                # 以前这里是 urlopen(timeout=1800) + r.read()：一次 recv 能等半小时，
+                # 整条验真看不出在跑还是卡死。改走带进度与总预算的 _download。
+                got = _download(a['url'], SOCK_TMO, 1, hh, deadline=DEADLINE_BIG,
+                                expect=a.get('size') or 0,
+                                label='GitHub %s（API 附件口）' % name)
+                if got:
                     print('        （走 API 取回 %s）' % name)
-                    return r.content
+                    return got
     except Exception:
         pass
     return None
@@ -415,29 +603,32 @@ def gh_token():
 
 
 def verify(ver, assets, gh_assets=None):
-    """逐个附件从 Gitee / GitHub 下载回来比对 SHA256（中文名要 percent-encode）。
+    """逐个附件从 GitCode / GitHub 下载回来比对 SHA256（中文名要 percent-encode）。
 
-    Gitee 与 GitHub 的**附件名可以不一样**（GitHub 会把中文名削成 ASCII/空名），
-    所以两边分别按各自的名字下载：Gitee 用 assets，GitHub 用 gh_assets。
+    两平台的**附件名可以不一样**（GitHub 会把中文名削成 ASCII/空名），
+    所以两边分别按各自的名字下载：GitCode 用 assets，GitHub 用 gh_assets。
     """
     if gh_assets is None:
         gh_assets = assets
     ok = True
     targets = []
     for p in assets:
-        targets.append(('Gitee ', os.path.basename(str(p)), str(p), True))
+        targets.append(('GitCode', os.path.basename(str(p)), str(p), True))
     for p in gh_assets:
         targets.append(('GitHub', os.path.basename(str(p)), str(p), False))
-    for label, name, p, is_gitee in targets:
+    for label, name, p, is_gc in targets:
+        size = os.path.getsize(p)
         want = hashlib.sha256(open(p, 'rb').read()).hexdigest()
-        if is_gitee:
-            url = '%s/%s/%s/releases/download/v%s/%s' % (GITEE_WEB, OWNER, REPO, ver,
+        if is_gc:
+            url = '%s/%s/%s/releases/download/v%s/%s' % (GC_WEB, OWNER, REPO, ver,
                                                          quote(name))
         else:
             url = 'https://github.com/%s/%s/releases/download/v%s/%s' % (OWNER, REPO, ver,
                                                                          quote(name))
-        data = _download(url)
-        if data is None and not is_gitee:
+        data = _download(url, SOCK_TMO, 1 if not is_gc else 2,
+                         deadline=DEADLINE_BIG if size > 2 * 1024 * 1024 else DEADLINE_SMALL,
+                         expect=size, label='%s %s' % (label, name))
+        if data is None and not is_gc:
             data = _download_github_asset(ver, name)   # github.com 不通时改走 API
         if data is None:
             print('  [FAIL] %s %-32s 下载失败' % (label, name))
@@ -447,7 +638,7 @@ def verify(ver, assets, gh_assets=None):
         ok = ok and same
         print('  [%s] %s %-32s %9d B  一致=%s'
               % ('PASS' if same else 'FAIL', label, name, len(data), same))
-    print('   下载页:', '%s/%s/%s/releases/tag/v%s' % (GITEE_WEB, OWNER, REPO, ver))
+    print('   下载页:', '%s/%s/%s/releases/tag/v%s' % (GC_WEB, OWNER, REPO, ver))
     return ok
 
 
@@ -482,17 +673,22 @@ def verify_signature(vj, vsig):
     pub = bytes.fromhex(_client_pubkey())
     local_raw = open(str(vj), 'rb').read()
     ok = True
-    for label, base in (
-            ('Gitee ', '%s/%s/%s/raw/%s' % (GITEE_WEB, OWNER, REPO, BRANCH)),
-            ('GitHub', 'https://raw.githubusercontent.com/%s/%s/%s'
-             % (OWNER, REPO, BRANCH))):
-        try:
-            raw = _download(base + '/version.json')
-            sig_raw = _download(base + '/version.json.sig')
-        except Exception:
-            raw = sig_raw = None
+    # 客户端读的就是这两个地址：GitCode 的 raw 走 API（它没有老平台那种 /raw/分支 直链），
+    # GitHub 用 raw.githubusercontent.com。带时间戳参数是防 CDN 回半新半旧的缓存。
+    bust = int(time.time())
+    gc_base = GC_API + '/repos/%s/%s/raw' % (OWNER, REPO)
+    gh_base = 'https://raw.githubusercontent.com/%s/%s/%s' % (OWNER, REPO, BRANCH)
+    for label, mk in (
+            ('GitCode', lambda f: '%s/%s?ref=%s&t=%d' % (gc_base, f, BRANCH, bust)),
+            ('GitHub', lambda f: '%s/%s?v=%d' % (gh_base, f, bust))):
+        # 两个小文件（清单 806 B / 签名 128 B）：单次 recv 60 s、总预算 120 s、最多 3 轮，
+        # 最坏三分钟出头就出结论，不会再把整轮验真拖到看不看在跑还是卡住。
+        raw = _download(mk('version.json'), SOCK_TMO, 3, deadline=120,
+                        label='%s version.json' % label)
+        sig_raw = _download(mk('version.json.sig'), SOCK_TMO, 3, deadline=120,
+                            label='%s version.json.sig' % label)
         if raw is None or sig_raw is None:
-            print('  [FAIL] %s 线上 version.json / .sig 取不到（Gitee 与 GitHub 都必须能取到）' % label)
+            print('  [FAIL] %s 线上 version.json / .sig 取不到（GitCode 与 GitHub 都必须能取到）' % label)
             ok = False
             continue
         same_bytes = raw == local_raw
@@ -505,7 +701,8 @@ def verify_signature(vj, vsig):
                 sig_ok = False
         ok = ok and same_bytes and sig_ok
         print('  [%s] %s 线上 version.json 与本地一致=%s，Ed25519 验签=%s（公钥 %s…）'
-              % ('PASS' if (same_bytes and sig_ok) else 'FAIL', label, same_bytes, sig_ok, pub[:16]))
+              % ('PASS' if (same_bytes and sig_ok) else 'FAIL', label, same_bytes, sig_ok,
+                 pub.hex()[:16]))
     return ok
 
 
@@ -594,15 +791,18 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
 
     # 2026-10-23: 网页控制台上线, 新增/改动的文件都必须列进来 ——
     # 这个清单是**固定**的(不是 git add -A), 漏一个就不会被提交, 别人克隆下来是残缺的。
-    git_commit_push(ver, ['docs/CHANGELOG.md', 'README.md', 'core.ps1', 'menu.ps1',
-                          'launcher.py', 'build-exe.py', '_ed25519.py', '使用说明.txt',
-                          'version.json', 'version.json.sig',
-                          'panel.html', 'tools/embed_panel.py', 'tools/sign_version_json.py',
-                          'tools/drill_upgrade.ps1', 'tools/drill_launcher_update.ps1',
-                          'tools/preflight_release.py', 'tools/publish.py',
-                          'docs/ARCHITECTURE.md', 'docs/CODE_OF_CONDUCT.md',
-                          'docs/README_EN.md', 'docs/index.html', 'docs/demo/index.html'])
-    gitee_release(ver, token, assets, notes)
+    # ── 发版顺序是铁律（2026-10-26 定）：tag 先推 → 两平台建发行版传附件 → 附件验真 →
+    #    **main 最后推**（升级源就是 main 上那份 version.json，它一上线全体老用户立刻
+    #    开始提示升级，那时附件必须已经躺好，否则用户点了个 404）。
+    git_commit_and_tag(ver, ['docs/CHANGELOG.md', 'README.md', 'core.ps1', 'menu.ps1',
+                             'launcher.py', 'build-exe.py', '_ed25519.py', '使用说明.txt',
+                             'version.json', 'version.json.sig',
+                             'panel.html', 'tools/embed_panel.py', 'tools/sign_version_json.py',
+                             'tools/drill_upgrade.ps1', 'tools/drill_launcher_update.ps1',
+                             'tools/preflight_release.py', 'tools/publish.py',
+                             'docs/ARCHITECTURE.md', 'docs/CODE_OF_CONDUCT.md',
+                             'docs/README_EN.md', 'docs/index.html', 'docs/demo/index.html'])
+    gitcode_release(ver, token, assets, notes)
     if with_github:
         nf = notes_file or (REPO_DIR / '_notes.md')
         if not notes_file:
@@ -611,8 +811,13 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
         if not notes_file and nf.exists():
             nf.unlink()
     else:
-        print('⑥ 跳过 GitHub (默认只发 Gitee; 加 --github 才同步)')
+        print('⑥ 跳过 GitHub (默认只发 GitCode; 加 --github 才同步)')
     ok = verify(ver, assets, gh_assets)
+    if not ok:
+        sys.exit('❌ 附件验真没通过 —— main 先不推，线上仍是上一版；按上面的 [FAIL] 补齐后重跑。')
+    git_push_branch()
+    # 验签必须放在 main 推完之后：推之前线上那份 version.json 还是上一版的字节，
+    # 拿它跟本次发布的本地文件比必然"不一致"，那是假警报。
     ok = verify_signature(vj, vsig) and ok
     # 2026-10-05 修: 这一步原来只是打印, 验真失败也照样 exit 0 —— 于是
     # 「GitHub 附件没换成新的」被当成发布成功。现在验真不过就是**失败退出**。
@@ -635,6 +840,8 @@ def main():
             sys.exit('没有存过令牌')
         u = api('GET', '/user', t)
         print('用户 =', u.get('login') or u.get('name'))
+    elif a == 'verify' and len(sys.argv) > 2:
+        cmd_verify(sys.argv[2])
     elif a == 'release' and len(sys.argv) > 2:
         ver = sys.argv[2]
         cmd_release(ver,
@@ -644,6 +851,38 @@ def main():
                                 if '--notes' in sys.argv else None))
     else:
         print(__doc__)
+
+
+def cmd_verify(ver):
+    """只读验真：什么都不发，把线上那一版按用户的口径重跑一遍。
+
+    什么时候用它：① 发完版想确认"用户点检查更新真的能过"；② 用户报"升级失败"时，
+    先在这里分清是通道断了还是包坏了，别一上来就改代码发新版。
+    """
+    vj = REPO_DIR / 'version.json'
+    vsig = REPO_DIR / 'version.json.sig'
+    if not vj.is_file() or not vsig.is_file():
+        sys.exit('找不到本地 %s / %s —— 先确认仓库里的升级源是不是这一版' % (vj, vsig))
+    d = json.loads(vj.read_text(encoding='utf-8-sig'))
+    exe_info = d.get('launcher') or d.get('exe') or {}
+    print('① 清单: version=%s  size=%s  sha256=%s…'
+          % (d.get('version'), exe_info.get('size'), (exe_info.get('sha256') or '')[:16]))
+    if str(d.get('version')) != str(ver):
+        print('⚠ 本地 version.json 是 v%s，你要验的是 v%s —— 清单可能对不上号'
+              % (d.get('version'), ver))
+    zip_path = REPO_DIR / (ZIP_TPL % ver)
+    plain_exe = REPO_DIR / EXE_NAME
+    ascii_exe = REPO_DIR / ('MSWallpaperAssistant-v%s.exe' % ver)
+    # 只验"平台上真的挂了的那几个"。带版本号的 exe（桌面壁纸-vX.Y.Z.exe）是打包中间产物、
+    # 并不作为附件发布，列进来只会得到一个假 FAIL（2026-10-26 实测两平台附件清单：
+    # GitCode = zip + 桌面壁纸.exe + version.json(+.sig)，GitHub = ASCII 名 exe + zip + 清单）。
+    assets = [p for p in (zip_path, plain_exe, vj, vsig) if p.exists()]
+    gh_assets = [p for p in (zip_path, ascii_exe, vj, vsig) if p.exists()]
+    print('② 附件验真（两个平台各一次）:')
+    ok = verify(ver, assets, gh_assets)
+    ok = verify_signature(vj, vsig) and ok
+    print('验真结果:', 'PASS' if ok else 'FAIL')
+    sys.exit(0 if ok else 1)
 
 
 if __name__ == '__main__':
