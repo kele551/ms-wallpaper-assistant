@@ -3,8 +3,8 @@
 
 <h1>桌面壁纸</h1>
 
-<a href="https://gitcode.com/kele551/ms-wallpaper-assistant/releases" title="点击去下载（GitHub + GitCode 合计 · 实时）"><img alt="Downloads" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fkele551-badge.kele551.workers.dev%2F%3Frepo%3Dms-wallpaper-assistant%26kind%3Ddownloads&style=flat-square" height="30"></a>
-<a href="https://gitcode.com/kele551/ms-wallpaper-assistant" title="浏览量 · Gitee + GitCode 合计 · 实时"><img alt="浏览量" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fkele551-badge.kele551.workers.dev%2F%3Frepo%3Dms-wallpaper-assistant%26kind%3Dviews&style=flat-square" height="30"></a>
+<a href="https://gitcode.com/kele551/ms-wallpaper-assistant/releases" title="点击去下载（各平台发行版合计 · 实时）"><img alt="Downloads" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fkele551-badge.kele551.workers.dev%2F%3Frepo%3Dms-wallpaper-assistant%26kind%3Ddownloads&style=flat-square" height="30"></a>
+<a href="https://gitcode.com/kele551/ms-wallpaper-assistant" title="浏览量 · 各平台访问计数合计 · 实时"><img alt="浏览量" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fkele551-badge.kele551.workers.dev%2F%3Frepo%3Dms-wallpaper-assistant%26kind%3Dviews&style=flat-square" height="30"></a>
 
 <a href="https://github.com/kele551/ms-wallpaper-assistant/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
 <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square">
@@ -16,21 +16,19 @@
 <a href="https://github.com/kele551"><img alt="Follow Author" src="https://img.shields.io/github/followers/kele551?style=flat-square&logo=github&label=follow%20author&color=blue"></a>
 
 <img alt="Category" src="https://img.shields.io/badge/分类-应用软件-blue?style=flat-square">
-<img alt="No Admin" src="https://img.shields.io/badge/管理员权限-不需要-brightgreen?style=flat-square">
-<img alt="Local Only" src="https://img.shields.io/badge/图片-只存本机-brightgreen?style=flat-square">
-<img alt="4K" src="https://img.shields.io/badge/画质-4K-blue?style=flat-square">
+<img alt="Single File" src="https://img.shields.io/badge/形态-单文件exe-blue?style=flat-square">
+<img alt="Free" src="https://img.shields.io/badge/费用-免费无广告-brightgreen?style=flat-square">
+<img alt="No Tracking" src="https://img.shields.io/badge/用户数据-不采集不上传-green?style=flat-square">
 
-<a href="https://github.com/kele551/ms-wallpaper-assistant/releases"><img alt="Download from GitHub" src="https://img.shields.io/badge/%F0%9F%93%A5_%E4%B8%8B%E8%BD%BD-GitHub%E4%B8%BB%E6%BA%90-24292f?style=flat-square&logo=github&logoColor=white&labelColor=3d4552"></a>
-<a href="https://gitcode.com/kele551/ms-wallpaper-assistant"><img alt="GitCode mirror" src="https://img.shields.io/badge/%F0%9F%90%9E_%E6%BA%90%E7%A0%81-GitCode%E9%95%9C%E5%83%8F-c71d24?style=flat-square&logo=gitee&logoColor=white&labelColor=3d4552"></a>
+<a href="https://gitcode.com/kele551/ms-wallpaper-assistant/releases"><img alt="Download from GitCode" src="https://img.shields.io/badge/%F0%9F%93%A5_%E4%B8%8B%E8%BD%BD-GitCode%E4%B8%BB%E6%BA%90-c71d24?style=flat-square&logo=gitee&logoColor=white&labelColor=3d4552"></a>
+<a href="https://github.com/kele551/ms-wallpaper-assistant"><img alt="GitHub mirror" src="https://img.shields.io/badge/%F0%9F%90%99_%E6%BA%90%E7%A0%81-GitHub%E9%95%9C%E5%83%8F-24292f?style=flat-square&logo=github&logoColor=white&labelColor=3d4552"></a>
 <a href="https://www.bilibili.com/video/BV1Tupx6kEBe"><img alt="Bilibili demo" src="https://img.shields.io/badge/%F0%9F%93%BA_%E6%BC%94%E7%A4%BA-B%E7%AB%99%E8%A7%86%E9%A2%91-00a1d6?style=flat-square&logo=bilibili&logoColor=white&labelColor=3d4552"></a>
 <a href="https://github.com/kele551/ms-wallpaper-assistant/issues"><img alt="Issues" src="https://img.shields.io/badge/%F0%9F%90%9E_%E5%8F%8D%E9%A6%88-%E6%8F%90Issue-0969da?style=flat-square&labelColor=3d4552"></a>
 <a href="#支持项目"><img alt="Sponsor" src="https://img.shields.io/badge/%E2%98%95_%E8%B5%9E%E8%B5%8F-%E8%AF%B7%E5%96%9D%E5%92%96%E5%95%A1-ff69b4?style=flat-square&labelColor=3d4552"></a>
 
 <p>🖼 <b>让电脑桌面壁纸自己换，你不用管</b>　·　必应每日一图 + Windows 聚焦</p>
 
-<p><sub>2026-10-12 产品更名：「微软壁纸助手」→「壁纸助手」；2026-10-25 文件名更正为 <b>桌面壁纸.exe</b>（与界面显示名同一口径）。仓库名与下载地址不变；老机器原地升级后文件名还是旧名，同一个程序，照常自动升级。</sub></p>
-
-<p>作者 <b>海风（kele551）</b>　·　<a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub（主）</a>　·　<a href="https://gitcode.com/kele551/ms-wallpaper-assistant">GitCode（镜像）</a>　·　<a href="https://atomgit.com/kele551/ms-wallpaper-assistant">AtomGit（镜像）</a>　·　<a href="docs/README_EN.md">English</a></p>
+<p>作者 <b>海风（kele551）</b>　·　<a href="https://gitcode.com/kele551/ms-wallpaper-assistant">GitCode（主）</a>　·　<a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub（镜像）</a>　·　<a href="https://atomgit.com/kele551/ms-wallpaper-assistant">AtomGit（镜像）</a>　·　<a href="docs/README_EN.md">English</a></p>
 </div>
 
 
@@ -94,9 +92,12 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 > 两处的 `桌面壁纸.exe` / `MSWallpaperAssistant-v2.4.2.exe` 是同一个文件，SHA256 都是
 > `950954DE209F0CA31F91508DDDED7070B20E9C504FF690BE8DD8E4931FCEBB28`（2026-10-26 从 GitCode 取回逐字节验过）。
 
-> **代码主仓库：[GitHub](https://github.com/kele551/ms-wallpaper-assistant)** —— 2026-10-26 起四款软件只往 GitHub 推，这里永远是最新的一份。
-> [GitCode](https://gitcode.com/kele551/ms-wallpaper-assistant) 与 [AtomGit](https://atomgit.com/kele551/ms-wallpaper-assistant) 是**镜像**，代码可能滞后于 GitHub，
-> 但**发行版附件与 GitHub 同版本同字节**，所以下载反而推荐走 GitCode。三个平台都收 Issue / PR。
+> **下载主源：[GitCode](https://gitcode.com/kele551/ms-wallpaper-assistant)**（与热点 / 狐径同一口径）—— 境内直连快，
+> **发行版附件与 GitHub 同版本同字节**，三个平台都收 Issue / PR。
+> 代码推送以 [GitHub](https://github.com/kele551/ms-wallpaper-assistant) 为准（2026-10-26 起四款都先推 GitHub，
+> GitCode 与 [AtomGit](https://atomgit.com/kele551/ms-wallpaper-assistant) 由镜像跟上，所以代码偶尔会滞后于 GitHub）。
+>
+> 名字沿革：2026-10-12 产品更名「微软壁纸助手」→「壁纸助手」；2026-10-25 文件名更正为 **桌面壁纸.exe**（与界面显示名同一口径）。仓库名与下载地址不变；老机器原地升级后文件名还是旧名，同一个程序，照常自动升级。
 
 > 就这一个 exe，不用挑、不用装、不用下一步下一步。
 > （2026-10-25 起文件名从旧的 `壁纸助手.exe` 改成 `桌面壁纸.exe`，与界面显示名一致；旧名那份是同一个程序。）
