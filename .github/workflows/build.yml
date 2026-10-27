@@ -72,12 +72,37 @@ jobs:
           $vj = Get-Content -Raw version.json | ConvertFrom-Json
           Write-Host ("version.json = " + $vj.version)
           "version.json = $($vj.version)" | Add-Content -Encoding utf8 dist-staging\SHA256SUMS.txt
+          if ($Matches[1] -ne $vj.version) {
+            throw "launcher.py 的 VERSION（$($Matches[1])）与 version.json（$($vj.version)）不一致 —— 先对齐再发版"
+          }
           # 【2026-10-26 修】成品名 2026-10-25 起跟着显示名走 —— build-exe.py 的 EXE_STEM
           # 是 '桌面壁纸'，这里还 Get-Item '壁纸助手.exe' 的话这一步直接 throw，CI 恒红。
           # 名字唯一来源是 launcher.py 的 EXE_STEM，别再在第二处写死。
           $exe = Get-Item '桌面壁纸.exe'
-          Write-Host ("exe 文件版本 = " + $exe.VersionInfo.FileVersion)
+          $fv = "$($exe.VersionInfo.FileVersion)".Trim()
+          $company = "$($exe.VersionInfo.CompanyName)".Trim()
+          $comments = "$($exe.VersionInfo.Comments)".Trim()
+          Write-Host ("exe 文件版本 = " + $fv)
           Write-Host ("exe 大小     = " + $exe.Length + " B")
+          Write-Host ("CompanyName  = " + $company)
+          Write-Host ("Comments     = " + $comments)
+
+          # 2026-10-27：补齐闸门 —— 以前只打印不判断，版本/署名/仓库地址漂了也能过。
+          # 仓库地址以 build-exe.py 的 APP_REPO 为唯一口径（和热点新闻同一套做法）。
+          if (-not $fv.StartsWith($vj.version)) {
+            throw "exe 文件版本（$fv）与 version.json（$($vj.version)）不一致"
+          }
+          if ($company -ne 'HaiFeng (kele551)') { throw "CompanyName 署名不对：$company" }
+          $spec = Get-Content -Raw build-exe.py
+          if ($spec -notmatch "APP_REPO\s*=\s*'([^']+)'") { throw 'build-exe.py 里找不到 APP_REPO' }
+          $specRepo = $Matches[1]
+          if ($specRepo -notmatch '^(gitcode|github|atomgit)\.com/kele551/ms-wallpaper-assistant$') {
+            throw "build-exe.py 的 APP_REPO 不对（应为 kele551/ms-wallpaper-assistant 的 GitCode/GitHub/AtomGit 地址）：$specRepo"
+          }
+          if ($comments -ne $specRepo) {
+            throw "exe 注释里的仓库地址（$comments）与 build-exe.py 的 APP_REPO（$specRepo）不一致"
+          }
+          "exe 文件版本 = $fv" | Add-Content -Encoding utf8 dist-staging\SHA256SUMS.txt
 
       # ── 代码签名占位 ───────────────────────────────────────────────
       # 本项目正在申请 SignPath Foundation 提供的免费代码签名（见 docs/CODE_SIGNING_POLICY.md）。

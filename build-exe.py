@@ -45,6 +45,11 @@ APP_NAME = '壁纸助手'
 # 那两处改名要把老用户的 config/state/图片索引一起搬家, 收益不值那个风险。
 # 老文件名(壁纸助手.exe / 微软壁纸助手.exe)在 core.ps1 里照样是"固定名", 原地覆盖升级保持原名。
 EXE_STEM = '桌面壁纸'
+# 2026-10-27：仓库地址收成一处常量，CI 也读这里比对（以前写死在模板里，
+# 四款的 exe 注释地址各写各的，GitCode 主源 / GitHub 镜像分不清）。
+# GitCode 是下载主源（README、version.json 的 url 都指 GitCode），这里就写主源。
+APP_COMPANY = 'HaiFeng (kele551)'
+APP_REPO = 'gitcode.com/kele551/ms-wallpaper-assistant'
 PAYLOAD_FILES = ['core.ps1', 'menu.ps1', '使用说明.txt', '壁纸助手.ico']
 ICON = '壁纸助手.ico'
 
@@ -79,7 +84,7 @@ VSVersionInfo(
       StringTable(
         '080404b0',
         [
-          StringStruct('CompanyName', 'HaiFeng (kele551)'),
+          StringStruct('CompanyName', '{company}'),
           StringStruct('FileDescription', '桌面壁纸 - 必应每日一图 + Windows 聚焦'),
           StringStruct('FileVersion', '{v}'),
           StringStruct('InternalName', 'MSWallpaperAssistant'),
@@ -87,14 +92,14 @@ VSVersionInfo(
           StringStruct('OriginalFilename', '桌面壁纸.exe'),
           StringStruct('ProductName', '桌面壁纸'),
           StringStruct('ProductVersion', '{v}'),
-        StringStruct('Comments', 'github.com/kele551/ms-wallpaper-assistant')
+          StringStruct('Comments', '{repo}')
         ]
       )
     ]),
     VarFileInfo([VarStruct('Translation', [2052, 1200])])
   ]
 )
-""".format(vt=vtuple, v=version)
+""".format(vt=vtuple, v=version, company=APP_COMPANY, repo=APP_REPO)
     with open(path, 'w', encoding='utf-8') as f:
         f.write(text)
 
