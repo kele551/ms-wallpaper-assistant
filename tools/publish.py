@@ -278,6 +278,44 @@ def _git_raw(args):
     return r.returncode, r.stdout.decode('utf-8', 'replace')
 
 
+def pick_remote_sha(ls_remote_output, ref):
+    """从 `git ls-remote <remote> <ref>` 的输出里挑出**这个 ref 自己**的 sha。
+
+    只吃字符串、不碰 git —— 这样"复核"这一步本身是能用假数据测的（2026-11-05 第一次
+    用重构后的发布脚本发版就栽在这儿）：
+
+    - annotated tag 会返回**两行**：`<tag 对象 sha>\trefs/tags/vX.Y.Z` 与
+      `<指向的 commit sha>\trefs/tags/vX.Y.Z^{}`；而 `git rev-parse vX.Y.Z` 给的是
+      **tag 对象**那一行的 sha。
+    - 老写法把整段输出 `.split()` 摊平再取 `[1:2]`，取到的是**第一行的 ref 名**，
+      永远等不上 sha —— tag 明明已经推上去（远端 ls-remote 看得见），脚本却当场
+      RuntimeError 退出，等于"发布失败"。分支只有一行，取到的还是 ref 名。
+    - 所以要按行拆、按 ref 认行，并且优先**不带 `^{}` 的那一行**（剥出来的 commit 只当兜底）。
+
+    找不到就返回空串（让调用方报"远端取不到"，而不是悄悄比出一个假通过）。
+    """
+    def _same_name(name):
+        # 传短名（main / v2.4.3）时远端给的是全名（refs/heads/main / refs/tags/v2.4.3），
+        # 只能按结尾认；传全名时就逐字比，免得 "main" 误匹配 "refs/heads/domain"。
+        if ref.startswith('refs/'):
+            return name == ref
+        return name == ref or name.endswith('/' + ref) or name.endswith(':' + ref)
+
+    peeled = ''
+    for line in (ls_remote_output or '').splitlines():
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        sha, name = parts[0], parts[1]
+        if name.endswith('^{}'):
+            if _same_name(name[:-3]):
+                peeled = peeled or sha   # 兜底：远端只给了剥出来的那一行
+            continue
+        if _same_name(name):
+            return sha
+    return peeled
+
+
 def _push(remote, ref):
     """推一个 ref；GitHub 那条线本机时不时裸连不上，失败就带一次本地代理重试。
 
@@ -295,12 +333,12 @@ def _push(remote, ref):
                               'push', remote, ref])
         if code != 0:
             print('   带代理也失败:', out.strip()[-200:])
-    got = (_git_raw(['git', 'ls-remote', remote, ref])[1].split() or ['', ''])[1:2]
-    if got and got[0] == want:
+    got = pick_remote_sha(_git_raw(['git', 'ls-remote', remote, ref])[1], ref)
+    if got and got == want:
         print('   pushed %s -> %s（远端 sha %s… 与本地一致）' % (ref, remote, want[:10]))
         return True
     raise RuntimeError('推送 %s -> %s 没生效：本地 %s，远端 %s'
-                       % (ref, remote, want[:10], (got or ['(取不到)'])[0][:10]))
+                       % (ref, remote, want[:10], (got or '(取不到)')[:10]))
 
 
 def git_commit_and_tag(ver, files):
