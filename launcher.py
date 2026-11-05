@@ -708,6 +708,57 @@ def read_last_swap(d):
         return None
 
 
+def read_last_bing_date(d):
+    """state.json 里「最后一次换上必应当日图是哪一天」(core.ps1 规则 1 的记账)。
+
+    读不到就返回空串 —— 空串 != 今天, 于是守护进程会立刻跑一轮, 让 core.ps1
+    自己去补这张当日图。宁可多跑一轮空转的轮换, 也不要"今天这张永远不上墙"。
+    """
+    try:
+        with open(os.path.join(d, 'state.json'), encoding='utf-8-sig') as f:
+            return (json.load(f).get('last_bing_date') or '').strip()
+    except Exception:
+        return ''
+
+
+def compute_target(now_ts, cycle_ts, daily_pending, daily_ts, boot_pending, boot_ts):
+    """守护进程下一轮该在什么时刻跑。纯函数, 喂假时间就能测, 不碰磁盘不睡真觉。
+
+    cycle_ts      : 「上次换图 + 间隔」—— 原来唯一的依据
+    daily_pending : 今天还没换上必应当日图 (core.ps1 规则 1「每天第一次 -> 必应当日图」)
+    daily_ts      : 上面这条没办成时的退避下限 (断网不许每几十秒重试一轮)
+    boot_pending  : 本次开机还没跑过任何一轮轮换 (守护进程只在登录时被拉起,
+                    所以进程刚起来 == 本次开机第一次)。开机校对填充方式、
+                    必应模式重启贴回当日图 都只在轮换里做, 得给它一次机会。
+    boot_ts       : 同上, 人不在时的退避下限
+
+    【2026-11-05 用户反馈】"前一天手动选了一张别的时间的必应图, 今早开机不换当日图,
+    要先切聚焦再切必应才换得动"。根因就在原来这里只看 cycle_ts: 必应模式把间隔钉成
+    1440 分钟, 前一天 17:20 手动挑图把 last_swap 推到 17:20 -> 下一轮排到"第二天 17:20",
+    早上开机那一轮压根不跑, 规则 1 与开机校对全都没机会执行。面板上那两个模式按钮
+    会当场跑一次换图(bingnow), 所以"切一下就好了"。
+    """
+    t = cycle_ts
+    if daily_pending:
+        t = min(t, max(now_ts, daily_ts))
+    if boot_pending:
+        t = min(t, max(now_ts, boot_ts))
+    return t
+
+
+# 「今天还没换上必应当日图」没试成时的阶梯退避: 5 -> 15 -> 30 -> 60 分钟封顶。
+# 阶梯是为了断网: 必应接口挂一天的话, 固定 5 分钟就是全天 288 轮空转(每轮还要
+# 联网取元数据 + 补漏 + 查升级)。换成功一次就把阶梯归零。
+DAILY_RETRY_STEPS_S = (5 * 60, 15 * 60, 30 * 60, 60 * 60)
+
+
+def daily_retry_seconds(fails):
+    """第 fails 次失败后该退避多久 (只增不减到 1 小时封顶)。"""
+    if fails < 0:
+        fails = 0
+    return DAILY_RETRY_STEPS_S[min(fails, len(DAILY_RETRY_STEPS_S) - 1)]
+
+
 SLEEP_SLICE_S = 1.0     # 分片睡的粒度：停止信号最迟 1 秒内被看到（审查 H-12）
 
 
@@ -766,6 +817,11 @@ def mode_daemon(d):
 
     prev = read_last_swap(d)
     hold_until = 0.0     # 这轮没换成图时的兜底: 至少等到这个时刻, 免得空转
+    daily_hold = 0.0     # 「今天还没换上必应当日图」的退避下限
+    boot_hold = 0.0      # 「本次开机还没跑过轮换」的退避下限
+    boot_pending = True  # 守护进程只在登录时被拉起 -> 进程刚起来就是本次开机第一次
+    boot_logged = False  # "本次开机先跑一轮"这句日志每次启动只说一次
+    daily_fails = 0      # 上面这条连续失败几次, 决定阶梯退避到第几档
     away_logged = False  # "用户离开"这条日志只写一次, 免得刷屏
     lock_warned = False  # "锁屏判定不可用"也只写一次
     # 2026-10-23: 起来/收工都留一行日志。以前后台被 --stop 停掉时**一行都没有**,
@@ -796,7 +852,17 @@ def mode_daemon(d):
             # 每轮都会 due -> 安静 -> hold_until = now+300 -> 回到这里又被算成 0.0 ->
             # 又是一轮 due …… 中间一次 sleep 都没有, 就是 100% CPU 空转一整夜。
             base = 0.0 if ls is None else (ls.timestamp() + gap * 60)
-            target = max(base, hold_until)
+            # 节拍之外还有两个"到点"条件(见 compute_target 的说明):
+            #   今天还没换上必应当日图 / 本次开机还没跑过一轮轮换。
+            today_str = datetime.date.today().strftime('%Y-%m-%d')
+            daily_pending = (read_last_bing_date(d) != today_str)
+            target = compute_target(time.time(), max(base, hold_until),
+                                    daily_pending, daily_hold,
+                                    boot_pending, boot_hold)
+            if boot_pending and not boot_logged and target < max(base, hold_until):
+                # 只在本机第一次开机时说一句, 免得日志里刷屏
+                _note(d, '守护进程: 本次开机先跑一轮轮换 (必应当日图/填充方式要在这里校对)')
+                boot_logged = True
 
             # 分片睡到目标时刻。**人不在/锁屏时就睡大觉**（5 分钟一次），
             # 人在时才用 CHECK_S（30 秒）保持灵敏 —— 既少打扰系统，退出/改设置又不迟钝。
@@ -849,7 +915,12 @@ def mode_daemon(d):
                         _note(d, '用户离开（已空闲 %.0f 分钟），暂停换图，回来再换'
                                  % (idle / 60.0))
                     away_logged = True
-                hold_until = time.time() + AWAY_RECHECK_S
+                # 三个"到点"条件一起往后推, 不然开机/跨天这两个触发会把
+                # hold_until 的 5 分钟觉顶掉 —— 变成人不在时每几秒空跑一轮。
+                away_until = time.time() + AWAY_RECHECK_S
+                hold_until = away_until
+                daily_hold = away_until
+                boot_hold = away_until
                 continue
             if away_logged:
                 _note(d, '用户回来了（已解锁/有操作），恢复换图')
@@ -861,6 +932,16 @@ def mode_daemon(d):
                 # 这轮没换成 (网络不通 / 库是空的 / 必应还没发新图):
                 # 不空转, 隔一整轮再试
                 hold_until = time.time() + gap * 60
+            # 本次开机的第一轮已经跑过 -> 这个触发兑现了, 之后只看节拍和"跨天"
+            boot_pending = False
+            # 「今天换上必应当日图没有」要 core.ps1 真把 last_bing_date 写成今天才算兑现。
+            # 没写成(断网/下载失败)就按阶梯退避, 免得把"每天第一次"变成"每 5 分钟一次"。
+            if read_last_bing_date(d) == datetime.date.today().strftime('%Y-%m-%d'):
+                daily_fails = 0
+                daily_hold = 0.0
+            else:
+                daily_hold = time.time() + daily_retry_seconds(daily_fails)
+                daily_fails += 1
             prev = after
         except Exception as e:
             _note(d, '守护进程: 这一轮出错, 已自动继续 (%s: %s)' % (type(e).__name__, e))
