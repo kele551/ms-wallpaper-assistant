@@ -93,6 +93,12 @@
   .card-h h2{font-size:var(--fs-h);font-weight:600}
   .card-h .right{margin-left:auto;display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap}
   .muted{color:var(--txt-3)}
+  /* 2026-11-06 用户「所有图片的出处都集中在主页上反映」: 一行一条, 低对比小字,
+     默认收起、展开才按需加载, 不抢当前壁纸那张卡的画面。 */
+  .credit-list{max-height:320px;overflow:auto}
+  .cr-row{display:flex;flex-wrap:wrap;gap:3px 12px;align-items:baseline;padding:6px 2px;border-top:1px solid var(--line);line-height:1.5}
+  .cr-row .cr-name{color:var(--txt);max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cr-row a{color:inherit;text-decoration:underline;text-underline-offset:2px;opacity:.85}
   .mono{font-family:var(--mono);font-size:var(--fs-meta)}
   .xs{font-size:var(--fs-micro)}
   .t-lg{font-size:17px;font-weight:650}
@@ -236,20 +242,29 @@
   .thumbs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--sp-2)}
   .gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(152px,1fr));gap:var(--sp-2)}
   .tile{position:relative;margin:0;aspect-ratio:16/10;border-radius:var(--r-btn);overflow:hidden;
-        border:1px solid var(--line);background:var(--bg-1);cursor:pointer;padding:0;
+        border:1px solid var(--line);background:var(--bg-1);cursor:default;padding:0;
         transition:border-color .15s,transform .15s}
   .tile:hover{border-color:var(--accent);transform:translateY(-2px)}
   .tile img{width:100%;height:100%;object-fit:cover;display:block}
   .tile.sel{outline:2px solid var(--accent);outline-offset:1px}
-  .tile-d{position:absolute;left:6px;bottom:6px;font-size:var(--fs-micro);color:var(--on-art);
+  .tile-d{position:absolute;left:6px;top:6px;font-size:var(--fs-micro);color:var(--on-art);
     background:rgba(0,0,0,.45);border-radius:5px;padding:1px 5px;font-variant-numeric:tabular-nums}
+  /* 2026-11-05 用户「要显示图片的名字」: 图库每张缩略图底部直接写出中文图片名 */
+  .tile-n{position:absolute;left:0;right:0;bottom:0;padding:16px 6px 5px;
+    background:linear-gradient(to top,rgba(0,0,0,.82),transparent);color:var(--on-art);
+    font-size:var(--fs-micro);line-height:1.25;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;pointer-events:none}
+  .tile:hover .tile-n,.tile:focus-within .tile-n{opacity:0}
   .tile-star{position:absolute;right:6px;top:5px;font-size:var(--fs-micro);color:var(--warn);
     background:rgba(0,0,0,.5);border-radius:5px;padding:1px 5px;line-height:1.3}
-  .tile-acts{position:absolute;left:0;right:0;bottom:0;display:flex;gap:var(--sp-1);padding:var(--sp-2);
+  .tile-acts{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:center;gap:var(--sp-1);padding:var(--sp-2);
     background:linear-gradient(to top,var(--scrim),transparent);opacity:0;transform:translateY(4px);
     transition:opacity .15s,transform .15s}
   .tile:hover .tile-acts,.tile:focus-within .tile-acts{opacity:1;transform:none}
-  .tile-acts .btn{height:22px;padding:0 6px;font-size:var(--fs-micro)}
+  /* 2026-11-06 用户「三个按钮均匀分布、居中、大小一致」: 等宽(flex:1 1 0)居中铺满一行,
+     字号略缩到 10px 保证最宽的「设为壁纸/取消收藏」在窄格也不挤、不裁字。 */
+  .tile-acts .btn{flex:1 1 0;min-width:0;height:24px;padding:0;font-size:10px;text-align:center;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .empty{padding:var(--sp-5) var(--sp-4);text-align:center;color:var(--txt-3);font-size:var(--fs-meta);
     display:flex;flex-direction:column;align-items:center;gap:var(--sp-2)}
   .loadmore{display:flex;justify-content:center;padding-top:var(--sp-3)}
@@ -276,7 +291,7 @@
        max-height:calc(18px*12 + 2px);overflow:auto;white-space:pre-wrap;
        overflow-wrap:anywhere}
 
-  /* 库容条（下载卡底部）：名称 44px + 进度槽 + 右对齐数值，三行同宽同基线 */
+  /* 库容条（下载卡底部）：名称 44px + 进度槽 + 右对齐数值，五行同宽同基线 */
   .capbar{display:flex;flex-direction:column;gap:6px;margin-top:var(--sp-2)}
   .capline{display:flex;align-items:center;gap:var(--sp-2);font-size:var(--fs-meta)}
   .capline .capname{width:44px;flex:none;color:var(--txt-2)}
@@ -285,6 +300,9 @@
   .capline .captrack i.full{background:var(--warn)}
   .capline .capnum{width:104px;flex:none;text-align:right;color:var(--txt-3);
                    font-family:var(--mono);font-size:var(--fs-micro)}
+  /* 当前模式那一行高亮：删掉「库里有多少」后，靠这个标出正在轮的是哪个库 */
+  .capline.cur .capname{color:var(--accent);font-weight:700}
+  .capline.cur .capnum{color:var(--txt-1)}
 
   .sk{background:linear-gradient(90deg,var(--line) 25%,var(--line-2) 37%,var(--line) 63%);
       background-size:400% 100%;animation:sk 1.4s linear infinite;border-radius:5px;height:10px}
@@ -388,7 +406,7 @@
       <span class="logo" aria-hidden="true">壁</span>
       <div>
         <h1>桌面壁纸</h1>
-        <p>必应每日 + 微软聚焦 · 自动更换 · 绿色单文件</p>
+        <p>必应每日 + 聚焦 + 万象 + 随拍 · 自动更换 · 绿色单文件</p>
       </div>
     </div>
     <div class="top-r">
@@ -437,6 +455,9 @@
               <button class="btn" id="btnFav">收藏 <kbd>F</kbd></button>
               <button class="btn" id="btnOpenImg">看原图</button>
             </div>
+            <!-- 2026-11-06 尊重作者: 万象/随拍的一行小字署名(完整作者名 + 拍摄日 + 许可 + 来源)。
+                 只在当前壁纸属于这两个模式时出现, 低对比小字, 不抢画面也不动中文短句命名。 -->
+            <div class="muted xs" id="heroCredit" style="display:none;padding:0 16px 12px;line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
             <div class="monrow">
               <span class="muted xs lbl">显示器</span>
               <span class="chip on" id="chipScreen" title="多屏支持暂不做">主屏 —</span>
@@ -474,11 +495,26 @@
           </div>
 
           <div class="stats">
-            <div class="stat"><div class="k">图库</div><div class="v" id="statLib">—</div><div class="d">必应 + 聚焦</div></div>
+            <div class="stat"><div class="k">图库</div><div class="v" id="statLib">—</div><div class="d" id="statLibDesc">必应 + 聚焦</div></div>
             <div class="stat"><div class="k">收藏</div><div class="v" id="statFav">—</div><div class="d">打开「只看收藏」单独看</div></div>
             <div class="stat"><div class="k">队列剩余</div><div class="v" id="statQueue">—</div><div class="d">剩 2 张时自动补</div></div>
             <div class="stat"><div class="k">累计下载</div><div class="v" id="statDl">—</div><div class="d">从装上那天算起</div></div>
           </div>
+        </div>
+      </div>
+
+      <!-- 2026-11-06 用户「所有图片的出处，都集中在主页上反映」:
+           当前模式图库里每一张的作者 / 拍摄日 / 许可 / 来源，一处列全。默认收起，
+           展开才向本机服务要数据（只读文件头，不把整张 4K 图读进内存）。 -->
+      <div class="card" id="creditCard">
+        <div class="card-h">
+          <h2>图片出处</h2>
+          <span class="muted xs" id="creditHint">当前库里每一张的作者 · 拍摄日 · 许可 · 来源</span>
+          <div class="right"><button class="btn ghost sm" id="creditToggle">展开 ›</button></div>
+        </div>
+        <div id="creditBody" style="display:none">
+          <div class="muted xs" id="creditStat" style="padding:0 0 8px">正在读取…</div>
+          <div class="credit-list" id="creditList"></div>
         </div>
       </div>
     </section>
@@ -493,6 +529,8 @@
             <span class="chip on lib-chip" data-src="all">全部</span>
             <span class="chip lib-chip" data-src="bing">必应</span>
             <span class="chip lib-chip" data-src="spotlight">聚焦</span>
+            <span class="chip lib-chip" data-src="commons">万象</span>
+            <span class="chip lib-chip" data-src="picsum">随拍</span>
             <span class="chip lib-chip" data-src="local" id="libLocalChip" style="display:none">本地文件夹</span>
             <button class="btn ghost sm" id="libFav">只看收藏</button>
             <button class="btn ghost sm" id="libOpenDir">打开这个库的文件夹</button>
@@ -546,6 +584,8 @@
             <div class="ctl">
               <span class="chip" id="modeFocus" data-mode="focus">聚焦模式</span>
               <span class="chip" id="modeBing" data-mode="bing">必应模式</span>
+              <span class="chip" id="modeCommons" data-mode="commons">万象模式</span>
+              <span class="chip" id="modePicsum" data-mode="picsum">随拍模式</span>
             </div>
           </div>
           <div class="set">
@@ -633,19 +673,20 @@
             <div class="txt"><b>不是程序下载的图</b><span>你自己放进库的；只做记号，不会换到桌面上</span></div>
             <div class="ctl"><span class="muted" id="strangers">—</span></div>
           </div>
-          <div class="set">
-            <div class="txt"><b>库里有多少</b><span>必应库 / 聚焦库（本地图源另算）</span></div>
-            <div class="ctl"><span class="muted" id="poolCounts">—</span></div>
-          </div>
           <!-- 2026-10-25（用户指着这张卡底下的空白说"这里可以加点内容"）：等高网格让矮的
-               一张卡空出 ~145px。与其留白，不如把上面两个上限输入框和实际张数画成三条库容
-               条 —— 必应/聚焦/本地各一行，到顶会变黄，比再堆两行文字有用。 -->
+               一张卡空出 ~145px，画成库容条。2026-11-05 新增两个图源后统一按四个图源口径：
+               必应 / 聚焦 / 万象 / 随拍 各一行，本地图源另算，到顶会变黄。
+               2026-11-06 用户「库里有多少和库容是不是有点多余了」：确实重复 —— 当前模式
+               的张数在顶部统计卡、副标题里已经各报一次，库容条五行又全列一遍。删掉
+               「库里有多少」这一行，改由库容条高亮当前模式那一行来标出正在轮的是哪个库。 -->
           <div class="set col">
-            <div class="txt"><b>库容</b><span>已用 / 上限；到顶会把最老的移进回收站，上限填 0 = 不限</span></div>
+            <div class="txt"><b>库容</b><span>四个图源各自的已用 / 上限；高亮一行是当前模式，到顶会把最老的移进回收站，上限填 0 = 不限</span></div>
             <div class="capbar">
-              <div class="capline"><span class="capname">必应</span><span class="captrack"><i id="capBingBar"></i></span><span class="capnum" id="capBing">—</span></div>
-              <div class="capline"><span class="capname">聚焦</span><span class="captrack"><i id="capSpotBar"></i></span><span class="capnum" id="capSpot">—</span></div>
-              <div class="capline"><span class="capname">本地</span><span class="captrack"><i id="capLocalBar"></i></span><span class="capnum" id="capLocal">—</span></div>
+              <div class="capline" id="capRowBing"><span class="capname">必应</span><span class="captrack"><i id="capBingBar"></i></span><span class="capnum" id="capBing">—</span></div>
+              <div class="capline" id="capRowSpot"><span class="capname">聚焦</span><span class="captrack"><i id="capSpotBar"></i></span><span class="capnum" id="capSpot">—</span></div>
+              <div class="capline" id="capRowCommons"><span class="capname">万象</span><span class="captrack"><i id="capCommonsBar"></i></span><span class="capnum" id="capCommons">—</span></div>
+              <div class="capline" id="capRowPicsum"><span class="capname">随拍</span><span class="captrack"><i id="capPicsumBar"></i></span><span class="capnum" id="capPicsum">—</span></div>
+              <div class="capline" id="capRowLocal"><span class="capname">本地</span><span class="captrack"><i id="capLocalBar"></i></span><span class="capnum" id="capLocal">—</span></div>
             </div>
           </div>
         </div>
@@ -726,11 +767,11 @@
                「版本 / 数据目录」的"值贴右边界"是两种语法，看着像漏了一行。三个小按钮
                一共 ~250px，放得进右列，所以收回普通行，跟标题同一水平线。 -->
           <div class="set">
-            <div class="txt"><b>操作</b><span>检查更新走的是线上升级源；改错了可以手动还原</span></div>
+            <div class="txt"><b>操作</b><span>检查更新走的是线上升级源；改错了可以手动还原；「退出程序」连后台一起停</span></div>
             <div class="ctl">
               <button class="btn sm" id="btnCheckUpd">检查更新</button>
               <button class="btn sm" id="btnRefresh">刷新状态</button>
-              <button class="btn sm danger" id="btnQuit">退出控制台</button>
+              <button class="btn sm danger" id="btnQuit">退出程序</button>
             </div>
           </div>
           <div class="set col">
@@ -815,6 +856,25 @@ function api(doName, extra){
 
 function wallUrl(p){
   return p ? ("/api/wall?t=" + encodeURIComponent(TOKEN) + "&p=" + encodeURIComponent(p)) : "";
+}
+/* 2026-11-05 硬规矩: 面板上任何来源的图片名都必须是中文。
+   优先用后端给的 display; 没有就从文件名里提中文主题; 再没有就按文件名哈希
+   给一个稳定的中文场景名 —— 绝不让英文原名 / 哈希 / 随机串露出来。 */
+var CN_FALLBACK = ["山野晨光","湖畔暮色","林间薄雾","海岸云影","雪原晴光",
+  "田野夕照","城郭夜色","溪谷清影","花间微风","远山层云","云海初晴","松林雪霁"];
+function displayName(it){
+  if (it && it.display) return it.display;
+  var raw = (it && (it.name || it.path)) || (typeof it === "string" ? it : "");
+  var t = "";
+  try { t = parseName(baseName(raw)).title || ""; } catch (e) { t = ""; }
+  /* 2026-11-06: 名字改成「一句通顺中文短句」后, 可能含阿拉伯数字(如阿波罗9号、
+     2025 冬日), 旧正则只留汉字会把数字吞掉。日期与去重键在 parseName 里已被剥离,
+     所以这里放行 0-9 不会把哈希/日期带进来。 */
+  var cn = (String(t).match(/[\u4e00-\u9fa5·0-9]+/g) || []).join("");
+  if (cn.length >= 2) return cn;
+  var h = 0;
+  for (var i = 0; i < raw.length; i++){ h = (h * 31 + raw.charCodeAt(i)) >>> 0; }
+  return CN_FALLBACK[h % CN_FALLBACK.length];
 }
 function baseName(p){
   if (!p) return "";
@@ -965,7 +1025,7 @@ function computeNext(){
 function tick(){
   var meter = $("cycMeter");
   var cfg = (S && S.cfg) || {};
-  if (cfg.bing_only){
+  if (curMode() === "bing"){
     if (meter) meter.style.width = "0%";
     setText("statusText", "必应模式 · 明天开机后换新图");
     return;
@@ -1006,7 +1066,9 @@ function render(s){
   var cfg = s.cfg || {}, st = s.st || {}, au = s.auto || {}, cnt = s.counts || {};
 
   /* 顶栏状态 */
-  var isBing = !!cfg.bing_only;
+  var mode = curMode();
+  var isBing = (mode === "bing");
+  var modeLabel = MODE_NAME[mode] || "聚焦模式";
   var pill = $("statusPill");
   pill.className = "pill ok";
   setText("statusText", (isBing ? "必应模式 · 明天开机后换新图" : "读取下次换图时间…"));
@@ -1029,16 +1091,49 @@ function render(s){
       };
       img.src = src;
     }
-    setText("heroTitle", bn.title || baseName(p));
+    /* 2026-11-05 用户「要显示图片的名字」: 主标题用文件名里的中文图片名,
+       悬停再给完整文件名(含日期与去重键), 方便和资源管理器里的那张图对上。 */
+    var _fname = baseName(p);
+    setText("heroTitle", displayName({ name: _fname }));
+    var _ht = $("heroTitle");
+    if (_ht) { _ht.title = "图片名字：" + _fname; }
     /* 2026-10-24 用户要求：这张卡要能看出「这是哪一天的哪张图」。
        名字一直是主标题（例如「到灯塔去！」），副行原来只有换上的时间；
-       现在把图片自己的日期放到最前面，日期取自文件名的 YYYY-MM-DD_ 前缀
-       （本机必应目录 137/137 张都是这个命名）。取不到日期就不硬凑，只留换上的时间，
-       依旧不露原始 id / 英文 slug。 */
-    var _imgDay = bn.date ? (bn.date + " 的图") : "";
+       现在把图片自己的日期放到最前面，日期取自文件名的 YYYY-MM-DD_ 前缀。
+       2026-11-06 用户「我们应该尊重作者的拍摄时间」：万象/随拍的前缀已改成
+       Commons 的 DateTimeOriginal（作者实际拍摄那天），所以这两源写「摄于」；
+       必应/聚焦的前缀是微软发布日，保持「YYYY-MM-DD 的图」不变。
+       取不到日期就不硬凑，只留换上的时间，依旧不露原始 id / 英文 slug。 */
+    var _shotMode = (mode === "commons" || mode === "picsum");
+    var _imgDay = bn.date ? (_shotMode ? ("摄于 " + bn.date) : (bn.date + " 的图")) : "";
     var _when = st.lastSwap ? (String(st.lastSwap).slice(0, 16) + " 换上") : "";
     setText("heroSub", _imgDay && _when ? (_imgDay + "　·　" + _when) : (_imgDay || _when || "—"));
-    setText("heroBadge", isBing ? "必应模式 · 每日一图" : "当前壁纸");
+    /* 2026-11-06 用户「尊重作者」: 完整作者名 + 拍摄日 + 许可 + 来源链接, 一行小字。
+       不用首字母缩写 —— CC BY / CC BY-SA 要求完整署名标识; 来源只认 Commons 官方域名。
+       作者名来自 Commons 元数据, 用 textContent 写入, 不拼 HTML。 */
+    var _cr = s.credit || {}, _cel = $("heroCredit");
+    if (_cel) {
+      if (_shotMode && _cr.author) {
+        var _bits = ["摄影：" + _cr.author];
+        if (_cr.shot) { _bits.push("摄于 " + _cr.shot); }
+        if (_cr.lic) { _bits.push(_cr.lic); }
+        var _txt = _bits.join("　·　");
+        _cel.textContent = _txt;
+        _cel.title = _txt;
+        if (_cr.link && /^https:\/\/commons\.wikimedia\.org\//i.test(_cr.link)) {
+          var _lk = document.createElement("a");
+          _lk.href = _cr.link; _lk.target = "_blank"; _lk.rel = "noopener noreferrer";
+          _lk.textContent = "来源";
+          _lk.style.cssText = "margin-left:8px;color:inherit;text-decoration:underline;text-underline-offset:2px;opacity:.75";
+          _cel.appendChild(_lk);
+        }
+        _cel.style.display = "";
+      } else {
+        _cel.textContent = ""; _cel.title = ""; _cel.style.display = "none";
+      }
+    }
+    setText("heroBadge", isBing ? "必应模式 · 每日一图"
+      : ((mode === "commons" || mode === "picsum") ? (MODE_NAME[mode] + " · 当前壁纸") : "当前壁纸"));
     $("btnOpenImg").style.display = "";
   } else {
     img.classList.remove("ready");
@@ -1048,6 +1143,7 @@ function render(s){
     setText("heroTitle", "—");
     setText("heroSub", "—");
     setText("heroBadge", "当前壁纸");
+    if (_cel) { _cel.textContent = ""; _cel.title = ""; _cel.style.display = "none"; }
     $("btnOpenImg").style.display = "none";
   }
 
@@ -1094,7 +1190,15 @@ function render(s){
     : "点一下直接切；滑块到 4 小时，更长用上面的档位";
   setText("cycHint", hint);
   setText("setCycHint", isBing ? "必应模式：明天第一次开机换当天的新图" : "每多少分钟自动换一张");
-  setText("nextSub", "每 " + fmtCycle(cycMin) + " · 图库 " + ((cnt.bing || 0) + (cnt.spotlight || 0)) + " 张 · 收藏 "
+  /* 2026-11-05 用户定死: 「图库显示的张数应该在哪个模式就显示哪个模式的图片数量」。
+     原来 focus / bing 都端 bing+spotlight 合计(截图里的 349), 与四个模式各管一库的口径不符。
+     现在一律只报当前模式那个库的张数, 描述也写明是哪个库。 */
+  var libNum = (mode === "commons") ? (cnt.commons || 0)
+             : (mode === "picsum") ? (cnt.picsum || 0)
+             : (mode === "bing") ? (cnt.bing || 0)
+             : (cnt.spotlight || 0);
+  var LIB_NAME = { focus:"聚焦库", bing:"必应库", commons:"万象库", picsum:"随拍库" };
+  setText("nextSub", "每 " + fmtCycle(cycMin) + " · 图库 " + libNum + " 张 · 收藏 "
     + (s.favCount || 0) + " 张" + (s.local && s.local.count ? (" · 本地 " + s.local.count + " 张") : ""));
 
   /* 开关类 */
@@ -1112,12 +1216,18 @@ function render(s){
     ? (au.daemon ? "开着 · 后台正在跑" : "开着 · 这次开机没跑起来，点一下会拉起来")
     : "关 = 登录后不会自己换");
 
-  /* 模式 */
-  $("modeFocus").classList.toggle("on", !isBing);
-  $("modeBing").classList.toggle("on", isBing);
-  setText("modeHint", isBing
-    ? "当前是必应模式：只换必应每日一图，一天一张；不抓聚焦、不按间隔轮换"
-    : "当前是聚焦模式：按间隔换「Windows 聚焦」图库里的图（和必应图混着轮换）");
+  /* 模式：四个 chip 按当前 mode 高亮 */
+  ["focus", "bing", "commons", "picsum"].forEach(function (m) {
+    var el = $("mode" + (m.charAt(0).toUpperCase() + m.slice(1)));
+    if (el) el.classList.toggle("on", mode === m);
+  });
+  var modeHintTxt = {
+    focus:   "当前是聚焦模式：按间隔自动轮换，后台补的也是本模式的图",
+    bing:    "当前是必应模式：只换必应每日一图，一天一张；不抓聚焦、不按间隔轮换",
+    commons: "当前是万象模式：只在万象图库里独立循环，按间隔自动轮换",
+    picsum:  "当前是随拍模式：只在随拍图库里独立循环，按间隔自动轮换"
+  }[mode] || "";
+  setText("modeHint", modeHintTxt);
 
   /* 下拉 / 数字 */
   $("selRes").value = (cfg.resolution_mode === "uhd") ? "uhd" : "auto";
@@ -1132,31 +1242,38 @@ function render(s){
   setNum("numLib", cfg.lib_cap == null ? 200 : cfg.lib_cap);
   setNum("numBing", cfg.bing_cap == null ? 200 : cfg.bing_cap);
   setNum("numRound", cfg.spotlight_per_cycle == null ? 6 : cfg.spotlight_per_cycle);
-  setNum("numTimeout", cfg.src_timeout_sec == null ? 20 : cfg.src_timeout_sec);
+  setNum("numTimeout", cfg.src_timeout_sec == null ? 90 : cfg.src_timeout_sec);
   setNum("numRoundCap", cfg.fetch_round_cap == null ? 6 : cfg.fetch_round_cap);
   setNum("numDayCap", cfg.fetch_day_cap == null ? 20 : cfg.fetch_day_cap);
   setNum("numRecycle", cfg.recycle_min_days == null ? 30 : cfg.recycle_min_days);
 
-  /* 统计 */
-  setText("statLib", ((cnt.bing || 0) + (cnt.spotlight || 0)));
+  /* 统计: 图库那张卡按当前模式显示"正在轮的那个库", 独立模式别再端必应+聚焦的数字 */
+  setText("statLib", libNum);
+  setText("statLibDesc", LIB_NAME[mode] || "聚焦库");
   setText("statFav", (s.favCount || 0));
   setText("statQueue", (st.queue == null ? "—" : st.queue));
   setText("statDl", (au.dlTotal || 0));
   setText("queueNum", (st.queue == null ? "—" : (st.queue + " 张")));
-  setText("poolCounts", "必应 " + (cnt.bing || 0) + " 张　·　聚焦 " + (cnt.spotlight || 0) + " 张");
+  /* 2026-11-06: 「库里有多少」那一行已删 —— 当前模式张数在顶部统计卡、副标题里各报一次，
+     库容条又全列一遍，三处重复。这里不再单独报一遍。 */
   setText("poolLine", (s.pool && s.pool.line) ? s.pool.line : "—");
   setText("dlTotal", (au.dlTotal || 0) + " 张");
   setText("strangers", (au.strangers || 0) + " 张");
 
   /* 本地文件夹图源 */
   var local = s.local || {};
-  setText("localDir", local.dir ? local.dir : "未启用");
+  /* 2026-11-06 用户截着「未启用 —」问「怎么启用」：入口就在下一行的「选目录…」，
+     光写「未启用」看不出下一步。未启用时直接把动作写在这行上。 */
+  setText("localDir", local.dir ? local.dir : "未启用 · 点下面「选目录…」启用");
   setText("localCount", local.dir ? (local.count + " 张") : "—");
   var lc = $("libLocalChip");
   if (lc) lc.style.display = local.dir ? "" : "none";
 
-  /* 库容三条：把上面「图库上限 / 必应库上限」两个输入框和实际张数画成看得见的进度。
-     上限填 0 是不限，画一小截灰条而不是空条，免得看着像"没数据"。 */
+  /* 库容五条：把上面「图库上限 / 必应库上限」两个输入框和实际张数画成看得见的进度。
+     上限填 0 是不限，画一小截灰条而不是空条，免得看着像"没数据"。
+     2026-11-06 补齐万象 / 随拍：HTML 里两行早就加了，后端 Get-BwPanelState 也一直回
+     counts.commons / counts.picsum 与 srcCaps(上限统一跟随图库上限，0=不限)，
+     但这里漏了两次调用，面板上就一直显示「—」。四个图源必须同口径。 */
   function capLine(barId, numId, used, cap, off){
     var b = $(barId), n = $(numId);
     if (!b || !n) return;
@@ -1170,7 +1287,19 @@ function render(s){
   }
   capLine("capBingBar", "capBing", cnt.bing, cfg.bing_cap, false);
   capLine("capSpotBar", "capSpot", cnt.spotlight, cfg.lib_cap, false);
+  var sc = s.srcCaps || {};
+  /* 2026-11-06 上限统一: 两个新源跟随「图库上限」(lib_cap), 兜底也用同一个值,
+     不再写死 100 —— 老后端没回 srcCaps 时也不会显示成和聚焦不一样的数字。 */
+  var capFallback = (cfg.lib_cap == null ? 200 : cfg.lib_cap);
+  capLine("capCommonsBar", "capCommons", cnt.commons, (sc.commons == null ? capFallback : sc.commons), false);
+  capLine("capPicsumBar",  "capPicsum",  cnt.picsum,  (sc.picsum  == null ? capFallback : sc.picsum),  false);
   capLine("capLocalBar", "capLocal", local.count, 0, !local.dir);
+  /* 当前模式那一行高亮：接替被删掉的「库里有多少」，指明正在轮的是哪个库 */
+  var capRows = { bing:"capRowBing", focus:"capRowSpot", commons:"capRowCommons", picsum:"capRowPicsum" };
+  for (var ck in capRows) {
+    var cel = $(capRows[ck]);
+    if (cel) cel.className = "capline" + (ck === mode ? " cur" : "");
+  }
 
   /* 版本 / 目录 */
   setText("versionLine", "脚本 v" + (s.scriptVer || "?") + " / 主程序 v" + (s.launcherVer || "?"));
@@ -1189,6 +1318,9 @@ function render(s){
 
   /* 日志 */
   renderLog(s.log || []);
+
+  /* 出处清单展开着、模式却切了: 自动换成新库那一批, 不留着上一个库的清单 */
+  if (typeof CREDIT !== "undefined" && CREDIT.open && CREDIT.mode !== mode) { loadCredits(); }
 
   tick();
 }
@@ -1306,26 +1438,28 @@ function tileFor(it, opt){
     d.textContent = (at.slice(0, 10) === todayKey()) ? at.slice(11, 16) : at.slice(5, 10);
     f.title = (it.name || "") + " · 换上于 " + at.slice(0, 16);
   } else {
-    d.textContent = bn.date ? bn.date.slice(5) : String(bn.title || "").slice(0, 12);
+    d.textContent = bn.date ? bn.date.slice(5) : displayName(it).slice(0, 12);
   }
   f.appendChild(d);
+  /* 2026-11-05: 图片名字直接写在缩略图上, 不用把鼠标挪上去等 tooltip */
+  var nmEl = document.createElement("span");
+  nmEl.className = "tile-n";
+  nmEl.textContent = displayName(it);
+  f.appendChild(nmEl);
   if (it.fav){
     var star = document.createElement("span");
     star.className = "tile-star";
     star.textContent = "★";
     f.appendChild(star);
   }
+  /* 2026-11-06 用户「动作全交给按钮」: 缩略图本身不再点一下就换壁纸,
+     也不再可聚焦/回车触发; 三个安全动作(设为壁纸/收藏/原图)只走下方按钮。 */
   var acts = document.createElement("div");
   acts.className = "tile-acts";
   acts.appendChild(mkBtn("设为壁纸", "primary", function(){ useItem(it); }));
   acts.appendChild(mkBtn(it.fav ? "取消收藏" : "收藏", "", function(){ toggleFav(it); }));
   acts.appendChild(mkBtn("原图", "ghost", function(){ openOriginal(it); }));
   f.appendChild(acts);
-  f.addEventListener("click", function(){ useItem(it); });
-  f.setAttribute("tabindex", "0");
-  f.addEventListener("keydown", function(e){
-    if (e.key === "Enter" || e.key === " "){ e.preventDefault(); useItem(it); }
-  });
   return f;
 }
 /* 【2026-10-25 用户「必应模式下 最近换过 浏览框也应该切换到必应图库」】
@@ -1377,7 +1511,8 @@ function renderHistory(list, curName){
   var box = $("hist");
   if (!box) return;
   list = list || [];
-  var isBing = !!(S && S.cfg && S.cfg.bing_only);
+  var mode = curMode();
+  var isBing = (mode === "bing");
   var rows = [], seen = {};
   /* 【2026-10-25 二次修正 · 用户截图】必应模式下把"过去 30 分钟轮换记下的必应条目"端上来还不够:
      他截图里那四张(企鹅/圣丹斯/白沙/树木)确实是必应库里的图, 但都是 2023 年的**归档**,
@@ -1390,7 +1525,7 @@ function renderHistory(list, curName){
     var k = String((it && it.name) || "").replace(/\.[a-z0-9]+$/i, "").toLowerCase();
     if (!k || seen[k] || rows.length >= 4) return;
     seen[k] = 1;
-    rows.push({ name: it.name, path: it.path || "", thumb: it.thumb || "", at: at || "" });
+    rows.push({ name: it.name, path: it.path || "", thumb: it.thumb || "", src: it.src || "", at: at || "" });
   }
   var atMap = {};
   for (var i = 0; i < list.length; i++){
@@ -1399,7 +1534,13 @@ function renderHistory(list, curName){
       atMap[String(h.name || "").replace(/\.[a-z0-9]+$/i, "").toLowerCase()] = (h.at || "");
     }
   }
-  if (isBing){
+  /* 独立模式: 「最近换过」也只看自己那个库, 不串别的模式的图 */
+  if (mode === "commons" || mode === "picsum"){
+    for (var k5 = 0; k5 < list.length; k5++){
+      var h5 = list[k5];
+      if (h5 && h5.src === mode) add(h5, h5.at);
+    }
+  } else if (isBing){
     var fill = bingFillRows();
     for (var j = 0; j < fill.length; j++){
       var f = fill[j];
@@ -1424,23 +1565,45 @@ function renderHistory(list, curName){
   box.innerHTML = "";
   rows.forEach(function(it){
     // 有"换上时间"就角标写换上的时刻/月日；没有(图库里最近但本机没换过)就退回图片日期。
+    // src 带上这张图真正的归属库, 后端 use/fav/del 才能"指哪打哪"; 不能再写死成 hist。
     var f = tileFor({ name: it.name, path: it.path || "", thumb: it.thumb || "",
-                      fav: false, src: "hist", at: it.at || "" },
+                      fav: false, src: it.src || "", at: it.at || "" },
                     { currentName: curName });
     box.appendChild(f);
   });
   $("histEmpty").style.display = rows.length ? "none" : "";
-  if (!rows.length) setText("histEmpty", isBing ? "必应图库还是空的 —— 补几张新图之后这里就有了" : "还没有换过图");
+  if (!rows.length) setText("histEmpty",
+    isBing ? "必应图库还是空的 —— 补几张新图之后这里就有了"
+    : ((mode === "commons" || mode === "picsum") ? (MODE_NAME[mode] + "图库还是空的 —— 换几张之后这里就有了") : "还没有换过图"));
 }
 
 /* ── 动作 ── */
+/* 2026-11-05 用户「图库里的图片，不管任何模式都能当壁纸，应该划分开」:
+   模式与图库口径对齐 —— 手动切模式、或从图库点一张别的库的图(后端自动归模式),
+   图库筛选都跟着切到那个库, 不让"随拍模式里翻着万象的图"这种混搭出现。 */
+function setLibSrcForMode(m){
+  var want = ({ focus:"spotlight", bing:"bing", commons:"commons", picsum:"picsum" })[m] || m;
+  var chips = document.querySelectorAll(".lib-chip[data-src]");
+  var hit = null;
+  Array.prototype.forEach.call(chips, function(c){ if (c.getAttribute("data-src") === want) hit = c; });
+  if (!hit) return;
+  Array.prototype.forEach.call(chips, function(c){ c.classList.remove("on"); });
+  hit.classList.add("on");
+  G.src = want;
+  loadGallery(true);
+}
 function useItem(it){
   if (busy) return;
   busy = true;
-  api("use", { name: it.name }).then(function(j){
+  api("use", { name: it.name, src: it.src }).then(function(j){
     busy = false;
-    toast(j && j.ok ? ("已设为壁纸：" + it.name) : "没设上，稍后再点一次", !(j && j.ok));
+    var sw = j && j.modeSwitched;
+    var shown = displayName(it);
+    toast(j && j.ok
+      ? ((sw ? ("已切到" + MODE_NAME[sw] + "，并设为壁纸：") : "已设为壁纸：") + shown)
+      : "没设上，稍后再点一次", !(j && j.ok));
     if (j && j.ok){
+      if (sw) setLibSrcForMode(sw);
       markCurrent(it.name);
       /* 【2026-10-25】markCurrent 只挪了格子的选中框, 上面那张「当前壁纸」大卡还是旧图 ——
          用户报的"预览图没锁定当前壁纸"有一半是这个。拉一次状态, 大卡/角标/最近换过一起对上。 */
@@ -1451,7 +1614,7 @@ function useItem(it){
 function toggleFav(it){
   if (busy) return;
   busy = true;
-  api(it.fav ? "unfav" : "fav", { name: it.name }).then(function(j){
+  api(it.fav ? "unfav" : "fav", { name: it.name, src: it.src }).then(function(j){
     busy = false;
     if (j && j.ok === false) return;
     toast(it.fav ? "已取消收藏" : "已收藏");
@@ -1459,9 +1622,35 @@ function toggleFav(it){
     else { it.fav = !it.fav; refreshTileStars(); }
   }, function(){ busy = false; });
 }
+/* 2026-11-05 用户「收藏的图片，删除不了」: 图库里给每张图一个删除入口。
+   收藏过的图以前被库容淘汰逻辑保护, 又没有任何手动删除按钮 —— 现在统一走后端 del,
+   移进回收站(可还原), 收藏 / 队列 / 看过名单一起清掉。 */
+function delItem(it){
+  if (busy) return;
+  if (!window.confirm("把这张图移进回收站？\n可以在「已看过」文件夹里找回。")) return;
+  busy = true;
+  api("del", { name: it.name, src: it.src }).then(function(j){
+    busy = false;
+    if (j && j.ok === false) { toast("删不掉：" + (j.msg || "稍后再试"), true); return; }
+    toast("已移进回收站，可在「已看过」里找回");
+    refresh(false);
+    loadGallery(true);
+  }, function(){ busy = false; toast("删除失败，稍后再试", true); });
+}
 function openOriginal(it){
-  if (it.path) window.open(wallUrl(it.path), "_blank", "noopener");
-  else if (it.thumb) window.open(it.thumb, "_blank", "noopener");
+  /* 2026-11-06 用户「三个按钮必须指哪打开哪里，不能指向图片缩略图」:
+     「原图」只认磁盘上那张真图(带令牌的 /api/wall, 服务端还有目录白名单)。
+     列表里的 <img> 才用缩略图地址显示; 按钮一律不碰它, 取不到路径就明说,
+     绝不静默改成打开一张缩放图糊弄过去。 */
+  if (it.path) { window.open(wallUrl(it.path), "_blank", "noopener"); return; }
+  /* 最近换过 / 收藏那几排只带文件名: 走带令牌的原图直链(同样回磁盘真图字节),
+     不退回缩略图地址, 也不让按钮点了没反应。 */
+  if (it.name) {
+    window.open("/?panel=orig&t=" + encodeURIComponent(TOKEN) + "&name=" + encodeURIComponent(it.name)
+      + "&src=" + encodeURIComponent(it.src || ""), "_blank", "noopener");
+    return;
+  }
+  toast("这张图找不到原文件，刷新下图库再试", true);
 }
 function markCurrent(name){
   var tiles = document.querySelectorAll(".gallery .tile, .thumbs .tile");
@@ -1494,7 +1683,9 @@ function refreshTileStars(){
 
 /* ── 图库 ── */
 function galleryUrl(){
-  var q = "/?panel=gallery&src=" + encodeURIComponent(G.src) + "&skip=" + G.skip + "&take=48";
+  /* 2026-11-06: 带上令牌, 服务端才回每张图的真实路径(免令牌调用照旧不回路径)。
+     有了路径, 「原图」直接打开磁盘真图, 不再指向缩略图地址。 */
+  var q = "/?panel=gallery&t=" + encodeURIComponent(TOKEN) + "&src=" + encodeURIComponent(G.src) + "&skip=" + G.skip + "&take=48";
   if (G.fav) q += "&fav=1";
   return q;
 }
@@ -1527,7 +1718,7 @@ function loadGallery(reset){
       }
       var shown = G.items.length;
       setText("libCount", "已显示 " + shown + " 张" + (G.fav ? " · 只看收藏" : "")
-        + (G.src === "all" ? "" : " · " + (G.src === "bing" ? "必应库" : (G.src === "spotlight" ? "聚焦库" : "本地文件夹"))));
+        + (G.src === "all" ? "" : " · " + ({ bing:"必应库", spotlight:"聚焦库", commons:"万象库", picsum:"随拍库", local:"本地文件夹" }[G.src] || G.src)));
       $("libMoreWrap").style.display = G.more ? "" : "none";
     })
     .catch(function(e){
@@ -1536,6 +1727,59 @@ function loadGallery(reset){
       $("libMoreWrap").style.display = "none";
     });
 }
+/* ── 主页「图片出处」清单 ──
+   2026-11-06 用户「所有图片的出处，都集中在主页上反映」: 一个地方列全当前库里每一张,
+   不用给图库每张缩略图塞第五个按钮。默认收起、展开才按需请求, 小字低对比。 */
+var CREDIT = { open:false, mode:"", loading:false };
+var CREDIT_SRC = { focus:"spotlight", bing:"bing", commons:"commons", picsum:"picsum" };
+function creditSrc(){ return CREDIT_SRC[curMode()] || "spotlight"; }
+function loadCredits(){
+  var box = $("creditList");
+  if (!box || CREDIT.loading) return;
+  CREDIT.loading = true;
+  CREDIT.mode = curMode();
+  box.innerHTML = "";
+  setText("creditStat", "正在读取…");
+  fetch("/?panel=credits&t=" + encodeURIComponent(TOKEN) + "&src=" + encodeURIComponent(creditSrc()), { cache:"no-store" })
+    .then(function(r){ if(!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(function(arr){
+      CREDIT.loading = false;
+      if(!arr || !arr.length){ setText("creditStat", "这个库还没有图片"); return; }
+      var nAuthor = 0, nLink = 0, shotMode = (creditSrc() === "commons" || creditSrc() === "picsum");
+      arr.forEach(function(it){
+        if(it.author) nAuthor++;
+        if(it.link) nLink++;
+        var full = displayName({ name: it.name });
+        var row = document.createElement("div");
+        row.className = "cr-row muted xs";
+        var nm = document.createElement("span");
+        nm.className = "cr-name";
+        nm.textContent = full;
+        nm.title = full;
+        row.appendChild(nm);
+        function bit(txt){ var s = document.createElement("span"); s.textContent = txt; row.appendChild(s); }
+        if(it.date) bit((shotMode ? "摄于 " : "") + it.date);
+        if(it.author) bit((it.author.charAt(0) === "©" ? "" : "摄影：") + it.author);
+        if(it.lic) bit(it.lic);
+        if(it.note) bit(it.note);
+        if(it.link && /^https:\/\/(commons\.wikimedia\.org|www\.bing\.com)\//i.test(it.link)){
+          var a = document.createElement("a");
+          a.href = it.link; a.target = "_blank"; a.rel = "noopener noreferrer";
+          a.textContent = "来源 ↗";
+          row.appendChild(a);
+        }
+        box.appendChild(row);
+      });
+      setText("creditStat", "共 " + arr.length + " 张 · " + nAuthor + " 张有署名 · " + nLink + " 张可点开来源");
+    })
+    .catch(function(e){ CREDIT.loading = false; setText("creditStat", "出处读不出来：" + e.message); });
+}
+$("creditToggle").addEventListener("click", function(){
+  CREDIT.open = !CREDIT.open;
+  $("creditBody").style.display = CREDIT.open ? "" : "none";
+  setText("creditToggle", CREDIT.open ? "收起 ‹" : "展开 ›");
+  if (CREDIT.open) loadCredits();
+});
 Array.prototype.forEach.call(document.querySelectorAll(".lib-chip"), function(chip){
   chip.addEventListener("click", function(){
     Array.prototype.forEach.call(document.querySelectorAll(".lib-chip"), function(c){ c.classList.remove("on"); });
@@ -1552,7 +1796,11 @@ $("libFav").addEventListener("click", function(){
 });
 $("libReload").addEventListener("click", function(){ loadGallery(true); });
 $("libOpenDir").addEventListener("click", function(){
-  api("openDir", { name: G.src === "spotlight" ? "spotlight" : (G.src === "local" ? "local" : "bing") }).then(function(j){ if(j && j.ok) toast("已打开：" + (j.path || "?") + "（端口 " + location.port + "）"); else if(j && j.error) toast(j.error, true); });
+  /* 按图库当前筛的源打开它自己的文件夹；「全部」打开四个库共同的上级目录。
+     原来这里只认 聚焦/本地/必应, 切到万象或随拍会误开必应库。 */
+  var src = G.src;
+  if (src === "all") src = "base";
+  api("openDir", { name: src }).then(function(j){ if(j && j.ok) toast("已打开：" + (j.path || "?") + "（端口 " + location.port + "）"); else if(j && j.error) toast(j.error, true); });
 });
 $("libMore").addEventListener("click", function(){ loadGallery(false); });
 $("libEmptyBtn").addEventListener("click", function(){ loadGallery(true); });
@@ -1638,7 +1886,7 @@ bindNum("numRecycle", "recycle_min_days");
    是因为旧标签页(数据是几分钟前那一份)或者刚点完还没刷新的瞬间仍可能发出去,
    而服务端只会钉回 1440 —— 前端要是还弹一句"间隔已改成 10 分", 就是骗人。 */
 function bingLocked(){
-  if (!(S && S.cfg && S.cfg.bing_only)) return false;
+  if (curMode() !== "bing") return false;
   toast("必应模式固定 24 小时（每天一张），先切回聚焦模式才能改间隔", true);
   refresh(false);
   return true;
@@ -1657,13 +1905,24 @@ Array.prototype.forEach.call(document.querySelectorAll(".cyc-chip"), function(ch
   });
 });
 
-/* 更换模式: 切过去后端会当场换一张 */
-function setMode(bing){
-  var cur = !!(S && S.cfg && S.cfg.bing_only);
-  if (cur === bing){ toast(bing ? "已经是必应模式" : "已经是聚焦模式"); return; }
+/* 当前轮换模式: 显式 wallpaper_mode 优先, 老配置只有 bing_only 时推导 */
+function curMode(){
+  var cfg = (S && S.cfg) || {};
+  if (cfg.wallpaper_mode){
+    var m = ("" + cfg.wallpaper_mode).toLowerCase();
+    if (m === "focus" || m === "bing" || m === "commons" || m === "picsum") return m;
+  }
+  return cfg.bing_only ? "bing" : "focus";
+}
+var MODE_NAME = { focus:"聚焦模式", bing:"必应模式", commons:"万象模式", picsum:"随拍模式" };
+/* 更换模式: 切过去后端会清空旧队列、按新模式重洗, 并当场换一张 */
+function setMode(m){
+  var cur = curMode();
+  if (cur === m){ toast("已经是" + MODE_NAME[m]); return; }
   run(function(){
-    return api("set", { key: "bing_only", value: bing ? "true" : "false" }).then(function(){
-      toast(bing ? "已切到必应模式：正在换成今天的必应图…" : "已切到聚焦模式：正在按轮换换一张…");
+    return api("set", { key: "wallpaper_mode", value: m }).then(function(){
+      setLibSrcForMode(m);
+      toast("已切到" + MODE_NAME[m] + "：正在换一张…");
       /* 换图是后台那一轮干的, 前端这一刻拉状态还来不及。
          有上限地补拉两次(4 秒 / 12 秒), 只为把「当前壁纸」大卡对上桌面真正那张 ——
          不做持续轮询: 服务是单线程 TcpListener, 而且这一页的设计就是打开时拉一次。 */
@@ -1672,8 +1931,10 @@ function setMode(bing){
     });
   });
 }
-$("modeFocus").addEventListener("click", function(){ setMode(false); });
-$("modeBing").addEventListener("click", function(){ setMode(true); });
+["focus","bing","commons","picsum"].forEach(function(m){
+  var el = $("mode" + m.charAt(0).toUpperCase() + m.slice(1));
+  if (el) el.addEventListener("click", function(){ setMode(m); });
+});
 
 /* 补货 / 补齐 / 重置 / 换位置 */
 function startJob(name, arg, tip){
@@ -1756,12 +2017,19 @@ $("btnCheckUpd").addEventListener("click", function(){
   });
 });
 $("btnRefresh").addEventListener("click", function(){ refresh(true); });
+/* 2026-11-06 用户「点退出控制台没反应 / 要整个程序退出后台运行」。
+   后端现在写 daemon.stop 让后台守护进程一起收工, 网页服务随即关闭,
+   所以这里不依赖响应(连接可能被自己关掉): 请求一发出就给明确反馈,
+   并打上 BW_EXITED, 让下面的补拉/轮询别再对着已经关掉的服务发请求。 */
+var BW_EXITED = false;
 $("btnQuit").addEventListener("click", function(){
-  api("quit").then(function(){
-    $("statusPill").className = "pill bad";
-    setText("statusText", "已退出");
-    toast("控制台已退出，可以直接关掉这个标签页");
-  });
+  BW_EXITED = true;
+  $("statusPill").className = "pill bad";
+  setText("statusText", "已退出");
+  toast("正在退出…");
+  fetch("/api/do?t=" + encodeURIComponent(TOKEN) + "&do=quit", { cache: "no-store" })
+    .then(function(){ toast("程序已退出（含后台），可以直接关掉这个标签页"); })
+    .catch(function(){ toast("程序已退出（含后台），可以直接关掉这个标签页"); });
 });
 
 /* 键盘: Space 换一张 / F 收藏 / 1 2 3 切视图(Esc 从输入框退出) */
@@ -1787,6 +2055,7 @@ function setOffline(on, why){
   if (w) w.textContent = on ? ("（" + (why || "无响应") + "）") : "";
 }
 function refresh(showTip){
+  if (BW_EXITED) return Promise.resolve(null);   /* 退出后别再对已关的服务发请求 */
   LAST_STATE_AT = Date.now();
   return fetch("/api/state?t=" + encodeURIComponent(TOKEN), { cache: "no-store" })
     .then(function(r){ return r.json(); })
@@ -1823,7 +2092,7 @@ setInterval(tick, 1000);      /* 只有前端计时, 不发请求 */
    所以只在**页面可见**时问, 两次之间至少隔 12 秒。 */
 var NOW_AT = 0;
 function watchCurrent(){
-  if (!S || document.hidden) return;
+  if (BW_EXITED || !S || document.hidden) return;
   var now = Date.now();
   if (now - NOW_AT < 12000) return;
   NOW_AT = now;

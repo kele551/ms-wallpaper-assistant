@@ -25,6 +25,8 @@ __pycache__/
 
 # 备份
 *.bak
+# 本机会话级工作快照（个人数据/回填映射等，不入库）
+backup/
 
 # Release 附件 (zip 由打包脚本生成后手动上传)
 MSWallpaperAssistant-*.zip

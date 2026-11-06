@@ -356,8 +356,16 @@ function Move-BwLibraryFiles([string]$fromBase, [string]$toBase) {
   if ($fb.ToUpper() -eq $tb.ToUpper()) { return 0 }
   if (-not (Test-Path -LiteralPath $fb)) { return 0 }
   $moved = 0
-  # 只搬本程序自己的库目录(「必应」「聚焦」两类); 库目录之外的文件夹一个字都不碰。
-  foreach ($nm in @('必应', '聚焦')) {
+  # 四个图源平级: 必应 / 聚焦 / 万象 / 随拍 都要搬, 库目录之外的文件夹一个字都不碰。
+  # 自定义过 src_*_dir 的源不在 <base> 下, 下面 Test-Path 会自然跳过, 不会被乱搬。
+  $names = @('必应', '聚焦')
+  try {
+    foreach ($sdef in @(Get-BwSourceDefs)) {
+      $sn = [string]$sdef.Name
+      if ($sn -and ($names -notcontains $sn)) { $names += $sn }
+    }
+  } catch {}
+  foreach ($nm in $names) {
     $src = Join-Path $fb $nm
     $dst = Join-Path $tb $nm
     if (-not (Test-Path -LiteralPath $src)) { continue }
@@ -372,7 +380,7 @@ function Move-BwLibraryFiles([string]$fromBase, [string]$toBase) {
     if ($left.Count -eq 0) { try { [System.IO.Directory]::Delete($src, $false) } catch {} }
   }
   $still = 0
-  foreach ($nm in @('必应', '聚焦')) { if (Test-Path -LiteralPath (Join-Path $fb $nm)) { $still++ } }
+  foreach ($nm in $names) { if (Test-Path -LiteralPath (Join-Path $fb $nm)) { $still++ } }
   if ($still -eq 0) { try { [System.IO.Directory]::Delete($fb, $false) } catch {} }
   return $moved
 }
@@ -411,9 +419,9 @@ function Find-BwExistingBase {
           $sub = Join-Path $p '壁纸'
           $sc = 10
           $why = $drv + ': 上本来就有「' + $nm + '」文件夹'
-          # 库是两层: <图片>\壁纸\必应 / \聚焦。只数「壁纸」这一层会漏 ——
-          # 那层只有两个子目录, 一张图都没有, 于是真正存着图的库被当成空文件夹。
-          $hasLib = ((Test-BwHasJpg $sub) -or (Test-BwHasJpg (Join-Path $sub '必应')) -or (Test-BwHasJpg (Join-Path $sub '聚焦')))
+          # 库是两层: <图片>\壁纸\必应 / 聚焦 / 万象 / 随拍。只数「壁纸」这一层会漏 ——
+          # 那层只有子目录, 一张图都没有, 于是真正存着图的库被当成空文件夹。
+          $hasLib = ((Test-BwHasJpg $sub) -or (Test-BwHasJpg (Join-Path $sub '必应')) -or (Test-BwHasJpg (Join-Path $sub '聚焦')) -or (Test-BwHasJpg (Join-Path $sub '万象')) -or (Test-BwHasJpg (Join-Path $sub '随拍')))
           if ($hasLib) { $sc = 100; $why = $why + ', 里面还留着以前下载的壁纸' }
           elseif (Test-BwHasJpg $p) { $sc = 50 }
           if ($sc -gt $bestScore) { $bestScore = $sc; $best = (Join-Path $p '壁纸'); $bestWhy = $why }
@@ -496,10 +504,9 @@ function Ensure-BwDirs {
   $c = Get-BwConfig
   [void](New-BwDir $c.bing_save_dir)
   [void](New-BwDir $c.spotlight_save_dir)
-  # 其它图源(将来的图源)的库目录: 只建"开着"的那些 ——
-  # 关掉的源不该在用户盘上留一个永远空的文件夹。
+  # 万象 / 随拍现在是"模式"(与必应、聚焦并列的独立图库), 不再是可选插件:
+  # 两个文件夹一律自动生成, 与开关无关 —— 用户要求"图片库也是自动生成两个独立的文件夹"。
   foreach ($def in @(Get-BwSourceDefs)) {
-    if (-not (Get-BwSrcEnabled $c $def.Key)) { continue }
     $d = Get-BwSrcDir $c $def.Key
     if ($d) { [void](New-BwDir $d) }
   }
@@ -561,6 +568,22 @@ function Get-BwConfig {
   # 必应模式: 只换必应(每天一张), 不轮换聚焦。默认关。
   # 2026-10-20 用户要求(与 GitHub #1 用户爱卡生同一诉求): 只想每天看必应当日图。
   if (-not $c.PSObject.Properties['bing_only']) { Add-Member -InputObject $c NoteProperty bing_only $false -Force }
+  # 轮换模式(2026-11 新增·两免 Key 图源各自成模式): focus=混合池(聚焦+必应+开着的新图源+本地,
+  # 半小时随机切换); bing=必应每日一张; commons=只轮万象库(独立循环, 对标聚焦随机切换);
+  # picsum=只轮随拍库(同上)。默认 focus(老行为)。老配置只有 bing_only 时由 Get-BwMode 推导。
+  # 老配置没有 wallpaper_mode: 必须按老字段 bing_only 推导, 否则老用户开着必应模式
+  # 升级后会被静默打回聚焦模式(桌面突然开始半小时乱换)。
+  if (-not $c.PSObject.Properties['wallpaper_mode']) {
+    $wm = 'focus'
+    if ($c.bing_only) { $wm = 'bing' }
+    Add-Member -InputObject $c NoteProperty wallpaper_mode $wm -Force
+  }
+  # 两个字段必须同口径: 后台/前端还有多处直接读 bing_only(24 小时节奏、tick、历史筛选)。
+  # 手改 config.json 只写了一个时, 这里以 wallpaper_mode 为准把另一个对齐。
+  $wmNow = ([string]$c.wallpaper_mode).Trim().ToLower()
+  if (@('focus','bing','commons','picsum') -notcontains $wmNow) { $wmNow = 'focus' }
+  Add-Member -InputObject $c NoteProperty wallpaper_mode $wmNow -Force
+  Add-Member -InputObject $c NoteProperty bing_only ([bool]($wmNow -eq 'bing')) -Force
   if (-not $c.PSObject.Properties['desktop_shortcut']) { Add-Member -InputObject $c NoteProperty desktop_shortcut 'on' -Force }
   # 图库上限: 聚焦库最多留多少张。超了就把**已经看过**的最老的几张移进回收站。
   # 没看过的一律不动 —— 那是等着换的, 删了就得重新下载。
@@ -609,10 +632,11 @@ if (-not $c.PSObject.Properties['art_fit_mode']) { Add-Member -InputObject $c No
   # 现在用户点一次就落进 config.json, 出页面时注入回去(见 / 的 HTML 处理分支)。
   # **故意不补默认值**: 字段不存在 = "这人从没在面板上选过观感", 页面就该回落到他自己
   # 浏览器里的旧 localStorage(升级那一刻观感不变); 补个 'auto' 反而会把老用户的选择顶掉。
-  # 单张图下载超时(秒)。实测有的图床能慢到 ~130 秒/张: 硬等一张就把整轮补货拖成几十分钟,
-  # 后面排队的源全被挡住。20 秒下不完就放弃、记一次失败、换下一张; 同一个源连着两张超时就
-  # 本轮不再取它(见 Invoke-BwSrcFetch)。改大/改小都在 [S] 里。
-  if (-not $c.PSObject.Properties['src_timeout_sec']) { Add-Member -InputObject $c NoteProperty src_timeout_sec 20 -Force }
+  # 单张图下载超时(秒)。这是**单张**的硬期限(Save-BwUrlToFile 每下载一张都重新计时, 不是整轮总额度)。
+  # 万象大图经常返回未缩放的原图(3~4 MB), 实测 27~48 秒才能下完; 20 秒太短会把能下成的图
+  # 也判超时丢弃。提到 90 秒: 后台补货时慢图也能下完, 且不挡前台换图(前台只从库里取已下好的)。
+  # 同一个源连着两张超时才本轮不再取它(见 Invoke-BwSrcFetch)。改大/改小都在 [S] 里。
+  if (-not $c.PSObject.Properties['src_timeout_sec']) { Add-Member -InputObject $c NoteProperty src_timeout_sec 90 -Force }
   # 队列里的图换完之后, 要不要自动下一批新图? 默认**关**:
   # 库里现有的图轮着用就够了, 不过程序自己跑去下载一堆, 库越攒越大。
   # 想要不断有新图就到菜单里打开它。
@@ -836,7 +860,7 @@ function Get-BwBytes([string]$url, [int]$timeoutSec = 20) {
     try {
       [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
       $req = [System.Net.HttpWebRequest]::Create($url)
-      $req.UserAgent = 'MSWallpaperAssistant'
+      $req.UserAgent = 'MSWallpaperAssistant/2.4.3 (https://github.com/kele551/ms-wallpaper-assistant)'
       $req.Proxy = $null
       $req.Timeout = $toMs
       $req.ReadWriteTimeout = $toMs
@@ -919,7 +943,7 @@ function Get-BwBytesAnimated([string]$url, [int]$timeoutSec, [string]$label, [in
   try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $wc = New-Object System.Net.WebClient
-    $wc.Headers.Add('User-Agent', 'MSWallpaperAssistant')
+    $wc.Headers.Add('User-Agent', 'MSWallpaperAssistant/2.4.3 (https://github.com/kele551/ms-wallpaper-assistant)')
     $wc.Proxy = $null
     $task = $wc.DownloadDataTaskAsync($url)
     $frame = 0; $t0 = Get-Date
@@ -1862,6 +1886,39 @@ function Trim-BwOneDir($s, [string]$dir, [int]$cap, [string]$label) {
   }
   return $moved
 }
+# 2026-11-05: 队列洗不出来时, 把当前模式库里「已经用过」的最老几张移进回收站(可还原)。
+# 只动用过的; 收藏、当前正在显示的那张都留着。删完由调用方强制下载新图补位。
+function Clear-BwUsedOldest($s, [string]$mode, [int]$want) {
+  if ($want -le 0) { return 0 }
+  try {
+    $c = Get-BwConfig
+    if ($mode -eq 'commons') { $dir = Get-BwSrcDir $c 'commons' }
+    elseif ($mode -eq 'picsum') { $dir = Get-BwSrcDir $c 'picsum' }
+    elseif ($mode -eq 'bing') { $dir = [string]$c.bing_save_dir }
+    else { $dir = [string]$c.spotlight_save_dir }
+    if ((-not $dir) -or (-not (Test-Path -LiteralPath $dir -PathType Container))) { return 0 }
+    $used = @{}
+    foreach ($h in @(Get-BwHist $s)) { if ($h) { $used[[string]$h] = $true } }
+    $cur = ''
+    if ($s.last_wall) { $cur = Get-BwNameKey (Split-Path ([string]$s.last_wall) -Leaf) }
+    $favKeys = @{}
+    foreach ($fn in @(Get-BwFav $s)) {
+      if (-not $fn) { continue }
+      $favKeys[[string]$fn] = $true
+      $favKeys[(Get-BwNameKey ([string]$fn))] = $true
+    }
+    $cand = @(Get-ChildItem -LiteralPath $dir -File -Filter *.jpg -ErrorAction SilentlyContinue |
+      Where-Object {
+        $k = Get-BwNameKey $_.Name
+        $used.ContainsKey($k) -and ($k -ne $cur) -and
+        (-not $favKeys.ContainsKey($k)) -and (-not $favKeys.ContainsKey([string]$_.Name))
+      } | Sort-Object -Property Name | Select-Object -First $want)
+    $n = 0
+    foreach ($f in $cand) { if (Move-BwToRecycle $f.FullName) { $n++ } }
+    return $n
+  } catch { return 0 }
+}
+
 # 库超上限就裁。2026-10-10 晚起**两个库都裁**: 聚焦按 lib_cap、必应按 bing_cap,
 # 两个上限各自可以设 0 = 不限(菜单 [S] → [8] 与 [b])。
 function Trim-BwLibrary($s) {
@@ -1919,7 +1976,7 @@ function Add-BwHist($s, [string]$name) {
   $h = @(Get-BwHist $s)
   if (-not ($h -contains $k)) {
     $h = @(@($h) + @($k))
-    if ($h.Count -gt 400) { $h = @($h | Select-Object -Last 400) }
+    if ($h.Count -gt 50000) { $h = @($h | Select-Object -Last 50000) }
     $s.history = $h
   }
   # 2026-10-09: 顺手记下"这张图是什么时候换到桌面的"。老图回收(间隔 >= recycle_min_days 天)
@@ -2396,6 +2453,9 @@ function Get-BwSpotlightWant {
 # 节流账本落在 fetch_stats.json, 独立于 state.json —— 它记的是"抓取节奏", 不该被换图进度覆盖。
 $global:BWFetchStats = Join-Path $global:BWRoot 'fetch_stats.json'
 $global:BWRecycleBelow = 20      # 未看过的剩量低于这个数, 就允许回收老图
+# 2026-11-05 用户定死: 桌面轮换的图片不能重复。$true = 只轮「从没用过」的图,
+# 关掉老图循环 / 回收站搬回 / 历史清零重来; 想退回老行为把它改成 $false 即可。
+$global:BWNoRepeat = $true
 $global:BWZeroRoundsToLow = 3    # 连续几轮"新增 0"进入低频模式
 
 function Get-BwFetchStats {
@@ -2716,10 +2776,16 @@ function Reset-BwSourceRecords {
 # 授权(README / 使用说明里也写了): 图只**下载到用户本机**, 不随发行版打包分发;
 # 公版库**逐张校验公版标记**, 非公域的一眼都不看; 图片版权归**原提供方**。
 $global:BWSources     = Join-Path $global:BWRoot 'sources.json'
-$global:BWSrcSeenMax  = 3000     # 每个源最多记多少条"下过"的键(按时刻淘汰最老的)
-$global:BWSrcRotMax   = 400      # 每个源最多记多少条"轮换过"的键
+$global:BWSrcSeenMax  = 50000    # 用户要求"下过/用过"永久去重, 不再按时刻淘汰
+$global:BWSrcRotMax   = 50000
 $global:BWSrcMaxBytes = 12MB     # 单张图大小上限: 超过就跳过(有的源条目挂着几十 MB 的原图)
-$global:BWSrcUa       = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+# 图源下载用的 UA。必须带版本 + 可公开联系的仓库地址: Wikimedia 等图床对"无标识/伪装成浏览器的 UA"
+# 直接返回 429(图床反爬)。早期写的伪 Chrome UA 让万象图片下载 100% 被限流; 改成下面这个合规 UA
+# 之后才正常。不含任何私人邮箱/令牌(仓库红线)。
+$global:BWSrcUa        = 'MSWallpaperAssistant/2.4.3 (https://github.com/kele551/ms-wallpaper-assistant)'
+# 独立模式(万象/随拍)后台常备的"还没轮到过"的张数。这些源单张 8~30 秒,
+# 但只要库里始终有几张备用, 换图就只从本地拿, 用户完全等不到下载。
+$global:BWSrcPrefetch  = 4
 
 # [暂未启用 —— 等合适的图源] 新图源的静态定义表: **目前是空的**。
 # 2026-10-09 用户决定摘除两个试过的图源(出的图不适合当壁纸)之后, 这里不再有任何源;
@@ -2733,11 +2799,63 @@ $global:BWSrcUa       = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/5
 # 定义照着上面这几行填, 再把这一源的"搜索 / 取图"两个函数接到 Get-BwSrcCandidates /
 # Get-BwSrcAsset 上, 即可直接用下面整套抓取与轮换机制。
 function Get-BwSourceDefs {
-  return @()
+  # 两个免 Key 的备用图源, 与必应 / 聚焦 并列喂轮换池。
+  # 默认关闭(EnableKey 不在 config 里 = 关), 在设置里打开即可; 关着时本表内容不会被任何流水线走到。
+  return @(
+    [PSCustomObject]@{
+      Key          = 'commons'
+      Name         = '万象'            # 界面/日志/面板统一显示的中文名
+      EnableKey    = 'src_commons_on'
+      DirKey       = 'src_commons_dir'
+      CapKey       = 'src_commons_cap'
+      KwKey        = 'src_commons_kw'
+      DefaultKw    = '雪豹,冰岛瀑布,撒哈拉沙漠,极光,喜马拉雅,雾林,峡谷,野生动物,山景,大堡礁,银河,火山'
+      MinKey       = 'src_commons_min_w'
+      MinDef       = 1920
+      FullKey      = 'src_commons_full_w'
+      FullDef      = 2560
+      LandscapeOnly = $false
+    },
+    [PSCustomObject]@{
+      Key          = 'picsum'
+      Name         = '随拍'            # Wikimedia Commons 城市人文摄影(2026-11-06 起不再用 Picsum)
+      EnableKey    = 'src_picsum_on'
+      DirKey       = 'src_picsum_dir'
+      CapKey       = 'src_picsum_cap'
+      KwKey        = 'src_picsum_kw'
+      DefaultKw    = '城市夜景,城市日落,老街,街景,建筑,桥梁,港口,市集,咖啡,自行车,霓虹夜色,广场'
+      MinKey       = 'src_picsum_min_w'
+      MinDef       = 1920
+      FullKey      = 'src_picsum_full_w'
+      FullDef      = 2560
+      LandscapeOnly = $false
+    }
+  )
 }
 function Get-BwSrcDef([string]$key) {
   if (-not $key) { return $null }
   foreach ($d in @(Get-BwSourceDefs)) { if ([string]$d.Key -eq [string]$key) { return $d } }
+  return $null
+}
+# 当前轮换模式。优先级: 显式的 wallpaper_mode > 老字段 bing_only(向后兼容)。
+# 取值: focus(混合池) / bing(必应每日一张) / commons(只轮万象) / picsum(只轮随拍)。
+# commons / picsum 是"独立模式": 轮换池、队列、背景补货都只认那一个源的库, 不与聚焦/必应混。
+function Get-BwMode {
+  try {
+    $c = Get-BwConfig
+    if ($c -and $c.PSObject.Properties['wallpaper_mode']) {
+      $m = ([string]$c.wallpaper_mode).Trim().ToLower()
+      if ($m -eq 'bing' -or $m -eq 'commons' -or $m -eq 'picsum' -or $m -eq 'focus') { return $m }
+    }
+    if ($c -and $c.bing_only) { return 'bing' }
+  } catch {}
+  return 'focus'
+}
+# 当前模式对应的"独立图源键"(commons/picsum 模式返回各自键, 其余返回 $null)。
+function Get-BwModeSrcKey {
+  $m = Get-BwMode
+  if ($m -eq 'commons') { return 'commons' }
+  if ($m -eq 'picsum')  { return 'picsum' }
   return $null
 }
 # 这个源的"最低线 / 满屏线"(像素宽)。0 = 不限。
@@ -2761,6 +2879,27 @@ function Get-BwSrcWidthCfg([psobject]$c, [string]$key, [string]$which) {
 }
 function Get-BwSrcMinWidth([psobject]$c, [string]$key)  { return (Get-BwSrcWidthCfg $c $key 'min') }
 function Get-BwSrcFullWidth([psobject]$c, [string]$key) { return (Get-BwSrcWidthCfg $c $key 'full') }
+# 图源抓图的目标宽度: 与聚焦同一口径 —— resolution_mode=auto 时按屏幕物理像素(封顶 3840, 兜底 1920),
+# 否则一律 3840。万象据此向接口要缩略图宽度。注意: 图床对"请求宽度接近原图"的图常直接甩未缩放
+# 原图(更大更慢), 所以这里只决定"我们想下多大", 最终真实尺寸由 Save-BwFile 量完复核 + 门槛过滤。
+function Get-BwSrcTargetWidth([psobject]$c, [string]$key) {
+  if (-not $c) { return 3840 }
+  $mode = 'auto'
+  try { if ($c.PSObject.Properties['resolution_mode']) { $mode = [string]$c.resolution_mode } } catch {}
+  if ($mode -ne 'auto') { return 3840 }
+  $w = 0
+  try {
+    $ph = @(Get-BwScreenPhysical)
+    if ($ph.Count -ge 2) { $w = [int]$ph[0] }
+  } catch { $w = 0 }
+  if ($w -le 0) {
+    try { $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $w = $b.Width } catch { $w = 0 }
+  }
+  if ($w -le 0) { return 3840 }
+  if ($w -gt 3840) { $w = 3840 }
+  if ($w -lt 1920) { $w = 1920 }
+  return $w
+}
 # 某个源要不要"只收横图"(宽高比 >= 该源定义里的 LandscapeAr)。默认开: 字段不存在 = 开。
 # [暂未启用 —— 等合适的图源] 由 Invoke-BwSrcFetch 调用; 表里没有源时不会被走到。
 function Get-BwSrcLandscapeOnly([psobject]$c, [string]$key) {
@@ -2823,6 +2962,15 @@ function Get-BwSrcGate([psobject]$c, [string]$key) {
 function Get-BwSrcEnabled([psobject]$c, [string]$key) {
   $def = Get-BwSrcDef $key
   if (-not $def) { return $false }
+  # 独立模式(commons/picsum): 模式本身就是那个源的开关 —— 只认当前模式对应的那一个源,
+  # 与 src_*_on 勾没勾无关。否则用户切到万象模式却没勾过开关, 补货/记账/建目录
+  # 会全被这道闸挡住, 模式等于空转。直接从传入的 $c 读, 不回调 Get-BwMode 避免重复读盘。
+  $m = ''
+  if ($c -and $c.PSObject.Properties['wallpaper_mode']) {
+    $m = ([string]$c.wallpaper_mode).Trim().ToLower()
+  } elseif ($c -and $c.bing_only) { $m = 'bing' }
+  if ($m -eq 'commons') { return ($key -eq 'commons') }
+  if ($m -eq 'picsum')  { return ($key -eq 'picsum') }
   if (-not $c) { return $true }
   try {
     if (-not $c.PSObject.Properties[$def.EnableKey]) { return $false }
@@ -2836,18 +2984,27 @@ function Get-BwSrcEnabled([psobject]$c, [string]$key) {
 function Get-BwSrcDir([psobject]$c, [string]$key) {
   $def = Get-BwSrcDef $key
   if (-not ($def -and $c)) { return '' }
-  try { if ($c.PSObject.Properties[$def.DirKey]) { return [string]$c.PSObject.Properties[$def.DirKey].Value } } catch {}
-  return ''
+  $v = ''
+  try { if ($c.PSObject.Properties[$def.DirKey]) { $v = [string]$c.PSObject.Properties[$def.DirKey].Value } } catch { $v = '' }
+  $v = ($v -split '[#?]')[0].Trim()
+  if (-not $v) {
+    # 没配目录时退到基础目录下的「源中文名」文件夹, 开箱即用(与必应/聚焦同处一层)
+    $base = Get-BwDefaultBase
+    if ($base) { $v = Join-Path -Path $base -ChildPath ([string]$def.Name) }
+  }
+  return $v
 }
-# 这个源自己的库容上限(0 = 不限)。每个源一个独立的上限而不是共用 lib_cap ——
-# 各源池子的总量差得很远(聚焦总共 800+ 张, 有的源能到几万张), 共用一个数会让
-# "库满不补"的语义在两边都别扭。
-# [暂未启用 —— 等合适的图源] 由 Invoke-BwSrcFetch 与状态行调用。
+# 这个源的库容上限(0 = 不限)。
+# 2026-11-06 用户「统一」: 两个新源不再各设 100, 一律跟随面板上的「图库上限」(lib_cap),
+#   与聚焦同口径 —— 改一处, 聚焦 / 万象 / 随拍 三个库一起变; 必应仍用自己的 bing_cap。
+#   显示值(面板 srcCaps)和实际「库满不补」判定都走这里, 不会出现两边不一致。
+# config.json 里若手工写了 src_commons_cap / src_picsum_cap, 仍优先用它单独覆盖(向后兼容)。
 function Get-BwSrcCap([psobject]$c, [string]$key) {
+  $fallback = Get-BwLibCap
   $def = Get-BwSrcDef $key
-  if (-not $def) { return 0 }
-  $v = 100
-  try { if ($c -and $c.PSObject.Properties[$def.CapKey]) { $v = [int]$c.PSObject.Properties[$def.CapKey].Value } } catch { $v = 100 }
+  if (-not $def) { return $fallback }
+  $v = $fallback
+  try { if ($c -and $c.PSObject.Properties[$def.CapKey]) { $v = [int]$c.PSObject.Properties[$def.CapKey].Value } } catch { $v = $fallback }
   $r = $global:BwLimit[$def.CapKey]
   if ($r) {
     if ($v -lt 0) { $v = $r.Def }
@@ -2855,7 +3012,7 @@ function Get-BwSrcCap([psobject]$c, [string]$key) {
     elseif ($v -lt $r.Min) { $v = $r.Min }
     elseif ($v -gt $r.Max) { $v = $r.Max }
   }
-  if ($v -lt 0) { $v = 100 }
+  if ($v -lt 0) { $v = $fallback }
   return $v
 }
 # 关键词: 逗号(中英文都认)分隔的一行。解析与清洗都在这里, 菜单和抓取共用同一个口径:
@@ -3004,11 +3161,198 @@ function Get-BwSrcKeyToken([string]$key, [string]$id) {
   if ($tk.Length -lt 8) { $tk = $tk + (Get-BwHash ($key + '|' + $id)).Substring(0, 8) }
   return $tk
 }
-function Get-BwSrcName([string]$key, [string]$token, [string]$title, [string]$url) {
-  $t = ([string]$title) -replace '[\\/:*?"<>|\s？：＊＜＞｜]', ''
+# 2026-11-06 用户「我们应该尊重作者的拍摄时间」: 文件名前缀 / 图片元数据 / 面板上的
+# 日期, 一律用 Commons 的 extmetadata.DateTimeOriginal(作者实际拍摄那天), 不再用下载当天。
+# 实测本机 30/30 张都带这个值, 但格式有四类: 2009-09-10 / 2014-07-23 17:31:09 /
+# Taken on 16 July 2024, 08:32:39 / 4 December 2023, 16:08:46 (还有 NBSP 与前导空格)。
+# 统一归一成 yyyy-MM-dd; 认不出来就返回空串 —— 绝不拿下载日冒充拍摄日。
+function Get-BwShotDate([string]$raw) {
+  $s = ([string]$raw) -replace '<[^>]+>', ' '
+  if (-not $s) { return '' }
+  $s = ($s -replace '[\u00A0\u202F]', ' ') -replace '\s+', ' '
+  $s = $s.Trim()
+  $y = 0; $mo = 0; $dd = 0
+  $m = [regex]::Match($s, '(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})')
+  if ($m.Success) {
+    $y = [int]$m.Groups[1].Value; $mo = [int]$m.Groups[2].Value; $dd = [int]$m.Groups[3].Value
+  } else {
+    $months = 'january,february,march,april,may,june,july,august,september,october,november,december'.Split(',')
+    $m = [regex]::Match($s, '(?i)(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})')
+    if ($m.Success) {
+      $dd = [int]$m.Groups[1].Value; $mo = [Array]::IndexOf($months, $m.Groups[2].Value.ToLower()) + 1; $y = [int]$m.Groups[3].Value
+    } else {
+      $m = [regex]::Match($s, '(?i)(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),?\s+(\d{4})')
+      if ($m.Success) {
+        $mo = [Array]::IndexOf($months, $m.Groups[1].Value.ToLower()) + 1; $dd = [int]$m.Groups[2].Value; $y = [int]$m.Groups[3].Value
+      }
+    }
+  }
+  $nowY = (Get-Date).Year
+  if ($y -lt 1839 -or $y -gt ($nowY + 1) -or $mo -lt 1 -or $mo -gt 12 -or $dd -lt 1 -or $dd -gt 31) { return '' }
+  try { return ([datetime]::new($y, $mo, $dd)).ToString('yyyy-MM-dd') } catch { return '' }
+}
+function Get-BwSrcName([string]$key, [string]$token, [string]$title, [string]$url, [string]$subject, [string]$shot) {
+  # 2026-11-05 用户要求文件名用中文: 用本轮抓取的中文主题词(关键词池里的词)当名字主体,
+  # 不再直接搬 Commons 的英文/冰岛语作品名(Goðafoss 里的 ð 之类在资源管理器里很难读)。
+  # 不接翻译接口 —— 关键词池本来就是中文, 零成本、离线可用。
+  # 末尾的哈希与 token 是去重键(Get-BwNameKey 靠它, 队列/收藏/已看过全按它记账), 不能删;
+  # 面板 parseName 显示时会把这两段隐藏, 用户看到的就是纯中文名。
+  $t = ([string]$subject) -replace '[\\/:*?"<>|\s？：＊＜＞｜，,;；]', ''
+  if ($t -notmatch '[\u4e00-\u9fa5]') {
+    $d = Get-BwSrcDef $key
+    if ($d) { $t = [string]$d.Name } else { $t = '' }
+  }
+  if (-not $t) { $t = ([string]$title) -replace '[^a-zA-Z0-9]', '' }
   if ($t.Length -gt 28) { $t = $t.Substring(0, 28) }
   if (-not $t) { $t = 'wallpaper' }
-  return ('{0}_{1}_{2}_{3}.jpg' -f (Get-Date -Format 'yyyy-MM-dd'), $t, (Get-BwHash ($key + '|' + $url)), $token)
+  # 2026-11-06: 前缀是作者的拍摄日, 不是入库日。调用方已保证 $shot 合法;
+  # 这里万一为空仍给一个可用的名字, 但下载处会先拦住, 不会真的落盘冒充。
+  $day = ([string]$shot).Trim()
+  if ($day -notmatch '^\d{4}-\d{2}-\d{2}$') { $day = Get-Date -Format 'yyyy-MM-dd' }
+  return ('{0}_{1}_{2}_{3}.jpg' -f $day, $t, (Get-BwHash ($key + '|' + $url)), $token)
+}
+# 2026-11-05 用户「图片全部是描述图片内容的中文名字」:
+# 新图落盘后, 用真实像素算一个画面色调词, 追加到中文主题词后面 —— 每张名字都不重样,
+# 而且描述的是这张图自己的画面。全程本地、零成本、不联网; 取不到就保留原中文名。
+function Get-BwToneWord([string]$path) {
+  try {
+    [void](Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue)
+    $img = [System.Drawing.Image]::FromFile($path)
+    $bmp = [System.Drawing.Bitmap]::new(24, 14)
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $g.DrawImage($img, 0, 0, 24, 14)
+    $g.Dispose(); $img.Dispose()
+    $r = 0.0; $gn = 0.0; $bl = 0.0; $n = 0
+    for ($y = 0; $y -lt 14; $y++) {
+      for ($x = 0; $x -lt 24; $x++) {
+        $c = $bmp.GetPixel($x, $y)
+        $r += $c.R; $gn += $c.G; $bl += $c.B; $n++
+      }
+    }
+    $bmp.Dispose()
+    if ($n -le 0) { return '' }
+    $r = $r / $n; $gn = $gn / $n; $bl = $bl / $n
+    $lum = 0.299 * $r + 0.587 * $gn + 0.114 * $bl
+    $mx = [Math]::Max($r, [Math]::Max($gn, $bl)); $mn = [Math]::Min($r, [Math]::Min($gn, $bl))
+    $sat = $mx - $mn
+    if ($lum -lt 55) { return '夜色暗调' }
+    if ($sat -lt 16) { if ($lum -gt 185) { return '素白明调' }; return '灰调光影' }
+    if (($r -gt $gn) -and ($r -gt $bl)) {
+      if ($lum -gt 165) { return '暖金晴光' }
+      if ($bl -gt $gn) { return '暮紫霞光' }
+      return '橙红暖调'
+    }
+    if (($bl -gt $r) -and ($bl -gt $gn)) {
+      if ($lum -gt 150) { return '蔚蓝晴空' }
+      return '深蓝静调'
+    }
+    if ($lum -gt 165) { return '青绿明调' }
+    return '青绿深调'
+  } catch { return '' }
+}
+# 2026-11-06 用户补的例外: 「如果文件名字没有国家地理元素，只能看图编文件名」。
+# 只有当 Commons 原始元数据里连国家/地理/画面主体都认不出时(例如只有 DSC_1234 / Sunset),
+# 才允许「看图编」—— 读落盘后的真实像素, 给一个描述画面光景的中文词。
+# 全程本地 System.Drawing, 零成本、不联网; 绝不猜地名、绝不编造画面主体。
+function Get-BwVisualCaption([string]$path) {
+  try {
+    [void](Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue)
+    $img = [System.Drawing.Image]::FromFile($path)
+    $bmp = [System.Drawing.Bitmap]::new(24, 14)
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $g.DrawImage($img, 0, 0, 24, 14)
+    $g.Dispose(); $img.Dispose()
+    $r = 0.0; $gn = 0.0; $bl = 0.0; $topLum = 0.0; $botLum = 0.0; $nT = 0; $nB = 0
+    for ($y = 0; $y -lt 14; $y++) {
+      for ($x = 0; $x -lt 24; $x++) {
+        $c = $bmp.GetPixel($x, $y)
+        $r += $c.R; $gn += $c.G; $bl += $c.B
+        $l = 0.299 * $c.R + 0.587 * $c.G + 0.114 * $c.B
+        if ($y -lt 7) { $topLum += $l; $nT++ } else { $botLum += $l; $nB++ }
+      }
+    }
+    $bmp.Dispose()
+    $n = 24 * 14
+    $r = $r / $n; $gn = $gn / $n; $bl = $bl / $n
+    $lum = 0.299 * $r + 0.587 * $gn + 0.114 * $bl
+    $mx = [Math]::Max($r, [Math]::Max($gn, $bl)); $mn = [Math]::Min($r, [Math]::Min($gn, $bl))
+    $sat = $mx - $mn
+    $topLum = $topLum / [Math]::Max(1, $nT); $botLum = $botLum / [Math]::Max(1, $nB)
+    if ($lum -lt 55) {
+      if ($topLum -lt ($botLum - 18)) { return '夜色灯火' }
+      return '深蓝夜幕'
+    }
+    if ($sat -lt 16) {
+      if ($lum -gt 185) { return '雪原素白' }
+      return '雾白灰调'
+    }
+    if (($r -gt $gn) -and ($r -gt $bl)) {
+      if ($lum -gt 165) { return '暖阳金辉' }
+      if ($bl -gt $gn) { return '暮紫霞光' }
+      return '暮霞暖金'
+    }
+    if (($bl -gt $r) -and ($bl -gt $gn)) {
+      if ($lum -gt 150) { return '碧水晴空' }
+      return '深蓝静调'
+    }
+    if ($lum -gt 165) { return '青绿明野' }
+    return '林野深绿'
+  } catch { return '' }
+}
+function Set-BwSrcDescriptiveName([string]$path, [switch]$VisualFallback) {
+  if (-not $path) { return $path }
+  try {
+    if (-not (Test-Path -LiteralPath $path)) { return $path }
+    # -VisualFallback: 原始文件名里连国家/地理/主体都认不出, 用户允许(且只允许)这时看图编中文名。
+    # 用真实像素给画面光景词, 不猜地名、不编画面主体。
+    $tone = if ($VisualFallback) { Get-BwVisualCaption $path } else { Get-BwToneWord $path }
+    if (-not $tone) { return $path }
+    $dir = Split-Path -Parent $path
+    $leaf = Split-Path -Leaf $path
+    $stem = [System.IO.Path]::GetFileNameWithoutExtension($leaf)
+    $ext = [System.IO.Path]::GetExtension($leaf)
+    $parts = $stem.Split('_')
+    if ($parts.Count -lt 4) { return $path }
+    $subject = ($parts[1..($parts.Count - 3)] -join '_')
+    # 已经是中文描述名(人工起的、或上轮已带画面词)就不再叠词
+    if ($subject.Contains('·')) { return $path }   # 旧直译名 / 已叠过画面词
+    # 通顺短句(>=6 字纯中文)已经成句, 不再叠画面词; 但 -VisualFallback 例外分支
+    # (原名连国家地理都没有)必须放行, 否则上一轮「只能看图编文件名」会被这里挡住。
+    if (-not $VisualFallback -and $subject.Length -ge 6 -and $subject -match '[\u4e00-\u9fa5]' -and $subject -notmatch '[A-Za-z]') { return $path }
+    if ($subject -like ('*' + $tone + '*')) { return $path }
+    # 例外分支也写成一句通顺短句(「夜色灯火中的城市夜景」), 不用 · 标签串联;
+    # 老图兜底分支保持原来的 · 写法, 兼容历史名字。
+    $glue = if ($VisualFallback) { $tone + '中的' + $subject } else { $subject + '·' + $tone }
+    $newLeaf = $parts[0] + '_' + $glue + '_' + $parts[$parts.Count - 2] + '_' + $parts[$parts.Count - 1] + $ext
+    $newPath = Join-Path $dir $newLeaf
+    if (Test-Path -LiteralPath $newPath) { return $path }
+    Move-Item -LiteralPath $path -Destination $newPath -Force -ErrorAction Stop
+    if (Test-Path -LiteralPath $newPath) { return $newPath }
+  } catch {}
+  return $path
+}
+# 2026-11-05: 已经躺在库里的"光写源名、不写画面"的旧图也自动补成中文描述名。
+# 只认「随拍 / 真实摄影 / 维基共享 / 万象」这几个通用词; 已经是中文描述名的一律不动。
+# 每个源目录在每个进程里只扫一次, 不拖慢换图, 也不动必应/聚焦两个老库。
+function Invoke-BwSrcGenericNameFix([string]$dir) {
+  if (-not $script:BWNameFixDone) { $script:BWNameFixDone = @{} }
+  if ($script:BWNameFixDone.ContainsKey($dir)) { return }
+  $script:BWNameFixDone[$dir] = $true
+  if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { return }
+  try {
+    $generic = @('随拍', '真实摄影', '维基共享', '万象')
+    foreach ($f in @(Get-BwSrcFiles $dir)) {
+      try {
+        $stem = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
+        $parts = $stem.Split('_')
+        if ($parts.Count -lt 4) { continue }
+        $subject = ($parts[1..($parts.Count - 3)] -join '_')
+        if ($generic -contains $subject) { [void](Set-BwSrcDescriptiveName $f.FullName) }
+      } catch {}
+    }
+  } catch {}
 }
 # ---- 图源的"搜索 / 取图"两个钩子 (新图源要接的两个函数) ----
 # [暂未启用 —— 等合适的图源] 目前 Get-BwSourceDefs 是空表, 这两个函数不会被调用。
@@ -3019,11 +3363,506 @@ function Get-BwSrcName([string]$key, [string]$token, [string]$title, [string]$ur
 #                 (挑不到图就返回 $null, 抓取循环会当成"这一条跳过"继续下一条)。
 # 下面两个函数就是这两个钩子的分发点: 一个源一个分支即可。
 function Get-BwSrcCandidates([string]$key, [string]$kw) {
+  if ($key -eq 'commons') { return Get-BwCommonsCandidates $kw }
+  if ($key -eq 'picsum')  { return Get-BwPicsumCandidates $kw }
   return @()
 }
 function Get-BwSrcAsset([string]$key, $item) {
+  if ($key -eq 'commons') {
+    # 署名从简: 授权 + 作者 + 来源, 不啰嗦(规避版权投诉); 与必应/聚焦同一套 metadata 写法
+    $copy = [string]$item.lic
+    if ($item.artist) { $copy = $copy + ' · ' + $item.artist }
+    $copy = $copy + ' · 万象'
+    return [PSCustomObject]@{ url = [string]$item.thumb; title = [string]$item.title; link = [string]$item.link; copy = $copy; shot = [string]$item.shot; author = ([string]$item.artist).Trim() }
+  }
+  if ($key -eq 'picsum') {
+    # 2026-11-06: 随拍已换成 Commons 摄影图, 署名按合规四项写(作品名/作者/许可/来源)。
+    $cp = [string]$item.lic
+    if (-not $cp) { $cp = 'Wikimedia Commons' }
+    if ($item.artist) { $cp = $cp + ' · ' + ([string]$item.artist).Trim() }
+    $cp = $cp + ' · 随拍'
+    return [PSCustomObject]@{ url = [string]$item.thumb; title = [string]$item.title; link = [string]$item.link; copy = $cp; shot = [string]$item.shot; author = ([string]$item.artist).Trim() }
+  }
   return $null
 }
+# ---- 万象 (Wikimedia Commons) 图源 ----
+# 免 Key、国内可达、自由授权(CC0 / CC BY / CC BY-SA)。国家地理风格主题池见 Get-BwSourceDefs 的 DefaultKw。
+# 候选阶段就按"原图宽 >= 1920、比例 1.4~1.9、仅自由授权"过滤; 下载阶段再由流水线量真实像素复核。
+# 2026-11-05: 万象(Commons) 的 extmetadata 里本来就有作品名 / 描述 / 分类,
+# 用一张离线英中主体词典把它翻成"描述画面内容"的中文名 —— 零成本、零联网、不拖慢下载。
+# 匹配不到主体词就返回空串, 由调用方回退到中文搜索关键词, 绝不硬编一个错名字。
+# 2026-11-06 用户「你编的名字只能靠图片说内容, 不像必应/聚焦把国家、地理名称都标出来」
+# + 「把原始文件名翻译成中文」。Commons 作品名里本来就写着 Aarhus / Kraków / Laos / Quebec
+# 这类国家与地名, 旧词典只认 18 个大区词, 大部分图被压成「老城·灰调光影」这种空名。
+# 这里做一张离线「国家·城市/地标」两级表: 具体地名优先, 认不到再退到国家, 再认不到返回空,
+# 由 Get-BwSubjectName 保留原主体名 —— 绝不硬编一个错地名。全程本地, 不联网、零成本。
+function Get-BwGeoLabel([string]$text) {
+  if (-not $text) { return '' }
+  $t = ([string]$text).ToLower()
+  # 具体地名 -> 「国家·城市/地标」, 越长越具体的排越前
+  $places = @(
+    # 万象(自然/地理)常见地标: 原始作品名里通常直接写着 Goðafoss / Abisko / Ladakh,
+    # 优先认这些, 才能让「冰岛·戈达福斯」「瑞典·阿比斯库」这种国家+地标进到名字里。
+    @{ 'goðafoss|godafoss' = '冰岛·戈达福斯' },
+    @{ 'abisko|torneträsk|tornetrask' = '瑞典·阿比斯库' },
+    @{ 'ladakh' = '印度·拉达克' },
+    @{ 'merzouga' = '摩洛哥·梅尔祖卡' },
+    @{ 'douz|houidhat' = '突尼斯·杜兹' }, @{ 'toujane' = '突尼斯·图雅内' },
+    @{ 'tasmania|tasman sea|southwest national park' = '澳大利亚·塔斯马尼亚' },
+    @{ 'norderney' = '德国·诺德奈岛' },
+    @{ 'zürizoo|zurizoo|zoo zürich|zurich zoo' = '瑞士·苏黎世' },
+    @{ 'aurora australis|antarctic' = '南极' },
+    @{ 'lofoten' = '挪威·罗弗敦' }, @{ 'svalbard' = '挪威·斯瓦尔巴' },
+    @{ 'faroe|føroyar' = '丹麦·法罗群岛' }, @{ 'greenland' = '丹麦·格陵兰' },
+    @{ 'dolomites|dolomiti' = '意大利·多洛米蒂' }, @{ 'matterhorn' = '瑞士·马特洪峰' },
+    @{ 'yosemite' = '美国·优胜美地' }, @{ 'yellowstone' = '美国·黄石' },
+    @{ 'grand canyon' = '美国·大峡谷' }, @{ 'banff|jasper' = '加拿大·落基山' },
+    @{ 'torres del paine' = '智利·百内国家公园' }, @{ 'atacama' = '智利·阿塔卡马' },
+    @{ 'serengeti' = '坦桑尼亚·塞伦盖蒂' }, @{ 'kruger' = '南非·克鲁格' },
+    @{ 'galapagos|galápagos' = '厄瓜多尔·加拉帕戈斯' },
+    @{ 'kilimanjaro' = '坦桑尼亚·乞力马扎罗' }, @{ 'mount fuji|fujisan' = '日本·富士山' },
+    @{ 'everest|sagarmatha' = '尼泊尔·珠穆朗玛峰' },
+    @{ 'namib|namibia' = '纳米比亚·纳米布沙漠' },
+    @{ 'uluru|ayers rock' = '澳大利亚·乌鲁鲁' },
+    @{ 'great barrier reef' = '澳大利亚·大堡礁' },
+    @{ 'milford sound|fiordland' = '新西兰·米尔福德峡湾' },
+    @{ 'liverpool street|exchange square' = '英国·伦敦' },
+    @{ 'lower manhattan|jersey city|little island' = '美国·纽约' },
+    @{ 'minato city|tokyo|kyoto|osaka' = '日本·东京' },
+    @{ 'aarhus|århus' = '丹麦·奥胡斯' },
+    @{ 'quebec city|quebec' = '加拿大·魁北克城' },
+    @{ 'kraków|krakow' = '波兰·克拉科夫' },
+    @{ 'champasak' = '老挝·占巴塞' },
+    @{ 'corfu' = '希腊·科孚' },
+    @{ 'birmingham' = '英国·伯明翰' },
+    @{ 'london' = '英国·伦敦' },
+    @{ 'new york city|new york|manhattan|brooklyn' = '美国·纽约' },
+    @{ 'san francisco' = '美国·旧金山' }, @{ 'los angeles' = '美国·洛杉矶' },
+    @{ 'chicago' = '美国·芝加哥' }, @{ 'toronto' = '加拿大·多伦多' },
+    @{ 'vancouver' = '加拿大·温哥华' },
+    @{ 'paris' = '法国·巴黎' }, @{ 'amsterdam' = '荷兰·阿姆斯特丹' },
+    @{ 'venice|venezia' = '意大利·威尼斯' }, @{ 'florence|firenze' = '意大利·佛罗伦萨' },
+    @{ 'rome|roma' = '意大利·罗马' }, @{ 'barcelona' = '西班牙·巴塞罗那' },
+    @{ 'lisbon|lisboa' = '葡萄牙·里斯本' }, @{ 'prague|praha' = '捷克·布拉格' },
+    @{ 'vienna|wien' = '奥地利·维也纳' }, @{ 'budapest' = '匈牙利·布达佩斯' },
+    @{ 'berlin' = '德国·柏林' }, @{ 'munich|münchen' = '德国·慕尼黑' },
+    @{ 'zurich|zürich' = '瑞士·苏黎世' }, @{ 'copenhagen|københavn' = '丹麦·哥本哈根' },
+    @{ 'stockholm' = '瑞典·斯德哥尔摩' }, @{ 'oslo' = '挪威·奥斯陆' },
+    @{ 'helsinki' = '芬兰·赫尔辛基' }, @{ 'reykjavik|reykjavík' = '冰岛·雷克雅未克' },
+    @{ 'edinburgh' = '英国·爱丁堡' }, @{ 'dublin' = '爱尔兰·都柏林' },
+    @{ 'moscow' = '俄罗斯·莫斯科' }, @{ 'istanbul' = '土耳其·伊斯坦布尔' },
+    @{ 'hong kong' = '中国香港' }, @{ 'shanghai' = '中国·上海' },
+    @{ 'beijing' = '中国·北京' }, @{ 'seoul' = '韩国·首尔' },
+    @{ 'singapore' = '新加坡·新加坡' }, @{ 'sydney' = '澳大利亚·悉尼' },
+    @{ 'melbourne' = '澳大利亚·墨尔本' }, @{ 'marrakech|marrakesh' = '摩洛哥·马拉喀什' },
+    @{ 'cairo' = '埃及·开罗' }, @{ 'dubai' = '阿联酋·迪拜' },
+    @{ 'rio de janeiro' = '巴西·里约热内卢' }, @{ 'buenos aires' = '阿根廷·布宜诺斯艾利斯' }
+  )
+  # 只写了国家没写城市时的兜底
+  $countries = @(
+    @{ 'denmark' = '丹麦' }, @{ 'laos' = '老挝' }, @{ 'poland' = '波兰' },
+    @{ 'greece' = '希腊' }, @{ 'japan' = '日本' }, @{ 'canada' = '加拿大' },
+    @{ 'united kingdom|england|britain' = '英国' }, @{ 'scotland' = '苏格兰' },
+    @{ 'wales' = '威尔士' }, @{ 'united states|u\.s\.a\.|usa' = '美国' },
+    @{ 'france' = '法国' }, @{ 'germany' = '德国' }, @{ 'italy' = '意大利' },
+    @{ 'spain' = '西班牙' }, @{ 'portugal' = '葡萄牙' },
+    @{ 'netherlands|holland' = '荷兰' }, @{ 'czech' = '捷克' },
+    @{ 'austria' = '奥地利' }, @{ 'switzerland' = '瑞士' },
+    @{ 'sweden' = '瑞典' }, @{ 'norway' = '挪威' }, @{ 'finland' = '芬兰' },
+    @{ 'iceland' = '冰岛' }, @{ 'ireland' = '爱尔兰' }, @{ 'russia' = '俄罗斯' },
+    @{ 'turkey' = '土耳其' }, @{ 'china' = '中国' }, @{ 'korea' = '韩国' },
+    @{ 'india' = '印度' }, @{ 'australia' = '澳大利亚' }, @{ 'brazil' = '巴西' },
+    @{ 'argentina' = '阿根廷' }, @{ 'mexico' = '墨西哥' }, @{ 'egypt' = '埃及' },
+    @{ 'morocco' = '摩洛哥' }, @{ 'uae|emirates' = '阿联酋' },
+    @{ 'thailand' = '泰国' }, @{ 'vietnam' = '越南' }, @{ 'indonesia' = '印尼' },
+    @{ 'new zealand' = '新西兰' }, @{ 'antarctica' = '南极' }, @{ 'singapore' = '新加坡' },
+    @{ 'mauritania' = '毛里塔尼亚' }, @{ 'mali' = '马里' }, @{ 'tunisia' = '突尼斯' },
+    @{ 'tanzania' = '坦桑尼亚' }, @{ 'chile' = '智利' }, @{ 'peru' = '秘鲁' },
+    @{ 'nepal' = '尼泊尔' }, @{ 'ecuador' = '厄瓜多尔' }, @{ 'south africa' = '南非' },
+    @{ 'namibia' = '纳米比亚' }, @{ 'greenland' = '格陵兰' }
+  )
+  # 连国家都没写、只写了大地理区时也留一个地名, 不硬编画面内容
+  $regions = @(
+    @{ 'sahara' = '撒哈拉' }, @{ 'himalaya' = '喜马拉雅' }, @{ 'alps' = '阿尔卑斯' },
+    @{ 'amazon' = '亚马孙' }, @{ 'patagonia' = '巴塔哥尼亚' }, @{ 'arctic' = '北极' },
+    @{ 'andes' = '安第斯' }, @{ 'gobi' = '戈壁' }, @{ 'tibet' = '青藏高原' }
+  )
+  foreach ($h in $places) {
+    foreach ($k in @($h.Keys)) { if ($t -match $k) { return [string]$h[$k] } }
+  }
+  foreach ($h in $countries) {
+    foreach ($k in @($h.Keys)) {
+      if ($t -match $k) {
+        $c = [string]$h[$k]
+        # 2026-11-06: 只写国家会让「摩洛哥的沙漠」看不出是哪片沙漠。
+        # 原题里同时写了大地理区(撒哈拉/喜马拉雅/阿尔卑斯…)时一起带出来,
+        # 变成「摩洛哥撒哈拉」「毛里塔尼亚撒哈拉」—— 用户要的就是地理元素尽量全。
+        foreach ($rh in $regions) {
+          foreach ($rk in @($rh.Keys)) { if ($t -match $rk) { return ($c + [string]$rh[$rk]) } }
+        }
+        return $c
+      }
+    }
+  }
+  foreach ($h in $regions) {
+    foreach ($k in @($h.Keys)) { if ($t -match $k) { return [string]$h[$k] } }
+  }
+  return ''
+}
+
+# 2026-11-06 用户「没必要非要按必应的方式命名，只要通顺、说明内容就行，可以发挥想象力」
+# + 「要比必应的命名更好」+「图片太海量了，不标注国家地理根本不知道是哪里」。
+# 必应/聚焦的毛病: 150/200 张里只有 11% / 6% 带地名, 大量是「渴了吗」这种谜语;
+# 必应新版多段式又在面板上只显示第一段, 地名全被吞掉。这里改成一句连贯中文短句:
+# 国家 + 具体地名 + 时间光景 + 画面主体, 单段成句, 面板能整句显示。
+# 信息仍全部来自 Commons 原始元数据(经 Get-BwGeoLabel / 主体词典), 不编造地名与主体;
+# 「想象力」只用于措辞与句式, 不用于编事实。
+function Get-BwFlowName([string]$geo, [string]$sub, [string]$mod) {
+  $place = ([string]$geo) -replace '·', ''
+  if (-not $sub) { $sub = '风景' }
+  if (-not $place) { return $sub }
+  # 主体里已经写了这个城市时, 别把地名重复一遍
+  $city = (([string]$geo) -split '·')[-1]
+  if ($city -and ($sub -like ('*' + $city + '*'))) {
+    $place = ([string]$geo) -replace ('·' + [regex]::Escape($city)), ''
+    $place = $place -replace '·', ''
+  }
+  $scene = [string]$sub
+  if ($mod) {
+    # 时间/光线类写成「…时分的」「…里的」, 视角/构图类直接缀在后面 —— 比标签串联顺口
+    $tm = @{ '落日'='落日时分'; '晨光'='晨光里'; '夜色'='夜色中';
+             '晨雾'='晨雾里'; '雪后'='雪后'; '秋色'='秋色里' }
+    $phrase = $tm[[string]$mod]
+    if ($phrase) {
+      if ($scene -notlike ('*' + $mod + '*')) { $r = $place + $phrase + '的' + $scene }
+      else { $r = $place + '的' + $scene }
+    } else {
+      if ($scene -notlike ('*' + $mod + '*')) { $scene = $scene + $mod }
+      $r = $place + '的' + $scene
+    }
+  } else {
+    $r = $place + '的' + $scene
+  }
+  if ($r.Length -gt 28) { $r = $r.Substring(0, 28) }
+  return $r
+}
+
+function Get-BwSubjectName([string]$text, [string]$Prefer) {
+  if (-not $text) { return '' }
+  $t = ([string]$text).ToLower()
+  # 2026-11-06: 随拍换到 Commons 城市人文池, 新补一组人文主体词。
+  # 两路分开排: 万象走自然优先, 随拍走人文优先 —— 否则城市图里的 "street"
+  # 会把自然图抢成「街道」, 自然图里的 "coast" 又会把港口抢成「海岸」。
+  $urban = @(
+    # 2026-11-06: 具体地标 / 城市泛称排最前, 免得 "Little Island" 被自然词典的 island 抢成「海岛」,
+    # 也免得 "City scene / Minato City" 这类整句作品名一个主体都认不出、地名跟着一起丢掉。
+    @{ 'little island' = '小岛公园' },
+    @{ 'lower manhattan|manhattan' = '城市天际线' },
+    @{ 'city scene|inner city|city centre|city center|downtown' = '城市街景' },
+    @{ 'neon' = '霓虹夜景' },
+    @{ 'harbour|harbor|marina' = '港口' },
+    @{ 'sailboat|yacht|ferry|boat|ship' = '船只' },
+    @{ 'old town|historic centre|historic center' = '老城' },
+    @{ 'market|bazaar|souq' = '市集' },
+    @{ 'coffee|cafe|espresso' = '咖啡' },
+    @{ 'bicycle|bike|cycling' = '自行车' },
+    @{ 'subway|metro station|train station' = '车站' },
+    @{ 'square|plaza' = '广场' },
+    @{ 'facade|building exterior' = '建筑立面' },
+    @{ 'skyline|cityscape|skyscraper' = '城市天际线' },
+    @{ 'street|alley|lane|avenue' = '街道' },
+    @{ 'staircase|stairs' = '阶梯' },
+    @{ 'window' = '窗' },
+    @{ 'city|urban|metropolis' = '城市景观' }
+  )
+  # hashtable 数组: 键是英文正则, 值是中文主体词。越具体的排越前。
+  $nature = @(
+    @{ 'snow leopard|panthera uncia' = '雪豹' },
+    @{ 'aurora|northern light' = '极光' },
+    @{ 'great barrier reef|coral reef' = '大堡礁珊瑚' },
+    @{ 'milky way|galaxy|starry sky' = '银河星空' },
+    @{ 'glacier|iceberg|ice cave' = '冰川浮冰' },
+    @{ 'volcano|lava|eruption' = '火山熔岩' },
+    @{ 'sand dune|dune' = '沙丘' },
+    @{ 'canyon|gorge|ravine' = '峡谷' },
+    @{ 'himalaya|everest' = '喜马拉雅雪山' },
+    @{ 'waterfall|foss|cascade' = '瀑布' },
+    @{ 'snow.?covered mountain|snowy peak|alps' = '雪山群峰' },
+    @{ 'rainforest|forest|woodland|jungle' = '森林' },
+    @{ 'lake|loch|reservoir' = '湖泊' },
+    @{ 'coast|beach|seashore|ocean' = '海岸' },
+    @{ 'island|isle' = '海岛' },
+    @{ 'mountain|peak|cliff' = '山峦' },
+    @{ 'river|stream' = '河流' },
+    @{ 'tiger' = '猛虎' }, @{ 'lion' = '雄狮' }, @{ 'leopard' = '花豹' },
+    @{ 'elephant' = '大象' }, @{ 'wolf|wolves' = '野狼' }, @{ 'bear' = '熊' },
+    @{ 'fox' = '狐狸' }, @{ 'deer|stag|elk' = '鹿' }, @{ 'camel' = '骆驼' },
+    @{ 'eagle|hawk|falcon' = '雄鹰' }, @{ 'penguin' = '企鹅' }, @{ 'whale' = '鲸' },
+    @{ 'flamingo' = '火烈鸟' }, @{ 'butterfly' = '蝴蝶' }, @{ 'bird' = '飞鸟' },
+    @{ 'wildlife|wild animal' = '野生动物' },
+    @{ 'temple|pagoda|shrine' = '寺庙' }, @{ 'castle|fortress' = '古堡' },
+    @{ 'cathedral|church|abbey' = '教堂' }, @{ 'lighthouse' = '灯塔' },
+    @{ 'bridge|viaduct' = '桥梁' }, @{ 'skyline|cityscape|skyscraper' = '城市天际线' },
+    @{ 'flower|blossom|bloom' = '花' }, @{ 'tree|pine|oak' = '树木' },
+    @{ 'desert' = '沙漠' }
+  )
+  $subjects = @()
+  if ($Prefer -eq 'urban') { $subjects = @($urban + $nature) } else { $subjects = @($nature + $urban) }
+  $mods = @(
+    @{ 'aerial|drone|bird.?s.?eye' = '航拍' },
+    @{ 'sunset|dusk|golden hour|evening' = '落日' },
+    @{ 'sunrise|dawn|morning' = '晨光' },
+    @{ 'night|midnight|dark sky' = '夜色' },
+    @{ 'fog|mist|misty|haze' = '晨雾' },
+    @{ 'winter|snowy|snowfall|snow.?covered' = '雪后' },
+    @{ 'panorama|panoramic|wide view' = '全景' },
+    @{ 'close.?up|portrait|head shot' = '特写' },
+    @{ 'reflection|reflected|mirror' = '倒影' },
+    @{ 'autumn|fall color' = '秋色' }
+  )
+  $geos = @(
+    @{ 'iceland' = '冰岛' }, @{ 'sahara' = '撒哈拉' }, @{ 'himalaya|nepal|tibet' = '喜马拉雅' },
+    @{ 'norway' = '挪威' }, @{ 'alps|switzerland' = '阿尔卑斯' }, @{ 'japan' = '日本' },
+    @{ 'australia' = '澳洲' }, @{ 'antarctica' = '南极' }, @{ 'patagonia' = '巴塔哥尼亚' },
+    @{ 'yellowstone' = '黄石' }, @{ 'china' = '中国' }, @{ 'scotland' = '苏格兰' },
+    @{ 'new york|manhattan' = '纽约' }, @{ 'paris' = '巴黎' }, @{ 'london' = '伦敦' },
+    @{ 'quebec' = '魁北克' }, @{ 'denmark|aarhus' = '丹麦' }, @{ 'brazil|porto alegre' = '巴西' },
+    @{ 'tokyo' = '东京' }, @{ 'shanghai|beijing' = '中国' }
+  )
+  $sub = ''
+  foreach ($h in $subjects) {
+    foreach ($k in @($h.Keys)) { if ($t -match $k) { $sub = [string]$h[$k]; break } }
+    if ($sub) { break }
+  }
+  if (-not $sub) { return '' }
+  # 先认原始作品名里的「国家·城市/地标」, 认不到再用上面那张老地名表兜底
+  $geo = Get-BwGeoLabel $t
+  if (-not $geo) {
+    foreach ($h in $geos) {
+      foreach ($k in @($h.Keys)) { if ($t -match $k) { $geo = [string]$h[$k]; break } }
+      if ($geo) { break }
+    }
+  }
+  $mod = ''
+  foreach ($h in $mods) {
+    foreach ($k in @($h.Keys)) { if ($t -match $k) { $mod = [string]$h[$k]; break } }
+    if ($mod) { break }
+  }
+  # 不再用「国家·城市·主体」标签串联, 交给 Get-BwFlowName 写成一句通顺中文短句
+  return (Get-BwFlowName $geo $sub $mod)
+}
+function Get-BwCommonsCandidates([string]$kw) {
+  $c = Get-BwConfig
+  $w = Get-BwSrcTargetWidth $c 'commons'
+  # 万象图床对"请求宽度接近原图"的图会直接甩未缩放原图, 对大原图请求 3840 又会触发图床即时渲染,
+  # 实测 6~7 千像素的原图 3840 档经常卡到连接中断(80s+)。封顶 2560: 既能拿到稳定的缓存缩略图
+  # (2~3 MB, 20s 上下下完, 不挡后台补货), 又比 1920 更清楚。真要 4K 可在设置里把 src_commons_full_w
+  # 调高, 但要有"个别大图会慢/失败、由流水线自动跳过换下一张"的心理准备。
+  if ($w -gt 2560) { $w = 2560 }
+  if (($w -lt 1920) -or ($w -gt 8000)) { $w = 2560 }
+  $eq = [uri]::EscapeDataString($kw)
+  $api = ('https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=' + $eq +
+          '&gsrnamespace=6&gsrlimit=20&prop=imageinfo&iiprop=url%7Cmime%7Csize%7Cextmetadata&iiurlwidth=' + $w + '&format=json')
+  $txt = Get-BwText $api 25
+  if (-not $txt) { return @() }
+  try { $j = $txt | ConvertFrom-Json } catch { return @() }
+  $out = @()
+  if (-not ($j -and $j.query -and $j.query.pages)) { return @() }
+  foreach ($p in $j.query.pages.PSObject.Properties.Value) {
+    $ii = $p.imageinfo[0]
+    if (-not ($ii -and $ii.mime -match 'jpeg|png')) { continue }
+    $iw = [int]$ii.width; $ih = [int]$ii.height
+    if ($iw -lt 1920 -or $ih -le 0) { continue }                    # 小图不要(不妥协)
+    $ar = [double]$iw / [double]$ih
+    if ($ar -lt 1.4 -or $ar -gt 1.9) { continue }                  # 挡掉方图/竖图/超宽全景
+    $lic = ''
+    if ($ii.extmetadata -and $ii.extmetadata.LicenseShortName) { $lic = [string]$ii.extmetadata.LicenseShortName.value }
+    $lu = $lic.ToUpper()
+    if ($lu -notmatch 'CC0|PUBLIC DOMAIN|CC-BY|CC BY') { continue } # 仅自由授权
+    # 2026-11-06 尊重作者的拍摄时间: 没有 DateTimeOriginal 的候选直接跳过, 不拿下载日冒充。
+    $shot = ''
+    if ($ii.extmetadata -and $ii.extmetadata.DateTimeOriginal) { $shot = Get-BwShotDate ([string]$ii.extmetadata.DateTimeOriginal.value) }
+    if (-not $shot) { continue }
+    $thumb = if ($ii.thumburl) { [string]$ii.thumburl } else { [string]$ii.url }
+    if (-not $thumb) { continue }
+    # 图床对"请求宽度接近/超过原图"的图会直接甩未缩放原图(upload.wikimedia.org),
+    # 实测 4~5 MB 要 25~50 秒; 已经缩放缓存好的(thumb.wikimedia.org)只有 0.3~3 MB、8~20 秒。
+    # 两者都过同一道真实像素门槛, 画质没让步 —— 只是把快的排前面, 慢的留作兜底。
+    $scaled = [bool]($thumb -match 'thumb\.wikimedia\.org')
+    $artist = ''
+    if ($ii.extmetadata -and $ii.extmetadata.Artist) { $artist = ([string]$ii.extmetadata.Artist.value -replace '<[^>]+>', '') }
+    # 2026-11-05: 作品名 / 描述 / 分类都是主体级英文描述, 离线翻成中文主体名。
+    $rawDesc = ''
+    try {
+      $em = $ii.extmetadata
+      if ($em) {
+        foreach ($fnm in @('ObjectName','ImageDescription','Categories')) {
+          $pr = $em.PSObject.Properties[$fnm]
+          if ($pr -and $pr.Value) { $rawDesc += ' ' + (([string]$pr.Value.value) -replace '<[^>]+>', ' ') }
+        }
+      }
+    } catch {}
+    $titleTxt = $rawDesc + ' ' + ([string]$p.title -replace '^File:', '')
+    $subj = Get-BwSubjectName $titleTxt
+    $geoTag = Get-BwGeoLabel $titleTxt
+    # 原名连主体都认不出: 有地名就保留地名; 没有就先放中文主题词, 落盘后由
+    # Set-BwSrcDescriptiveName -VisualFallback 看图补画面光景词(不编地名)。
+    if (-not $subj) { $subj = if ($geoTag) { Get-BwFlowName $geoTag ([string]$kw) '' } else { [string]$kw } }
+    $out += [PSCustomObject]@{
+      id     = [string]$p.pageid
+      title  = ([string]$p.title) -replace '^File:', ''
+      subject = $subj
+      geo    = $geoTag
+      thumb  = $thumb
+      link   = [string]$ii.descriptionurl
+      lic    = $lic
+      artist = $artist.Trim()
+      shot   = $shot
+      scaled = $scaled
+    }
+    if ($out.Count -ge 12) { break }
+  }
+  # 用户「两个图源的图片最好都带国家、地理等元素」: 有明确地理标签的候选排前面。
+  # 只调顺序、不硬性排除 —— 精确 16:9 合格率本来就只有 4~16%, 硬排除会把补货拖慢。
+  # scaled(已缓存缩略图) 仍是最优先级, 下载速度不让步。
+  $fast = @($out | Where-Object { $_.scaled -and $_.geo }) + @($out | Where-Object { $_.scaled -and -not $_.geo })
+  $slow = @($out | Where-Object { -not $_.scaled -and $_.geo }) + @($out | Where-Object { -not $_.scaled -and -not $_.geo })
+  return @($fast + $slow)
+}
+
+# ---- 随拍 (Wikimedia Commons 城市人文摄影) 图源 ----
+# 2026-11-06 用户定死「不要 Picsum 原图」: 随拍整体改用 Commons 摄影图, 与万象
+# (自然 / 野生动物 / 地理) 错开成「城市 / 人文 / 生活」。理由:
+#   - Picsum 官方固定清单只有 993 张、静态不增长, 按"永不重复"约 20 天就轮空;
+#   - Picsum 不提供任何内容描述, 新图只能起"随拍·色调"名, 到不了主体级;
+#   - Commons 的 extmetadata 自带作品名/描述/分类, 可离线翻成主体级中文名, 池子可无限换词。
+# 关键词表里写中文(设置里可读), 这里映射成 Commons 的英文检索式。
+function Get-BwPicsumSearch([string]$kw) {
+  $map = @{
+    '城市夜景' = 'city skyline night';      '城市日落' = 'city skyline sunset';
+    '老街'     = 'old town street';         '街景'     = 'street scene city';
+    '建筑'     = 'architecture facade';     '桥梁'     = 'bridge architecture';
+    '港口'     = 'harbour boats';           '市集'     = 'market street';
+    '咖啡'     = 'coffee still life';       '自行车'   = 'bicycle street';
+    '霓虹夜色' = 'neon night street';       '广场'     = 'city square architecture'
+  }
+  $k = ([string]$kw).Trim()
+  if ($map.ContainsKey($k)) { return [string]$map[$k] }
+  if ($k -match '^[A-Za-z0-9 :>\-]+$') { return $k }   # 用户自己填了英文检索式, 直接用
+  return ('city ' + $k)
+}
+# 2026-11-06: 主题词固定时 Commons 每次返回同一批 50 张, 配合"永不重复"去重账本,
+# 几轮之后就会被全部拦掉 —— 池子照样会枯竭。实测 gsroffset 每 +50 返回几乎完全不同的
+# 50 张(相邻页重叠 0~2 张), 所以给每个主题词记一个持久游标(跨后台子进程有效)。
+function Get-BwPicsumOffset([string]$kw) {
+  $off = 0
+  try {
+    $f = Join-Path (Split-Path ([string]$global:BWSources) -Parent) 'picsum_pages.json'
+    $map = @{}
+    if (Test-Path -LiteralPath $f -PathType Leaf) {
+      $j = Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json
+      if ($j) { foreach ($pr in $j.PSObject.Properties) { $map[[string]$pr.Name] = [int]$pr.Value } }
+    }
+    if ($map.ContainsKey($kw)) { $off = [int]$map[$kw] }
+    $next = $off + 50
+    if ($next -gt 4950) { $next = 0 }      # 深翻页有服务端上限, 到顶就绕回第一批
+    $map[$kw] = $next
+    [System.IO.File]::WriteAllText($f, ($map | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding($false)))
+  } catch {}
+  return $off
+}
+function Get-BwPicsumCandidates([string]$kw) {
+  $c = Get-BwConfig
+  $w = Get-BwSrcTargetWidth $c 'picsum'
+  # 与万象同一道封顶: Commons 对 6000px 原图请求 3840 会触发即时渲染, 实测 80s+ 卡断。
+  # 2560 拿的是已缓存缩放图(2~3 MB), 画质门槛一点没降。
+  if ($w -gt 2560) { $w = 2560 }
+  if (($w -lt 1920) -or ($w -gt 8000)) { $w = 2560 }
+  $q = (Get-BwPicsumSearch $kw) + ' filew:>1920'
+  $eq = [uri]::EscapeDataString($q)
+  $off = Get-BwPicsumOffset $kw
+  # 精确 16:9 合格率实测只有 4~16%, 所以一次取 50 个候选, 不够时由 Invoke-BwSrcFetch
+  # 自动换下一个中文主题词继续凑, 不会在一个词上空转。
+  $api = ('https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=' + $eq +
+          '&gsrnamespace=6&gsrlimit=50&gsroffset=' + $off + '&prop=imageinfo&iiprop=url%7Cmime%7Csize%7Cextmetadata&iiurlwidth=' + $w + '&format=json')
+  $txt = Get-BwText $api 25
+  if (-not $txt) { return @() }
+  try { $j = $txt | ConvertFrom-Json } catch { return @() }
+  $out = @()
+  if (-not ($j -and $j.query -and $j.query.pages)) { return @() }
+  # 同一摄影师的连拍组图会占满一整批结果(实测奥胡斯码头日落一次返回 5 张近似图)。
+  # 按"作者 + 标题前缀"聚类, 一组只留一张; 同一作者整轮最多 2 张。
+  $seriesSeen = @{}; $authorCount = @{}
+  foreach ($p in $j.query.pages.PSObject.Properties.Value) {
+    $ii = $p.imageinfo[0]
+    if (-not ($ii -and $ii.mime -match 'jpeg|png')) { continue }
+    $iw = [int]$ii.width; $ih = [int]$ii.height
+    if ($iw -lt 1920 -or $ih -le 0) { continue }
+    $ar = [double]$iw / [double]$ih
+    if ($ar -lt 1.70 -or $ar -gt 1.85) { continue }      # 用户硬标准: 精确 16:9, 不要宽幅/方图
+    $lic = ''
+    if ($ii.extmetadata -and $ii.extmetadata.LicenseShortName) { $lic = [string]$ii.extmetadata.LicenseShortName.value }
+    $lu = $lic.ToUpper()
+    if ($lu -notmatch 'CC0|PUBLIC DOMAIN|CC-BY|CC BY') { continue }
+    # 2026-11-06 尊重作者的拍摄时间: 没有 DateTimeOriginal 的候选直接跳过, 不拿下载日冒充。
+    $shot = ''
+    if ($ii.extmetadata -and $ii.extmetadata.DateTimeOriginal) { $shot = Get-BwShotDate ([string]$ii.extmetadata.DateTimeOriginal.value) }
+    if (-not $shot) { continue }
+    $thumb = if ($ii.thumburl) { [string]$ii.thumburl } else { [string]$ii.url }
+    if (-not $thumb) { continue }
+    $artist = ''
+    if ($ii.extmetadata -and $ii.extmetadata.Artist) { $artist = ([string]$ii.extmetadata.Artist.value -replace '<[^>]+>', '') }
+    $at = (([string]$artist) -replace '\s+', ' ').Trim().ToLower()
+    if ($at.Length -gt 20) { $at = $at.Substring(0, 20) }
+    $tt = ([string]$p.title -replace '^File:', '') -replace '\.(jpg|jpeg|png)$', ''
+    $tt = ($tt -replace '[\d\s_\-]+$', '').ToLower()
+    if ($tt.Length -gt 22) { $tt = $tt.Substring(0, 22) }
+    $sk = $at + '|' + $tt
+    if ($seriesSeen.ContainsKey($sk)) { continue }
+    if ($authorCount.ContainsKey($at) -and ([int]$authorCount[$at] -ge 2)) { continue }
+    $seriesSeen[$sk] = $true
+    if (-not $authorCount.ContainsKey($at)) { $authorCount[$at] = 0 }
+    $authorCount[$at] = [int]$authorCount[$at] + 1
+    $rawDesc = ''
+    try {
+      $em = $ii.extmetadata
+      if ($em) {
+        foreach ($fnm in @('ObjectName','ImageDescription','Categories')) {
+          $pr = $em.PSObject.Properties[$fnm]
+          if ($pr -and $pr.Value) { $rawDesc += ' ' + (([string]$pr.Value.value) -replace '<[^>]+>', ' ') }
+        }
+      }
+    } catch {}
+    # 人文优先的词典; 匹配不到主体时才回退到中文主题词, 绝不硬编一个错名字。
+    $titleTxt = $rawDesc + ' ' + ([string]$p.title -replace '^File:', '')
+    $subj = Get-BwSubjectName $titleTxt 'urban'
+    if (-not $subj) {
+      # 主体认不出也别把地理名丢了: 至少留「国家·城市·主题词」, 不硬编画面内容。
+      $g = Get-BwGeoLabel $titleTxt
+      # 无地名且无主体时, 落盘后会按用户口径「只能看图编文件名」补画面光景词, 不硬编地名。
+      $subj = if ($g) { Get-BwFlowName $g ([string]$kw) '' } else { [string]$kw }
+    }
+    $scaled = [bool]($thumb -match 'thumb\.wikimedia\.org')
+    $out += [PSCustomObject]@{
+      id      = [string]$p.pageid
+      title   = ([string]$p.title) -replace '^File:', ''
+      subject = $subj
+      geo     = (Get-BwGeoLabel $titleTxt)
+      thumb   = $thumb
+      link    = [string]$ii.descriptionurl
+      lic     = $lic
+      artist  = $artist.Trim()
+      shot    = $shot
+      scaled  = $scaled
+    }
+    if ($out.Count -ge 12) { break }
+  }
+  # 与万象同口径: 有国家/地名的城市人文图优先, 但不牺牲已缓存缩略图的下载速度
+  $fast = @($out | Where-Object { $_.scaled -and $_.geo }) + @($out | Where-Object { $_.scaled -and -not $_.geo })
+  $slow = @($out | Where-Object { -not $_.scaled -and $_.geo }) + @($out | Where-Object { -not $_.scaled -and -not $_.geo })
+  return @($fast + $slow)
+}
+
 # ---- 本地文件夹图源 (2026-10-24 UI 整改新增) ----
 # 用户自己指定一个文件夹当图源: 里面的图**不搬、不复制、不删**, 只把文件名排进轮换队列。
 # 没设置(默认空串)时下面这些函数一律返回空, 老用户的行为一个字节都不变。
@@ -3074,6 +3913,10 @@ function Find-BwWallFile([psobject]$c, [string]$name) {
     $d = Get-BwSrcDir $c $def.Key
     if ($d) { $dirs += $d }
   }
+  # 当前模式若是 commons/picsum, 那个源的库目录无论如何都要进查找路径 ——
+  # 即使它的 src_*_on 开关没开(模式本身就代表"用这一个源")。
+  $mk = Get-BwModeSrcKey
+  if ($mk) { $dirs += (Get-BwSrcDir $c $mk) }
   foreach ($d in $dirs) {
     if (-not $d) { continue }
     $p = Join-Path $d $name
@@ -3081,16 +3924,20 @@ function Find-BwWallFile([psobject]$c, [string]$name) {
   }
   return ''
 }
-# 参与轮换的图池 = 聚焦库 + 开着的新图源库。
-# (必应库**也**进队列 —— 由 Get-BwFreshQueue 组装队列时并进来, 2026-10-10 晚起按"永远按最旧优先"排;
-#  本函数只管聚焦与新图源那部分。必应那条"每日一图"另走 Invoke-BwCycle 规则 1, 与队列无关。)
+# 参与轮换的图池。mode 决定池子怎么组:
+#   focus   = 聚焦库 + 开着的新图源库 + 本地文件夹(老行为, 混合池)
+#   commons = 只万象库(独立循环)
+#   picsum  = 只随拍库(独立循环)
+#   bing    = 本函数不会被走到(必应每日一张走 Invoke-BwCycle 规则 1, 不进队列)
 function Get-BwRotPool {
   $c = Get-BwConfig
+  $m = Get-BwMode
+  if ($m -eq 'commons') { return @(Get-BwSrcFiles (Get-BwSrcDir $c 'commons')) }
+  if ($m -eq 'picsum')  { return @(Get-BwSrcFiles (Get-BwSrcDir $c 'picsum')) }
+  # focus(默认): 聚焦 + 本地文件夹 + 必应库(Get-BwFreshQueue 里并进来)。
+  # 两个新图源各自成模式, 不再混进聚焦池 —— 用户要求"每个独立的源全部独立循环"。
+  # 老配置里若留着 src_*_on=true 也不再生效, 避免同一张图跨模式重复出现。
   $out = @(Get-BwSpotlightAll)
-  foreach ($def in @(Get-BwSourceDefs)) {
-    if (-not (Get-BwSrcEnabled $c $def.Key)) { continue }
-    $out += @(Get-BwSrcFiles (Get-BwSrcDir $c $def.Key))
-  }
   # 2026-10-24: 本地文件夹图源也进轮换池。没设置这个图源时 Get-BwLocalFiles 返回空数组,
   # 对老用户等于没加这一行 —— 轮换顺序、队列、收藏全都不受影响。
   $out += @(Get-BwLocalFiles $c)
@@ -3182,6 +4029,8 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
     $dir = Get-BwSrcDir $c $key
     if (-not $dir) { Log ([string]$def.Name + ' 源没有配置库目录, 跳过'); return @() }
     [void](New-BwDir $dir)
+    # 2026-11-05: 顺手把本库里"光写源名"的旧图补成中文描述名(每库每进程只扫一次)
+    [void](Invoke-BwSrcGenericNameFix $dir)
     $now = Get-Date
     $all = Get-BwSrcRecs
     $rec = Get-BwSrcRec $all $key
@@ -3245,6 +4094,11 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
     $toSec = Get-BwSrcTimeoutSec $c
     $gate = Get-BwSrcGate $c $key
     $seenMap = Get-BwSrcMap $rec.seen
+    # 2026-11-05 用户定死: 「下载的新图片也要防止之前下过、用过」。
+    # 源自己的 seen / rot + 全局「看过」名单三处都算, 命中就跳过, 不再允许过期重下。
+    $rotMap = Get-BwSrcMap $rec.rot
+    $usedGlobal = @{}
+    try { foreach ($hh in @(Get-BwHist (Get-BwState))) { if ($hh) { $usedGlobal[[string]$hh] = $true } } } catch {}
     $ki = 0
     try { $ki = [int]$rec.kw_i } catch { $ki = 0 }
     if ($ki -lt 0) { $ki = 0 }
@@ -3273,15 +4127,25 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
       if (-not $token) { continue }
       if ($haveKeys.ContainsKey([string]$token)) { $skip++; Start-Sleep -Milliseconds 300; continue }
       $isReuse = $false
-      if ($seenMap.ContainsKey([string]$token)) {
-        # 以前下过(永久去重)。只有"够久没出现过、而且本地文件已经不在"才允许过期重下。
-        if (Test-BwSrcKeyReusable $rec $token $now $minDays -AnyAge:($have.Count -eq 0)) { $isReuse = $true }
-        else { $skip++; Start-Sleep -Milliseconds 300; continue }
+      if ($seenMap.ContainsKey([string]$token) -or $rotMap.ContainsKey([string]$token) -or $usedGlobal.ContainsKey([string]$token)) {
+        $skip++
+        Start-Sleep -Milliseconds 300
+        continue
       }
       $asset = Get-BwSrcAsset $key $cd
       if (-not ($asset -and $asset.url)) { $fail++; Start-Sleep -Milliseconds 400; continue }
-      $path = Join-Path $dir (Get-BwSrcName $key $token ([string]$asset.title) ([string]$asset.url))
-      $m = @{ date=(Get-Date -Format 'yyyy-MM-dd'); title=[string]$asset.title; copyright=[string]$asset.copy;
+      # 2026-11-06 尊重作者的拍摄时间: 拿不到 DateTimeOriginal 的候选不落盘。
+      $shotDay = [string]$asset.shot
+      if ($shotDay -notmatch '^\d{4}-\d{2}-\d{2}$') { $fail++; continue }
+      # 文件名主体用本轮那个中文关键词; 图片内部的作品名/作者/许可等署名元数据仍是原文,
+      # 合规署名不受影响(用户只要求文件名可读, 不要求改作品名)。
+      $subj = [string]$kw
+      try { if ($cd.PSObject.Properties['subject'] -and ([string]$cd.subject)) { $subj = [string]$cd.subject } } catch {}
+      $path = Join-Path $dir (Get-BwSrcName $key $token ([string]$asset.title) ([string]$asset.url) $subj $shotDay)
+      # date = 作者拍摄日(与文件名前缀一致), shot_date 再显式记一份, added_date = 本机入库日。
+      # 三者不混; 元数据写在图片自己身上, 拷走也不丢拍摄时间。
+      $m = @{ date=$shotDay; shot_date=$shotDay; added_date=(Get-Date -Format 'yyyy-MM-dd');
+              title=[string]$asset.title; copyright=[string]$asset.copy; author=[string]$asset.author;
               source_type=[string]$def.Name; source_url=[string]$asset.url; source_link=[string]$asset.link }
       # 单张下载: 超时 $toSec 秒(默认 20, 可配), 宽度不到门槛 / 宽高比不达标的不落盘。
       # 真实分辨率由 Save-BwFile 用 System.Drawing 量, 写进日志与图片元数据。
@@ -3290,6 +4154,12 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
                           -TimeoutSec $toSec -MinWidth ([int]$gate.MinWidth) -MinAspect ([double]$gate.MinAspect) -MaxAspect ([double]$gate.MaxAspect) -TotalDeadline
       $dlSt = [string]$global:BWLastDlStatus
       if ($got) {
+        # 2026-11-05: 新图自动补上画面色调词, 名字纯中文、每张不重样; 失败也不影响入库
+        # 2026-11-06 例外: Commons 原始元数据里连国家/地理都没有时才走「看图编」(-VisualFallback);
+        # 有地名的一律保持原名直译, 不叠任何看图词。
+        $noGeo = $true
+        try { if ($cd.PSObject.Properties['geo'] -and ([string]$cd.geo)) { $noGeo = $false } } catch {}
+        $path = Set-BwSrcDescriptiveName $path -VisualFallback:$noGeo
         $ok++
         $toStreak = 0
         if ($isReuse) { $reuse++ }
@@ -3539,6 +4409,29 @@ function Get-BwFreshQueue($s) {
   if ($names.Count -eq 0) { return @() }
   $allNames = @($names)
 
+  # ===== 2026-11-05 用户定死: 桌面轮换的图片不能重复 =====
+  # 只把「从没用过」的图排进队列。用过的一律不再回来 —— 老图循环 / 回收站搬回 /
+  # 历史清零重来 / 源 rot 回收 全部退役; 下面那段历史实现保留但不执行。
+  if ($global:BWNoRepeat) {
+    $strictSeen = @{}
+    foreach ($h in @(Get-BwHist $s)) { if ($h) { $strictSeen[[string]$h] = $true } }
+    foreach ($sdef in @(Get-BwSourceDefs)) {
+      try {
+        $r0 = Get-BwSrcRec (Get-BwSrcRecs) $sdef.Key
+        # 注意: seen 是"下载过"不是"用过", 刚下好还没轮到的新图必须能进队列, 不能算进来。
+        foreach ($kk in @((Get-BwSrcMap $r0.rot).Keys)) { $strictSeen[[string]$kk] = $true }
+      } catch {}
+    }
+    $strictFresh = @($names | Where-Object { -not $strictSeen.ContainsKey((Get-BwNameKey $_)) })
+    if ($strictFresh.Count -eq 0) {
+      Log ('重洗队列(不重复): 库里 ' + $names.Count + ' 张全都用过了 -> 交给换图流程淘汰旧图并下载新图')
+      return @()
+    }
+    Log ('重洗队列(不重复): 库里 ' + $names.Count + ' 张, 只排没用过的 ' + $strictFresh.Count + ' 张')
+    return @(Get-BwOldestFirst $s $strictFresh (Get-Date))
+  }
+  # ===== 以下为历史实现, 严格不重复模式下不再执行 =====
+
   # 挑掉看过的
   $recycleMode = $false     # 这一轮是不是"老图循环"
   $oldestFirst = $false     # 走了"历史清零重来"那条分支(整库按最早看过优先排)
@@ -3570,7 +4463,8 @@ function Get-BwFreshQueue($s) {
     $fresh = @($names | Where-Object { -not $seen.ContainsKey((Get-BwNameKey $_)) })
     # 2026-10-09 (源池保护): 未看过的快见底了(< 20 张), 先把「已看过」文件夹里还在本地的
     # 老图移回库(零网络开销), 再重新分一次组 —— 移回来的图就算"已经在库里"了。
-    if ($fresh.Count -lt $global:BWRecycleBelow) {
+    # 独立模式(commons/picsum)没有"已看过"回收站, 别把聚焦回收站里的老图搬进这个池子。
+    if (($fresh.Count -lt $global:BWRecycleBelow) -and ((Get-BwMode) -eq 'focus')) {
       $back = @(Restore-BwRecycledFiles $s ($global:BWRecycleBelow - $fresh.Count))
       if ($back.Count -gt 0) {
         foreach ($p in $back) { $names += (Split-Path $p -Leaf) }
@@ -3602,10 +4496,14 @@ function Get-BwFreshQueue($s) {
       # 现在: **必应库每一轮都并进池子**(2026-10-10 晚去掉"等聚焦轮完"的闸门之后,
       # 不再有"只有聚焦见底才并"这回事), 和聚焦图一起按"最旧优先"排 ——
       # 图池大一截、重复来得更慢; "每日一图"照旧, 不受影响。
+      # 必应库并进队列只在 focus(混合)模式做; commons/picsum 是"独立模式", 池子里只有那一个源的图,
+      # 绝不掺必应(用户要求"每个独立的源全部独立循环")。
       $bingAdd = @()
-      foreach ($f in @(Get-BwBingAll)) {
-        $bn = [string]$f.Name
-        if ($bn -and ($names -notcontains $bn)) { $names += $bn; $bingAdd += $bn }
+      if ((Get-BwMode) -eq 'focus') {
+        foreach ($f in @(Get-BwBingAll)) {
+          $bn = [string]$f.Name
+          if ($bn -and ($names -notcontains $bn)) { $names += $bn; $bingAdd += $bn }
+        }
       }
       $allNames = @($names)
       $now2 = Get-Date
@@ -3840,7 +4738,11 @@ function Sync-BwQueue($s) {
   # (必应库不在 Get-BwRotPool 里), 同时打出一行
   # "队列里有 22 张已经不在库里 (被删除或移到别处), 已剔除" 的**假告警**,
   # 而且必应图永远换不上桌面 —— 等于这次改动白做。
-  foreach ($f in @(Get-BwBingAll)) { $live[[string]$f.Name] = $true }
+  # 独立模式(commons/picsum): 队列里绝不该留必应图。切模式时旧队列可能还压着上一模式的
+  # 必应/聚焦图, 这里不再把它们算作"还在", 由 Get-BwFreshQueue 按新模式重洗。
+  if ((Get-BwMode) -ne 'commons' -and (Get-BwMode) -ne 'picsum') {
+    foreach ($f in @(Get-BwBingAll)) { $live[[string]$f.Name] = $true }
+  }
   $before = @($s.queue | Where-Object { $_ }).Count
   if ($before -eq 0) { return 0 }
   $s.queue = @($s.queue | Where-Object { $_ -and $live.ContainsKey([string]$_) })
@@ -3854,14 +4756,40 @@ function Sync-BwQueue($s) {
 # 后台补货 (v1.6.5): 把新图下到库里, 并重洗队列让下一张就能轮到。
 # 在隐藏进程里由 Start-BwBackfill 调用, 前台换图不干等。
 # (名字带 Spot: 1295 行附近那个不带参数的 Invoke-BwBackfill 是必应补漏, 别混)
-function Invoke-BwSpotBackfill([int]$count, [switch]$Force) {
+function Invoke-BwSpotBackfill([int]$count, [switch]$Force, [string]$Mode) {
   try {
     if ($count -le 0) { return }
     # 试运行: 后台补货什么都不做 —— 它要联网下载, 还要重洗队列并落盘(H-8 的口径:
     # -DryRun 不许有任何副作用)。原来这道闸只加在 Start-BwBackfill 上, 直接调用本函数
     # (后台子进程就是直接调的)照样会干活。
-    if ($global:BWDry) { Log ('试运行: 本应后台补货 ' + $count + ' 张聚焦壁纸, 不下载、不重洗队列'); return }
+    if ($global:BWDry) { Log ('试运行: 本应后台补货 ' + $count + ' 张壁纸, 不下载、不重洗队列'); return }
     $c = Get-BwConfig
+    # 2026-11-05: 后台子进程启动时读一次模式, 用户可能在这几分钟里切了模式。
+    # 二次校验: 旧任务不许按旧模式下图, 否则会把别的源的图塞进新模式的库/队列。
+    $curMode = Get-BwMode
+    if ($Mode -and ($Mode -ne $curMode)) {
+      Log ('后台补货跳过: 启动时为 ' + $Mode + ' 模式, 当前已是 ' + $curMode + ' 模式, 不按旧模式下图')
+      return
+    }
+    # 必应模式每日一图: 不预取候选、不抓聚焦/其它图源, 只由定时巡检补齐错过的日期。
+    if ($curMode -eq 'bing') {
+      Log '后台补货跳过: 必应模式每天一张, 只由定时巡检补齐错过的日期, 不抓聚焦或其它图源'
+      return
+    }
+    # commons/picsum 是独立模式: 后台补货只补那一个源, 不碰聚焦/必应(各自成循环)。
+    $mk = Get-BwModeSrcKey
+    if ($mk) {
+      [void](Invoke-BwSrcFetch -key $mk -count $count -Quiet -Force:$Force -IgnoreCap:$Force)
+      $s = Get-BwState
+      if ($s) {
+        $q0 = @($s.queue | Where-Object { $_ })
+        if ($q0.Count -eq 0) { $s.queue = @(Get-BwFreshQueue $s); Log ('后台补货结束(' + $mk + ' 模式): 队列空, 已重洗成 ' + @($s.queue).Count + ' 张') }
+        Save-BwState $s
+      }
+      Log ('后台补货结束(' + $mk + ' 模式): 库中现有 ' + @(Get-BwSrcFiles (Get-BwSrcDir $c $mk)).Count + ' 张')
+      return
+    }
+    # focus(默认): 聚焦 + 所有开着的新图源一起补(老行为, 混合池)
     # 记下"下载之前库里有哪些", 下完一比就知道这次新下了哪几张
     $snap = Get-BwLibNameSet
     # 2026-10-09 用户要求"只在库低于阈值时补货": 阈值就是库上限 —— 库已经满了还去下载,
@@ -3877,9 +4805,10 @@ function Invoke-BwSpotBackfill([int]$count, [switch]$Force) {
     if ($c.auto_fetch -or $Force -or ($libN -eq 0)) {
       $one = @(Invoke-SpotlightFetch -count $count -Quiet)
     }
-    # 2026-10-09: 两个新图源走同一条"按需补货"通道 —— 各自库满即停、单轮/单日闸门照旧,
-    # 一个源失败只写一行日志, 不影响聚焦库、也不影响换图。
-    [void](Invoke-BwAllSrcFetch -count $count -Quiet -Force:$Force -IgnoreCap:$Force)
+    # 2026-11-05 用户定死: 「选中哪个模式, 哪个模式就下载图片」。聚焦模式下**不再**
+    # 顺手抓万象/随拍 —— 那两个库只在各自被选中时由 Invoke-BwPanelRefill /
+    # Start-BwPrefetch 补货。否则人在聚焦模式, 后台却悄悄下别的源, 还把图混进队列。
+    # (Invoke-BwAllSrcFetch 保留为公共函数, 但当前四个模式都不在补货路径上调它。)
     # 2026-10-23: 原来这里**整队重洗** —— 新图会被"最旧优先"排到队尾, 又等于没插队。
     # 现在只把**这次新下的**插进队列前 1/3; 队列本来就空才重洗。
     $s = Get-BwState
@@ -3902,9 +4831,10 @@ function Invoke-BwSpotBackfill([int]$count, [switch]$Force) {
 # 起一个脱离的隐藏 powershell 进程去跑 Invoke-BwSpotBackfill。
 # 锁文件防止菜单和后台 daemon 同时各起一个补货进程; 锁 15 分钟自动过期,
 # 进程崩了也不会把补货永久卡死。
-function Start-BwBackfill([int]$count, [switch]$Force) {
+function Start-BwBackfill([int]$count, [switch]$Force, [string]$Mode) {
   if ($count -le 0) { return }
-  if ($global:BWDry) { Log ('试运行: 本应后台补货 ' + $count + ' 张聚焦壁纸'); return }
+  if (-not $Mode) { $Mode = Get-BwMode }
+  if ($global:BWDry) { Log ('试运行: 本应后台补货 ' + $count + ' 张壁纸(' + $Mode + ' 模式)'); return }
   try {
     $lock = Join-Path $global:BWRoot 'backfill.lock'
     if (Test-Path -LiteralPath $lock) {
@@ -3918,11 +4848,36 @@ function Start-BwBackfill([int]$count, [switch]$Force) {
     if ($Force) { $forceTxt = ' -Force' }
     # 用 -EncodedCommand 传命令: Start-Process 拼 -Command 参数时不给带空格的
     # 值加引号, 长命令会被拆碎 —— 实测子进程"删了锁却什么都没干"。base64 免疫。
-    $cmd = ". '$core'; Invoke-BwSpotBackfill -count $count$forceTxt; Remove-Item -LiteralPath '$lock' -Force -ErrorAction SilentlyContinue"
+    $modeTxt = ''
+    if ($Mode) { $modeTxt = " -Mode '$Mode'" }
+    $cmd = ". '$core'; Invoke-BwSpotBackfill -count $count$forceTxt$modeTxt; Remove-Item -LiteralPath '$lock' -Force -ErrorAction SilentlyContinue"
     $b64 = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd))
     Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand', $b64) | Out-Null
-    Log ('换图不再等: 已转后台补货 ' + $count + ' 张')
+    Log ('换图不再等: 已转后台补货 ' + $count + ' 张 (' + $Mode + ' 模式)')
   } catch { Log ('后台补货启动失败(不影响本次换图): ' + $_.Exception.Message) }
+}
+# 独立模式的后台缓冲(用户 2026-11-05 要的「后台默默下载几张备用」):
+# 队列里待换的图少于 BWSrcPrefetch 张, 就起隐藏子进程补到这个数。
+# 图床单张要 8~30 秒也不挡换图 —— 换图只读本地库, 补货全程在后台跑。
+# 聚焦/必应模式不进这里, 沿用原来那套按库容量补货的逻辑。
+function Start-BwPrefetch {
+  try {
+    if ($global:BWDry) { return }
+    $curMode = Get-BwMode
+    # 必应模式每天一张, 不预取候选(补历史日期由定时巡检负责)。
+    if ($curMode -eq 'bing') { return }
+    $mk = Get-BwModeSrcKey
+    $buf = 4
+    try { $buf = [int]$global:BWSrcPrefetch } catch {}
+    if ($buf -le 0) { return }
+    $s = Get-BwState
+    $left = 0
+    if ($s) { $left = @($s.queue | Where-Object { $_ }).Count }
+    if ($left -ge $buf) { return }
+    $need = $buf - $left
+    Log ('后台预热(' + $curMode + ' 模式): 待换 ' + $left + ' 张, 后台补 ' + $need + ' 张本模式备用, 不影响本次换图')
+    Start-BwBackfill $need -Mode $curMode
+  } catch { Log ('后台预热异常(不影响换图): ' + $_.Exception.Message) }
 }
 function Get-BwNextWall($s) {
   $c = Get-BwConfig
@@ -3948,11 +4903,29 @@ function Get-BwNextWall($s) {
     # 想让程序自己补新图的话去菜单 [S] 设置 - [0] 打开。
     # 例外: 库整个被清空(0 张)属于异常状态, 不论开关都自动补救 ——
     # 总不能让用户手动按 [3] 才有图可换。
-    $libCount = @(Get-BwSpotlightAll).Count
+    # 轮换池按模式取库: commons/picsum 只看各自的库, 其余(含 focus)看聚焦库。
+    $mode = Get-BwMode
+    $libAll = if ($mode -eq 'commons') { @(Get-BwSrcFiles (Get-BwSrcDir $c 'commons')) }
+              elseif ($mode -eq 'picsum') { @(Get-BwSrcFiles (Get-BwSrcDir $c 'picsum')) }
+              else { @(Get-BwSpotlightAll) }
+    $libCount = $libAll.Count
     $recover = ($libCount -eq 0)
-    if ($recover) {
+    # 2026-11-05 用户定死: 「实在没有换的，删除旧图片，重新下载新图片」。
+    # 队列洗不出来(库里全是用过的图)时, 把最老的几张移进回收站腾位置,
+    # 再走下面的"库空补救"路径强制下载(不受 auto_fetch 开关限制)。
+    if ($global:BWNoRepeat -and (-not $recover)) {
+      $probe = @(Get-BwFreshQueue $s)
+      if ($probe.Count -eq 0) {
+        $purged = Clear-BwUsedOldest $s $mode 6
+        Log ('队列洗不出来(库里全用过): 已把 ' + $purged + ' 张最老的旧图移进回收站, 现在强制下载新图')
+        $recover = $true
+      }
+    }
+    # 严格不重复: 不许把回收站里的老图再搬回来(搬回来就等于重复)。
+    if ($recover -and ($mode -eq 'focus') -and (-not $global:BWNoRepeat)) {
       # 2026-10-09: 库整个空了的时候, 先把「已看过」文件夹里还在本地的老图移回来(零网络开销,
       # 比下载快得多), 移回来就不用再下载了 —— 这也是"老图回收"最省事的那条路。
+      # (commons/picsum 没有这套"已看过"回收机制, 库空了就直接下, 不在这里搬)
       $backN = @(Restore-BwRecycledFiles $s 6 -AnyAge).Count
       if ($backN -gt 0) {
         $libCount = @(Get-BwSpotlightAll).Count
@@ -3961,12 +4934,17 @@ function Get-BwNextWall($s) {
       }
     }
     if (($c.auto_fetch -or $recover) -and ($round -eq 1)) {
+      # 2026-11-06 用户「统一」: 空库补货不再拿"库容上限"当张数(上限统一成 200 后
+      #   会变成一次想补 199 张), 四个模式一律按 spotlight_per_cycle 走, 与聚焦一模一样。
       $want = Get-BwSpotlightWant
-      if ($recover) { Log ('聚焦库是空的, 自动补救 (不等用户手动), 先下 1 张立刻换, 其余后台补') }
+      if ($recover) { Log ($mode + ' 库是空的, 自动补救 (不等用户手动), 先下 1 张立刻换, 其余后台补') }
       else { Log ('队列已空 (库中现有 ' + $libCount + ' 张), 先下 1 张立刻换, 其余后台补') }
       $one = @()
       # 库是空的: 这时候"有图"比"省着用"重要, 不受当日额度限制(单轮上限照旧生效)
-      if (-not $global:BWDry) { $one = @(Invoke-SpotlightFetch -count 1 -Quiet -IgnoreDailyCap:$recover) }
+      if (-not $global:BWDry) {
+        if ($mode -eq 'focus') { $one = @(Invoke-SpotlightFetch -count 1 -Quiet -IgnoreDailyCap:$recover) }
+        else { $one = @(Invoke-BwSrcFetch -key $mode -count 1 -Quiet -Force -IgnoreCap) }
+      }
       if ($one.Count -gt 0) {
         $newName = Split-Path $one[0] -Leaf
         $newKey = Get-BwNameKey $newName
@@ -4010,12 +4988,18 @@ function Invoke-BwSwap($s, [DateTime]$now, [string]$why) {
   # 等下次换图时新图已经躺在库里, 前台零等待。
   # 库被清空时不论 auto_fetch 开关都补 (恢复模式)。
   try {
-    $left = @($s.queue | Where-Object { $_ }).Count
-    $cfg = Get-BwConfig
-    $empty = (@(Get-BwSpotlightAll).Count -eq 0)
-    if (($left -le 2) -and ($cfg.auto_fetch -or $empty)) {
-      if ($empty) { Start-BwBackfill (Get-BwSpotlightWant) -Force }
-      else { Start-BwBackfill (Get-BwSpotlightWant) }
+    if (Get-BwModeSrcKey) {
+      # 独立模式: 后台只补到 4 张备用。不能沿用聚焦那套"按库上限补一整批" ——
+      # 维基单张 8~30 秒, 一次排 30 张就是十几分钟, 看着像卡死。
+      Start-BwPrefetch
+    } else {
+      $left = @($s.queue | Where-Object { $_ }).Count
+      $cfg = Get-BwConfig
+      $empty = (@(Get-BwSpotlightAll).Count -eq 0)
+      if (($left -le 2) -and ($cfg.auto_fetch -or $empty)) {
+        if ($empty) { Start-BwBackfill (Get-BwSpotlightWant) -Force }
+        else { Start-BwBackfill (Get-BwSpotlightWant) }
+      }
     }
   } catch {}
   return $true
@@ -4318,9 +5302,11 @@ function Get-BwHash([string]$s) {
 # 插在 SOI/APP0 后面的注释段, 不重新编码、不动像素, 文件只变大几百字节,
 # 画质和体积都不受影响, 尾部 FF D9 也依然是 FF D9 (坏图校验不受干扰)。
 function Get-BwMetaPayload($info) {
-  $o = [ordered]@{ app = '桌面壁纸'; date = ''; title = ''; copyright = ''; source_type = ''; source_url = ''; source_link = ''; width = 0; height = 0 }
+  # 2026-11-06: 两个新图源额外写 shot_date(作者拍摄日)、added_date(本机入库日)、
+  # author(完整作者名)。CC BY / CC BY-SA 的署名要用完整标识, 缩写不算合规署名。
+  $o = [ordered]@{ app = '桌面壁纸'; date = ''; shot_date = ''; added_date = ''; title = ''; copyright = ''; author = ''; source_type = ''; source_url = ''; source_link = ''; width = 0; height = 0 }
   if ($info) {
-    foreach ($k in @('date', 'title', 'copyright', 'source_type', 'source_url', 'source_link')) {
+    foreach ($k in @('date', 'shot_date', 'added_date', 'title', 'copyright', 'author', 'source_type', 'source_url', 'source_link')) {
       if ($info.ContainsKey($k)) { $o[$k] = [string]$info[$k] }
     }
     # 2026-10-09: 真实分辨率也写进去(用户要求"每张图落盘时把宽度 x 高度写进元数据/日志")。
@@ -4358,6 +5344,9 @@ function Read-BwImageMeta([string]$path) {
               source_type = [string]$o.source_type
               source_url  = [string]$o.source_url
               source_link = [string]$o.source_link
+              shot_date   = [string]$o.shot_date
+              added_date  = [string]$o.added_date
+              author      = [string]$o.author
               width       = [int]$o.width
               height      = [int]$o.height
             }
@@ -4832,6 +5821,11 @@ function Set-BwHighDate($s, [string]$day) {
   if ($day -gt $cur) { $s.bing_high_date = $day }
 }
 function Invoke-BwBackfill($s) {
+  # 2026-11-05 用户定死: 「选中哪个模式, 哪个模式就下载图片」。这是**必应历史补漏**,
+  # 只属于必应/聚焦模式(那两个池子里有必应图)。万象/随拍模式连定时巡检都不许碰它,
+  # 否则人在随拍模式, 后台照样悄悄下几十张必应老图。
+  $m0 = Get-BwMode
+  if ($m0 -eq 'commons' -or $m0 -eq 'picsum') { return }
   if (-not $s) { $s = Get-BwState }
   $c = Get-BwConfig
   $today = Get-Date
@@ -5266,7 +6260,11 @@ function Invoke-BwCycle {
     # ---- 规则 1: 每天第一次 -> 必应当日壁纸 ----
     # 拿不到元数据就不记账, 让下面的规则照常走, 15 分钟后自然再试一次 ——
     # 不会把整条节奏卡死在这一步, 也不会漏下载。
-    if ($s.last_bing_date -ne $today) {
+    # 独立模式(commons/picsum)不走这一条: 每天头一张必须是本模式库里的图,
+    # 否则"独立循环"每天都会被一张必应图打断(用户要求每个源自己轮自己的)。
+    # 补漏 Invoke-BwBackfill 照旧跑 —— 它只下载入库, 不切桌面。
+    $cycMode = Get-BwMode
+    if (($cycMode -ne 'commons') -and ($cycMode -ne 'picsum') -and ($s.last_bing_date -ne $today)) {
       $meta = $null
       for ($i = 1; $i -le 4; $i++) {
         $meta = Get-BwMeta 0
@@ -5324,7 +6322,7 @@ function Invoke-BwCycle {
     # ---- 必应模式: 只换必应、每天一张 (2026-10-20 用户要求) ----
     # 规则 1 已经负责"每天第一次换成必应当日图"; 这里只额外处理"重启后把当天那张贴回去",
     # 然后直接收工 —— 不做半小时轮换、不抓聚焦。
-    if ([bool]$c.bing_only) {
+    if ((Get-BwMode) -eq 'bing') {
       if ($rebooted) {
         $bwp = ''
         try {
@@ -5495,6 +6493,12 @@ $global:BwPanelHtml = @'
   .card-h h2{font-size:var(--fs-h);font-weight:600}
   .card-h .right{margin-left:auto;display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap}
   .muted{color:var(--txt-3)}
+  /* 2026-11-06 用户「所有图片的出处都集中在主页上反映」: 一行一条, 低对比小字,
+     默认收起、展开才按需加载, 不抢当前壁纸那张卡的画面。 */
+  .credit-list{max-height:320px;overflow:auto}
+  .cr-row{display:flex;flex-wrap:wrap;gap:3px 12px;align-items:baseline;padding:6px 2px;border-top:1px solid var(--line);line-height:1.5}
+  .cr-row .cr-name{color:var(--txt);max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cr-row a{color:inherit;text-decoration:underline;text-underline-offset:2px;opacity:.85}
   .mono{font-family:var(--mono);font-size:var(--fs-meta)}
   .xs{font-size:var(--fs-micro)}
   .t-lg{font-size:17px;font-weight:650}
@@ -5638,20 +6642,29 @@ $global:BwPanelHtml = @'
   .thumbs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--sp-2)}
   .gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(152px,1fr));gap:var(--sp-2)}
   .tile{position:relative;margin:0;aspect-ratio:16/10;border-radius:var(--r-btn);overflow:hidden;
-        border:1px solid var(--line);background:var(--bg-1);cursor:pointer;padding:0;
+        border:1px solid var(--line);background:var(--bg-1);cursor:default;padding:0;
         transition:border-color .15s,transform .15s}
   .tile:hover{border-color:var(--accent);transform:translateY(-2px)}
   .tile img{width:100%;height:100%;object-fit:cover;display:block}
   .tile.sel{outline:2px solid var(--accent);outline-offset:1px}
-  .tile-d{position:absolute;left:6px;bottom:6px;font-size:var(--fs-micro);color:var(--on-art);
+  .tile-d{position:absolute;left:6px;top:6px;font-size:var(--fs-micro);color:var(--on-art);
     background:rgba(0,0,0,.45);border-radius:5px;padding:1px 5px;font-variant-numeric:tabular-nums}
+  /* 2026-11-05 用户「要显示图片的名字」: 图库每张缩略图底部直接写出中文图片名 */
+  .tile-n{position:absolute;left:0;right:0;bottom:0;padding:16px 6px 5px;
+    background:linear-gradient(to top,rgba(0,0,0,.82),transparent);color:var(--on-art);
+    font-size:var(--fs-micro);line-height:1.25;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;pointer-events:none}
+  .tile:hover .tile-n,.tile:focus-within .tile-n{opacity:0}
   .tile-star{position:absolute;right:6px;top:5px;font-size:var(--fs-micro);color:var(--warn);
     background:rgba(0,0,0,.5);border-radius:5px;padding:1px 5px;line-height:1.3}
-  .tile-acts{position:absolute;left:0;right:0;bottom:0;display:flex;gap:var(--sp-1);padding:var(--sp-2);
+  .tile-acts{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:center;gap:var(--sp-1);padding:var(--sp-2);
     background:linear-gradient(to top,var(--scrim),transparent);opacity:0;transform:translateY(4px);
     transition:opacity .15s,transform .15s}
   .tile:hover .tile-acts,.tile:focus-within .tile-acts{opacity:1;transform:none}
-  .tile-acts .btn{height:22px;padding:0 6px;font-size:var(--fs-micro)}
+  /* 2026-11-06 用户「三个按钮均匀分布、居中、大小一致」: 等宽(flex:1 1 0)居中铺满一行,
+     字号略缩到 10px 保证最宽的「设为壁纸/取消收藏」在窄格也不挤、不裁字。 */
+  .tile-acts .btn{flex:1 1 0;min-width:0;height:24px;padding:0;font-size:10px;text-align:center;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .empty{padding:var(--sp-5) var(--sp-4);text-align:center;color:var(--txt-3);font-size:var(--fs-meta);
     display:flex;flex-direction:column;align-items:center;gap:var(--sp-2)}
   .loadmore{display:flex;justify-content:center;padding-top:var(--sp-3)}
@@ -5678,7 +6691,7 @@ $global:BwPanelHtml = @'
        max-height:calc(18px*12 + 2px);overflow:auto;white-space:pre-wrap;
        overflow-wrap:anywhere}
 
-  /* 库容条（下载卡底部）：名称 44px + 进度槽 + 右对齐数值，三行同宽同基线 */
+  /* 库容条（下载卡底部）：名称 44px + 进度槽 + 右对齐数值，五行同宽同基线 */
   .capbar{display:flex;flex-direction:column;gap:6px;margin-top:var(--sp-2)}
   .capline{display:flex;align-items:center;gap:var(--sp-2);font-size:var(--fs-meta)}
   .capline .capname{width:44px;flex:none;color:var(--txt-2)}
@@ -5687,6 +6700,9 @@ $global:BwPanelHtml = @'
   .capline .captrack i.full{background:var(--warn)}
   .capline .capnum{width:104px;flex:none;text-align:right;color:var(--txt-3);
                    font-family:var(--mono);font-size:var(--fs-micro)}
+  /* 当前模式那一行高亮：删掉「库里有多少」后，靠这个标出正在轮的是哪个库 */
+  .capline.cur .capname{color:var(--accent);font-weight:700}
+  .capline.cur .capnum{color:var(--txt-1)}
 
   .sk{background:linear-gradient(90deg,var(--line) 25%,var(--line-2) 37%,var(--line) 63%);
       background-size:400% 100%;animation:sk 1.4s linear infinite;border-radius:5px;height:10px}
@@ -5790,7 +6806,7 @@ $global:BwPanelHtml = @'
       <span class="logo" aria-hidden="true">壁</span>
       <div>
         <h1>桌面壁纸</h1>
-        <p>必应每日 + 微软聚焦 · 自动更换 · 绿色单文件</p>
+        <p>必应每日 + 聚焦 + 万象 + 随拍 · 自动更换 · 绿色单文件</p>
       </div>
     </div>
     <div class="top-r">
@@ -5839,6 +6855,9 @@ $global:BwPanelHtml = @'
               <button class="btn" id="btnFav">收藏 <kbd>F</kbd></button>
               <button class="btn" id="btnOpenImg">看原图</button>
             </div>
+            <!-- 2026-11-06 尊重作者: 万象/随拍的一行小字署名(完整作者名 + 拍摄日 + 许可 + 来源)。
+                 只在当前壁纸属于这两个模式时出现, 低对比小字, 不抢画面也不动中文短句命名。 -->
+            <div class="muted xs" id="heroCredit" style="display:none;padding:0 16px 12px;line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
             <div class="monrow">
               <span class="muted xs lbl">显示器</span>
               <span class="chip on" id="chipScreen" title="多屏支持暂不做">主屏 —</span>
@@ -5876,11 +6895,26 @@ $global:BwPanelHtml = @'
           </div>
 
           <div class="stats">
-            <div class="stat"><div class="k">图库</div><div class="v" id="statLib">—</div><div class="d">必应 + 聚焦</div></div>
+            <div class="stat"><div class="k">图库</div><div class="v" id="statLib">—</div><div class="d" id="statLibDesc">必应 + 聚焦</div></div>
             <div class="stat"><div class="k">收藏</div><div class="v" id="statFav">—</div><div class="d">打开「只看收藏」单独看</div></div>
             <div class="stat"><div class="k">队列剩余</div><div class="v" id="statQueue">—</div><div class="d">剩 2 张时自动补</div></div>
             <div class="stat"><div class="k">累计下载</div><div class="v" id="statDl">—</div><div class="d">从装上那天算起</div></div>
           </div>
+        </div>
+      </div>
+
+      <!-- 2026-11-06 用户「所有图片的出处，都集中在主页上反映」:
+           当前模式图库里每一张的作者 / 拍摄日 / 许可 / 来源，一处列全。默认收起，
+           展开才向本机服务要数据（只读文件头，不把整张 4K 图读进内存）。 -->
+      <div class="card" id="creditCard">
+        <div class="card-h">
+          <h2>图片出处</h2>
+          <span class="muted xs" id="creditHint">当前库里每一张的作者 · 拍摄日 · 许可 · 来源</span>
+          <div class="right"><button class="btn ghost sm" id="creditToggle">展开 ›</button></div>
+        </div>
+        <div id="creditBody" style="display:none">
+          <div class="muted xs" id="creditStat" style="padding:0 0 8px">正在读取…</div>
+          <div class="credit-list" id="creditList"></div>
         </div>
       </div>
     </section>
@@ -5895,6 +6929,8 @@ $global:BwPanelHtml = @'
             <span class="chip on lib-chip" data-src="all">全部</span>
             <span class="chip lib-chip" data-src="bing">必应</span>
             <span class="chip lib-chip" data-src="spotlight">聚焦</span>
+            <span class="chip lib-chip" data-src="commons">万象</span>
+            <span class="chip lib-chip" data-src="picsum">随拍</span>
             <span class="chip lib-chip" data-src="local" id="libLocalChip" style="display:none">本地文件夹</span>
             <button class="btn ghost sm" id="libFav">只看收藏</button>
             <button class="btn ghost sm" id="libOpenDir">打开这个库的文件夹</button>
@@ -5948,6 +6984,8 @@ $global:BwPanelHtml = @'
             <div class="ctl">
               <span class="chip" id="modeFocus" data-mode="focus">聚焦模式</span>
               <span class="chip" id="modeBing" data-mode="bing">必应模式</span>
+              <span class="chip" id="modeCommons" data-mode="commons">万象模式</span>
+              <span class="chip" id="modePicsum" data-mode="picsum">随拍模式</span>
             </div>
           </div>
           <div class="set">
@@ -6035,19 +7073,20 @@ $global:BwPanelHtml = @'
             <div class="txt"><b>不是程序下载的图</b><span>你自己放进库的；只做记号，不会换到桌面上</span></div>
             <div class="ctl"><span class="muted" id="strangers">—</span></div>
           </div>
-          <div class="set">
-            <div class="txt"><b>库里有多少</b><span>必应库 / 聚焦库（本地图源另算）</span></div>
-            <div class="ctl"><span class="muted" id="poolCounts">—</span></div>
-          </div>
           <!-- 2026-10-25（用户指着这张卡底下的空白说"这里可以加点内容"）：等高网格让矮的
-               一张卡空出 ~145px。与其留白，不如把上面两个上限输入框和实际张数画成三条库容
-               条 —— 必应/聚焦/本地各一行，到顶会变黄，比再堆两行文字有用。 -->
+               一张卡空出 ~145px，画成库容条。2026-11-05 新增两个图源后统一按四个图源口径：
+               必应 / 聚焦 / 万象 / 随拍 各一行，本地图源另算，到顶会变黄。
+               2026-11-06 用户「库里有多少和库容是不是有点多余了」：确实重复 —— 当前模式
+               的张数在顶部统计卡、副标题里已经各报一次，库容条五行又全列一遍。删掉
+               「库里有多少」这一行，改由库容条高亮当前模式那一行来标出正在轮的是哪个库。 -->
           <div class="set col">
-            <div class="txt"><b>库容</b><span>已用 / 上限；到顶会把最老的移进回收站，上限填 0 = 不限</span></div>
+            <div class="txt"><b>库容</b><span>四个图源各自的已用 / 上限；高亮一行是当前模式，到顶会把最老的移进回收站，上限填 0 = 不限</span></div>
             <div class="capbar">
-              <div class="capline"><span class="capname">必应</span><span class="captrack"><i id="capBingBar"></i></span><span class="capnum" id="capBing">—</span></div>
-              <div class="capline"><span class="capname">聚焦</span><span class="captrack"><i id="capSpotBar"></i></span><span class="capnum" id="capSpot">—</span></div>
-              <div class="capline"><span class="capname">本地</span><span class="captrack"><i id="capLocalBar"></i></span><span class="capnum" id="capLocal">—</span></div>
+              <div class="capline" id="capRowBing"><span class="capname">必应</span><span class="captrack"><i id="capBingBar"></i></span><span class="capnum" id="capBing">—</span></div>
+              <div class="capline" id="capRowSpot"><span class="capname">聚焦</span><span class="captrack"><i id="capSpotBar"></i></span><span class="capnum" id="capSpot">—</span></div>
+              <div class="capline" id="capRowCommons"><span class="capname">万象</span><span class="captrack"><i id="capCommonsBar"></i></span><span class="capnum" id="capCommons">—</span></div>
+              <div class="capline" id="capRowPicsum"><span class="capname">随拍</span><span class="captrack"><i id="capPicsumBar"></i></span><span class="capnum" id="capPicsum">—</span></div>
+              <div class="capline" id="capRowLocal"><span class="capname">本地</span><span class="captrack"><i id="capLocalBar"></i></span><span class="capnum" id="capLocal">—</span></div>
             </div>
           </div>
         </div>
@@ -6128,11 +7167,11 @@ $global:BwPanelHtml = @'
                「版本 / 数据目录」的"值贴右边界"是两种语法，看着像漏了一行。三个小按钮
                一共 ~250px，放得进右列，所以收回普通行，跟标题同一水平线。 -->
           <div class="set">
-            <div class="txt"><b>操作</b><span>检查更新走的是线上升级源；改错了可以手动还原</span></div>
+            <div class="txt"><b>操作</b><span>检查更新走的是线上升级源；改错了可以手动还原；「退出程序」连后台一起停</span></div>
             <div class="ctl">
               <button class="btn sm" id="btnCheckUpd">检查更新</button>
               <button class="btn sm" id="btnRefresh">刷新状态</button>
-              <button class="btn sm danger" id="btnQuit">退出控制台</button>
+              <button class="btn sm danger" id="btnQuit">退出程序</button>
             </div>
           </div>
           <div class="set col">
@@ -6217,6 +7256,25 @@ function api(doName, extra){
 
 function wallUrl(p){
   return p ? ("/api/wall?t=" + encodeURIComponent(TOKEN) + "&p=" + encodeURIComponent(p)) : "";
+}
+/* 2026-11-05 硬规矩: 面板上任何来源的图片名都必须是中文。
+   优先用后端给的 display; 没有就从文件名里提中文主题; 再没有就按文件名哈希
+   给一个稳定的中文场景名 —— 绝不让英文原名 / 哈希 / 随机串露出来。 */
+var CN_FALLBACK = ["山野晨光","湖畔暮色","林间薄雾","海岸云影","雪原晴光",
+  "田野夕照","城郭夜色","溪谷清影","花间微风","远山层云","云海初晴","松林雪霁"];
+function displayName(it){
+  if (it && it.display) return it.display;
+  var raw = (it && (it.name || it.path)) || (typeof it === "string" ? it : "");
+  var t = "";
+  try { t = parseName(baseName(raw)).title || ""; } catch (e) { t = ""; }
+  /* 2026-11-06: 名字改成「一句通顺中文短句」后, 可能含阿拉伯数字(如阿波罗9号、
+     2025 冬日), 旧正则只留汉字会把数字吞掉。日期与去重键在 parseName 里已被剥离,
+     所以这里放行 0-9 不会把哈希/日期带进来。 */
+  var cn = (String(t).match(/[\u4e00-\u9fa5·0-9]+/g) || []).join("");
+  if (cn.length >= 2) return cn;
+  var h = 0;
+  for (var i = 0; i < raw.length; i++){ h = (h * 31 + raw.charCodeAt(i)) >>> 0; }
+  return CN_FALLBACK[h % CN_FALLBACK.length];
 }
 function baseName(p){
   if (!p) return "";
@@ -6367,7 +7425,7 @@ function computeNext(){
 function tick(){
   var meter = $("cycMeter");
   var cfg = (S && S.cfg) || {};
-  if (cfg.bing_only){
+  if (curMode() === "bing"){
     if (meter) meter.style.width = "0%";
     setText("statusText", "必应模式 · 明天开机后换新图");
     return;
@@ -6408,7 +7466,9 @@ function render(s){
   var cfg = s.cfg || {}, st = s.st || {}, au = s.auto || {}, cnt = s.counts || {};
 
   /* 顶栏状态 */
-  var isBing = !!cfg.bing_only;
+  var mode = curMode();
+  var isBing = (mode === "bing");
+  var modeLabel = MODE_NAME[mode] || "聚焦模式";
   var pill = $("statusPill");
   pill.className = "pill ok";
   setText("statusText", (isBing ? "必应模式 · 明天开机后换新图" : "读取下次换图时间…"));
@@ -6431,16 +7491,49 @@ function render(s){
       };
       img.src = src;
     }
-    setText("heroTitle", bn.title || baseName(p));
+    /* 2026-11-05 用户「要显示图片的名字」: 主标题用文件名里的中文图片名,
+       悬停再给完整文件名(含日期与去重键), 方便和资源管理器里的那张图对上。 */
+    var _fname = baseName(p);
+    setText("heroTitle", displayName({ name: _fname }));
+    var _ht = $("heroTitle");
+    if (_ht) { _ht.title = "图片名字：" + _fname; }
     /* 2026-10-24 用户要求：这张卡要能看出「这是哪一天的哪张图」。
        名字一直是主标题（例如「到灯塔去！」），副行原来只有换上的时间；
-       现在把图片自己的日期放到最前面，日期取自文件名的 YYYY-MM-DD_ 前缀
-       （本机必应目录 137/137 张都是这个命名）。取不到日期就不硬凑，只留换上的时间，
-       依旧不露原始 id / 英文 slug。 */
-    var _imgDay = bn.date ? (bn.date + " 的图") : "";
+       现在把图片自己的日期放到最前面，日期取自文件名的 YYYY-MM-DD_ 前缀。
+       2026-11-06 用户「我们应该尊重作者的拍摄时间」：万象/随拍的前缀已改成
+       Commons 的 DateTimeOriginal（作者实际拍摄那天），所以这两源写「摄于」；
+       必应/聚焦的前缀是微软发布日，保持「YYYY-MM-DD 的图」不变。
+       取不到日期就不硬凑，只留换上的时间，依旧不露原始 id / 英文 slug。 */
+    var _shotMode = (mode === "commons" || mode === "picsum");
+    var _imgDay = bn.date ? (_shotMode ? ("摄于 " + bn.date) : (bn.date + " 的图")) : "";
     var _when = st.lastSwap ? (String(st.lastSwap).slice(0, 16) + " 换上") : "";
     setText("heroSub", _imgDay && _when ? (_imgDay + "　·　" + _when) : (_imgDay || _when || "—"));
-    setText("heroBadge", isBing ? "必应模式 · 每日一图" : "当前壁纸");
+    /* 2026-11-06 用户「尊重作者」: 完整作者名 + 拍摄日 + 许可 + 来源链接, 一行小字。
+       不用首字母缩写 —— CC BY / CC BY-SA 要求完整署名标识; 来源只认 Commons 官方域名。
+       作者名来自 Commons 元数据, 用 textContent 写入, 不拼 HTML。 */
+    var _cr = s.credit || {}, _cel = $("heroCredit");
+    if (_cel) {
+      if (_shotMode && _cr.author) {
+        var _bits = ["摄影：" + _cr.author];
+        if (_cr.shot) { _bits.push("摄于 " + _cr.shot); }
+        if (_cr.lic) { _bits.push(_cr.lic); }
+        var _txt = _bits.join("　·　");
+        _cel.textContent = _txt;
+        _cel.title = _txt;
+        if (_cr.link && /^https:\/\/commons\.wikimedia\.org\//i.test(_cr.link)) {
+          var _lk = document.createElement("a");
+          _lk.href = _cr.link; _lk.target = "_blank"; _lk.rel = "noopener noreferrer";
+          _lk.textContent = "来源";
+          _lk.style.cssText = "margin-left:8px;color:inherit;text-decoration:underline;text-underline-offset:2px;opacity:.75";
+          _cel.appendChild(_lk);
+        }
+        _cel.style.display = "";
+      } else {
+        _cel.textContent = ""; _cel.title = ""; _cel.style.display = "none";
+      }
+    }
+    setText("heroBadge", isBing ? "必应模式 · 每日一图"
+      : ((mode === "commons" || mode === "picsum") ? (MODE_NAME[mode] + " · 当前壁纸") : "当前壁纸"));
     $("btnOpenImg").style.display = "";
   } else {
     img.classList.remove("ready");
@@ -6450,6 +7543,7 @@ function render(s){
     setText("heroTitle", "—");
     setText("heroSub", "—");
     setText("heroBadge", "当前壁纸");
+    if (_cel) { _cel.textContent = ""; _cel.title = ""; _cel.style.display = "none"; }
     $("btnOpenImg").style.display = "none";
   }
 
@@ -6496,7 +7590,15 @@ function render(s){
     : "点一下直接切；滑块到 4 小时，更长用上面的档位";
   setText("cycHint", hint);
   setText("setCycHint", isBing ? "必应模式：明天第一次开机换当天的新图" : "每多少分钟自动换一张");
-  setText("nextSub", "每 " + fmtCycle(cycMin) + " · 图库 " + ((cnt.bing || 0) + (cnt.spotlight || 0)) + " 张 · 收藏 "
+  /* 2026-11-05 用户定死: 「图库显示的张数应该在哪个模式就显示哪个模式的图片数量」。
+     原来 focus / bing 都端 bing+spotlight 合计(截图里的 349), 与四个模式各管一库的口径不符。
+     现在一律只报当前模式那个库的张数, 描述也写明是哪个库。 */
+  var libNum = (mode === "commons") ? (cnt.commons || 0)
+             : (mode === "picsum") ? (cnt.picsum || 0)
+             : (mode === "bing") ? (cnt.bing || 0)
+             : (cnt.spotlight || 0);
+  var LIB_NAME = { focus:"聚焦库", bing:"必应库", commons:"万象库", picsum:"随拍库" };
+  setText("nextSub", "每 " + fmtCycle(cycMin) + " · 图库 " + libNum + " 张 · 收藏 "
     + (s.favCount || 0) + " 张" + (s.local && s.local.count ? (" · 本地 " + s.local.count + " 张") : ""));
 
   /* 开关类 */
@@ -6514,12 +7616,18 @@ function render(s){
     ? (au.daemon ? "开着 · 后台正在跑" : "开着 · 这次开机没跑起来，点一下会拉起来")
     : "关 = 登录后不会自己换");
 
-  /* 模式 */
-  $("modeFocus").classList.toggle("on", !isBing);
-  $("modeBing").classList.toggle("on", isBing);
-  setText("modeHint", isBing
-    ? "当前是必应模式：只换必应每日一图，一天一张；不抓聚焦、不按间隔轮换"
-    : "当前是聚焦模式：按间隔换「Windows 聚焦」图库里的图（和必应图混着轮换）");
+  /* 模式：四个 chip 按当前 mode 高亮 */
+  ["focus", "bing", "commons", "picsum"].forEach(function (m) {
+    var el = $("mode" + (m.charAt(0).toUpperCase() + m.slice(1)));
+    if (el) el.classList.toggle("on", mode === m);
+  });
+  var modeHintTxt = {
+    focus:   "当前是聚焦模式：按间隔自动轮换，后台补的也是本模式的图",
+    bing:    "当前是必应模式：只换必应每日一图，一天一张；不抓聚焦、不按间隔轮换",
+    commons: "当前是万象模式：只在万象图库里独立循环，按间隔自动轮换",
+    picsum:  "当前是随拍模式：只在随拍图库里独立循环，按间隔自动轮换"
+  }[mode] || "";
+  setText("modeHint", modeHintTxt);
 
   /* 下拉 / 数字 */
   $("selRes").value = (cfg.resolution_mode === "uhd") ? "uhd" : "auto";
@@ -6534,31 +7642,38 @@ function render(s){
   setNum("numLib", cfg.lib_cap == null ? 200 : cfg.lib_cap);
   setNum("numBing", cfg.bing_cap == null ? 200 : cfg.bing_cap);
   setNum("numRound", cfg.spotlight_per_cycle == null ? 6 : cfg.spotlight_per_cycle);
-  setNum("numTimeout", cfg.src_timeout_sec == null ? 20 : cfg.src_timeout_sec);
+  setNum("numTimeout", cfg.src_timeout_sec == null ? 90 : cfg.src_timeout_sec);
   setNum("numRoundCap", cfg.fetch_round_cap == null ? 6 : cfg.fetch_round_cap);
   setNum("numDayCap", cfg.fetch_day_cap == null ? 20 : cfg.fetch_day_cap);
   setNum("numRecycle", cfg.recycle_min_days == null ? 30 : cfg.recycle_min_days);
 
-  /* 统计 */
-  setText("statLib", ((cnt.bing || 0) + (cnt.spotlight || 0)));
+  /* 统计: 图库那张卡按当前模式显示"正在轮的那个库", 独立模式别再端必应+聚焦的数字 */
+  setText("statLib", libNum);
+  setText("statLibDesc", LIB_NAME[mode] || "聚焦库");
   setText("statFav", (s.favCount || 0));
   setText("statQueue", (st.queue == null ? "—" : st.queue));
   setText("statDl", (au.dlTotal || 0));
   setText("queueNum", (st.queue == null ? "—" : (st.queue + " 张")));
-  setText("poolCounts", "必应 " + (cnt.bing || 0) + " 张　·　聚焦 " + (cnt.spotlight || 0) + " 张");
+  /* 2026-11-06: 「库里有多少」那一行已删 —— 当前模式张数在顶部统计卡、副标题里各报一次，
+     库容条又全列一遍，三处重复。这里不再单独报一遍。 */
   setText("poolLine", (s.pool && s.pool.line) ? s.pool.line : "—");
   setText("dlTotal", (au.dlTotal || 0) + " 张");
   setText("strangers", (au.strangers || 0) + " 张");
 
   /* 本地文件夹图源 */
   var local = s.local || {};
-  setText("localDir", local.dir ? local.dir : "未启用");
+  /* 2026-11-06 用户截着「未启用 —」问「怎么启用」：入口就在下一行的「选目录…」，
+     光写「未启用」看不出下一步。未启用时直接把动作写在这行上。 */
+  setText("localDir", local.dir ? local.dir : "未启用 · 点下面「选目录…」启用");
   setText("localCount", local.dir ? (local.count + " 张") : "—");
   var lc = $("libLocalChip");
   if (lc) lc.style.display = local.dir ? "" : "none";
 
-  /* 库容三条：把上面「图库上限 / 必应库上限」两个输入框和实际张数画成看得见的进度。
-     上限填 0 是不限，画一小截灰条而不是空条，免得看着像"没数据"。 */
+  /* 库容五条：把上面「图库上限 / 必应库上限」两个输入框和实际张数画成看得见的进度。
+     上限填 0 是不限，画一小截灰条而不是空条，免得看着像"没数据"。
+     2026-11-06 补齐万象 / 随拍：HTML 里两行早就加了，后端 Get-BwPanelState 也一直回
+     counts.commons / counts.picsum 与 srcCaps(上限统一跟随图库上限，0=不限)，
+     但这里漏了两次调用，面板上就一直显示「—」。四个图源必须同口径。 */
   function capLine(barId, numId, used, cap, off){
     var b = $(barId), n = $(numId);
     if (!b || !n) return;
@@ -6572,7 +7687,19 @@ function render(s){
   }
   capLine("capBingBar", "capBing", cnt.bing, cfg.bing_cap, false);
   capLine("capSpotBar", "capSpot", cnt.spotlight, cfg.lib_cap, false);
+  var sc = s.srcCaps || {};
+  /* 2026-11-06 上限统一: 两个新源跟随「图库上限」(lib_cap), 兜底也用同一个值,
+     不再写死 100 —— 老后端没回 srcCaps 时也不会显示成和聚焦不一样的数字。 */
+  var capFallback = (cfg.lib_cap == null ? 200 : cfg.lib_cap);
+  capLine("capCommonsBar", "capCommons", cnt.commons, (sc.commons == null ? capFallback : sc.commons), false);
+  capLine("capPicsumBar",  "capPicsum",  cnt.picsum,  (sc.picsum  == null ? capFallback : sc.picsum),  false);
   capLine("capLocalBar", "capLocal", local.count, 0, !local.dir);
+  /* 当前模式那一行高亮：接替被删掉的「库里有多少」，指明正在轮的是哪个库 */
+  var capRows = { bing:"capRowBing", focus:"capRowSpot", commons:"capRowCommons", picsum:"capRowPicsum" };
+  for (var ck in capRows) {
+    var cel = $(capRows[ck]);
+    if (cel) cel.className = "capline" + (ck === mode ? " cur" : "");
+  }
 
   /* 版本 / 目录 */
   setText("versionLine", "脚本 v" + (s.scriptVer || "?") + " / 主程序 v" + (s.launcherVer || "?"));
@@ -6591,6 +7718,9 @@ function render(s){
 
   /* 日志 */
   renderLog(s.log || []);
+
+  /* 出处清单展开着、模式却切了: 自动换成新库那一批, 不留着上一个库的清单 */
+  if (typeof CREDIT !== "undefined" && CREDIT.open && CREDIT.mode !== mode) { loadCredits(); }
 
   tick();
 }
@@ -6708,26 +7838,28 @@ function tileFor(it, opt){
     d.textContent = (at.slice(0, 10) === todayKey()) ? at.slice(11, 16) : at.slice(5, 10);
     f.title = (it.name || "") + " · 换上于 " + at.slice(0, 16);
   } else {
-    d.textContent = bn.date ? bn.date.slice(5) : String(bn.title || "").slice(0, 12);
+    d.textContent = bn.date ? bn.date.slice(5) : displayName(it).slice(0, 12);
   }
   f.appendChild(d);
+  /* 2026-11-05: 图片名字直接写在缩略图上, 不用把鼠标挪上去等 tooltip */
+  var nmEl = document.createElement("span");
+  nmEl.className = "tile-n";
+  nmEl.textContent = displayName(it);
+  f.appendChild(nmEl);
   if (it.fav){
     var star = document.createElement("span");
     star.className = "tile-star";
     star.textContent = "★";
     f.appendChild(star);
   }
+  /* 2026-11-06 用户「动作全交给按钮」: 缩略图本身不再点一下就换壁纸,
+     也不再可聚焦/回车触发; 三个安全动作(设为壁纸/收藏/原图)只走下方按钮。 */
   var acts = document.createElement("div");
   acts.className = "tile-acts";
   acts.appendChild(mkBtn("设为壁纸", "primary", function(){ useItem(it); }));
   acts.appendChild(mkBtn(it.fav ? "取消收藏" : "收藏", "", function(){ toggleFav(it); }));
   acts.appendChild(mkBtn("原图", "ghost", function(){ openOriginal(it); }));
   f.appendChild(acts);
-  f.addEventListener("click", function(){ useItem(it); });
-  f.setAttribute("tabindex", "0");
-  f.addEventListener("keydown", function(e){
-    if (e.key === "Enter" || e.key === " "){ e.preventDefault(); useItem(it); }
-  });
   return f;
 }
 /* 【2026-10-25 用户「必应模式下 最近换过 浏览框也应该切换到必应图库」】
@@ -6779,7 +7911,8 @@ function renderHistory(list, curName){
   var box = $("hist");
   if (!box) return;
   list = list || [];
-  var isBing = !!(S && S.cfg && S.cfg.bing_only);
+  var mode = curMode();
+  var isBing = (mode === "bing");
   var rows = [], seen = {};
   /* 【2026-10-25 二次修正 · 用户截图】必应模式下把"过去 30 分钟轮换记下的必应条目"端上来还不够:
      他截图里那四张(企鹅/圣丹斯/白沙/树木)确实是必应库里的图, 但都是 2023 年的**归档**,
@@ -6792,7 +7925,7 @@ function renderHistory(list, curName){
     var k = String((it && it.name) || "").replace(/\.[a-z0-9]+$/i, "").toLowerCase();
     if (!k || seen[k] || rows.length >= 4) return;
     seen[k] = 1;
-    rows.push({ name: it.name, path: it.path || "", thumb: it.thumb || "", at: at || "" });
+    rows.push({ name: it.name, path: it.path || "", thumb: it.thumb || "", src: it.src || "", at: at || "" });
   }
   var atMap = {};
   for (var i = 0; i < list.length; i++){
@@ -6801,7 +7934,13 @@ function renderHistory(list, curName){
       atMap[String(h.name || "").replace(/\.[a-z0-9]+$/i, "").toLowerCase()] = (h.at || "");
     }
   }
-  if (isBing){
+  /* 独立模式: 「最近换过」也只看自己那个库, 不串别的模式的图 */
+  if (mode === "commons" || mode === "picsum"){
+    for (var k5 = 0; k5 < list.length; k5++){
+      var h5 = list[k5];
+      if (h5 && h5.src === mode) add(h5, h5.at);
+    }
+  } else if (isBing){
     var fill = bingFillRows();
     for (var j = 0; j < fill.length; j++){
       var f = fill[j];
@@ -6826,23 +7965,45 @@ function renderHistory(list, curName){
   box.innerHTML = "";
   rows.forEach(function(it){
     // 有"换上时间"就角标写换上的时刻/月日；没有(图库里最近但本机没换过)就退回图片日期。
+    // src 带上这张图真正的归属库, 后端 use/fav/del 才能"指哪打哪"; 不能再写死成 hist。
     var f = tileFor({ name: it.name, path: it.path || "", thumb: it.thumb || "",
-                      fav: false, src: "hist", at: it.at || "" },
+                      fav: false, src: it.src || "", at: it.at || "" },
                     { currentName: curName });
     box.appendChild(f);
   });
   $("histEmpty").style.display = rows.length ? "none" : "";
-  if (!rows.length) setText("histEmpty", isBing ? "必应图库还是空的 —— 补几张新图之后这里就有了" : "还没有换过图");
+  if (!rows.length) setText("histEmpty",
+    isBing ? "必应图库还是空的 —— 补几张新图之后这里就有了"
+    : ((mode === "commons" || mode === "picsum") ? (MODE_NAME[mode] + "图库还是空的 —— 换几张之后这里就有了") : "还没有换过图"));
 }
 
 /* ── 动作 ── */
+/* 2026-11-05 用户「图库里的图片，不管任何模式都能当壁纸，应该划分开」:
+   模式与图库口径对齐 —— 手动切模式、或从图库点一张别的库的图(后端自动归模式),
+   图库筛选都跟着切到那个库, 不让"随拍模式里翻着万象的图"这种混搭出现。 */
+function setLibSrcForMode(m){
+  var want = ({ focus:"spotlight", bing:"bing", commons:"commons", picsum:"picsum" })[m] || m;
+  var chips = document.querySelectorAll(".lib-chip[data-src]");
+  var hit = null;
+  Array.prototype.forEach.call(chips, function(c){ if (c.getAttribute("data-src") === want) hit = c; });
+  if (!hit) return;
+  Array.prototype.forEach.call(chips, function(c){ c.classList.remove("on"); });
+  hit.classList.add("on");
+  G.src = want;
+  loadGallery(true);
+}
 function useItem(it){
   if (busy) return;
   busy = true;
-  api("use", { name: it.name }).then(function(j){
+  api("use", { name: it.name, src: it.src }).then(function(j){
     busy = false;
-    toast(j && j.ok ? ("已设为壁纸：" + it.name) : "没设上，稍后再点一次", !(j && j.ok));
+    var sw = j && j.modeSwitched;
+    var shown = displayName(it);
+    toast(j && j.ok
+      ? ((sw ? ("已切到" + MODE_NAME[sw] + "，并设为壁纸：") : "已设为壁纸：") + shown)
+      : "没设上，稍后再点一次", !(j && j.ok));
     if (j && j.ok){
+      if (sw) setLibSrcForMode(sw);
       markCurrent(it.name);
       /* 【2026-10-25】markCurrent 只挪了格子的选中框, 上面那张「当前壁纸」大卡还是旧图 ——
          用户报的"预览图没锁定当前壁纸"有一半是这个。拉一次状态, 大卡/角标/最近换过一起对上。 */
@@ -6853,7 +8014,7 @@ function useItem(it){
 function toggleFav(it){
   if (busy) return;
   busy = true;
-  api(it.fav ? "unfav" : "fav", { name: it.name }).then(function(j){
+  api(it.fav ? "unfav" : "fav", { name: it.name, src: it.src }).then(function(j){
     busy = false;
     if (j && j.ok === false) return;
     toast(it.fav ? "已取消收藏" : "已收藏");
@@ -6861,9 +8022,35 @@ function toggleFav(it){
     else { it.fav = !it.fav; refreshTileStars(); }
   }, function(){ busy = false; });
 }
+/* 2026-11-05 用户「收藏的图片，删除不了」: 图库里给每张图一个删除入口。
+   收藏过的图以前被库容淘汰逻辑保护, 又没有任何手动删除按钮 —— 现在统一走后端 del,
+   移进回收站(可还原), 收藏 / 队列 / 看过名单一起清掉。 */
+function delItem(it){
+  if (busy) return;
+  if (!window.confirm("把这张图移进回收站？\n可以在「已看过」文件夹里找回。")) return;
+  busy = true;
+  api("del", { name: it.name, src: it.src }).then(function(j){
+    busy = false;
+    if (j && j.ok === false) { toast("删不掉：" + (j.msg || "稍后再试"), true); return; }
+    toast("已移进回收站，可在「已看过」里找回");
+    refresh(false);
+    loadGallery(true);
+  }, function(){ busy = false; toast("删除失败，稍后再试", true); });
+}
 function openOriginal(it){
-  if (it.path) window.open(wallUrl(it.path), "_blank", "noopener");
-  else if (it.thumb) window.open(it.thumb, "_blank", "noopener");
+  /* 2026-11-06 用户「三个按钮必须指哪打开哪里，不能指向图片缩略图」:
+     「原图」只认磁盘上那张真图(带令牌的 /api/wall, 服务端还有目录白名单)。
+     列表里的 <img> 才用缩略图地址显示; 按钮一律不碰它, 取不到路径就明说,
+     绝不静默改成打开一张缩放图糊弄过去。 */
+  if (it.path) { window.open(wallUrl(it.path), "_blank", "noopener"); return; }
+  /* 最近换过 / 收藏那几排只带文件名: 走带令牌的原图直链(同样回磁盘真图字节),
+     不退回缩略图地址, 也不让按钮点了没反应。 */
+  if (it.name) {
+    window.open("/?panel=orig&t=" + encodeURIComponent(TOKEN) + "&name=" + encodeURIComponent(it.name)
+      + "&src=" + encodeURIComponent(it.src || ""), "_blank", "noopener");
+    return;
+  }
+  toast("这张图找不到原文件，刷新下图库再试", true);
 }
 function markCurrent(name){
   var tiles = document.querySelectorAll(".gallery .tile, .thumbs .tile");
@@ -6896,7 +8083,9 @@ function refreshTileStars(){
 
 /* ── 图库 ── */
 function galleryUrl(){
-  var q = "/?panel=gallery&src=" + encodeURIComponent(G.src) + "&skip=" + G.skip + "&take=48";
+  /* 2026-11-06: 带上令牌, 服务端才回每张图的真实路径(免令牌调用照旧不回路径)。
+     有了路径, 「原图」直接打开磁盘真图, 不再指向缩略图地址。 */
+  var q = "/?panel=gallery&t=" + encodeURIComponent(TOKEN) + "&src=" + encodeURIComponent(G.src) + "&skip=" + G.skip + "&take=48";
   if (G.fav) q += "&fav=1";
   return q;
 }
@@ -6929,7 +8118,7 @@ function loadGallery(reset){
       }
       var shown = G.items.length;
       setText("libCount", "已显示 " + shown + " 张" + (G.fav ? " · 只看收藏" : "")
-        + (G.src === "all" ? "" : " · " + (G.src === "bing" ? "必应库" : (G.src === "spotlight" ? "聚焦库" : "本地文件夹"))));
+        + (G.src === "all" ? "" : " · " + ({ bing:"必应库", spotlight:"聚焦库", commons:"万象库", picsum:"随拍库", local:"本地文件夹" }[G.src] || G.src)));
       $("libMoreWrap").style.display = G.more ? "" : "none";
     })
     .catch(function(e){
@@ -6938,6 +8127,59 @@ function loadGallery(reset){
       $("libMoreWrap").style.display = "none";
     });
 }
+/* ── 主页「图片出处」清单 ──
+   2026-11-06 用户「所有图片的出处，都集中在主页上反映」: 一个地方列全当前库里每一张,
+   不用给图库每张缩略图塞第五个按钮。默认收起、展开才按需请求, 小字低对比。 */
+var CREDIT = { open:false, mode:"", loading:false };
+var CREDIT_SRC = { focus:"spotlight", bing:"bing", commons:"commons", picsum:"picsum" };
+function creditSrc(){ return CREDIT_SRC[curMode()] || "spotlight"; }
+function loadCredits(){
+  var box = $("creditList");
+  if (!box || CREDIT.loading) return;
+  CREDIT.loading = true;
+  CREDIT.mode = curMode();
+  box.innerHTML = "";
+  setText("creditStat", "正在读取…");
+  fetch("/?panel=credits&t=" + encodeURIComponent(TOKEN) + "&src=" + encodeURIComponent(creditSrc()), { cache:"no-store" })
+    .then(function(r){ if(!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(function(arr){
+      CREDIT.loading = false;
+      if(!arr || !arr.length){ setText("creditStat", "这个库还没有图片"); return; }
+      var nAuthor = 0, nLink = 0, shotMode = (creditSrc() === "commons" || creditSrc() === "picsum");
+      arr.forEach(function(it){
+        if(it.author) nAuthor++;
+        if(it.link) nLink++;
+        var full = displayName({ name: it.name });
+        var row = document.createElement("div");
+        row.className = "cr-row muted xs";
+        var nm = document.createElement("span");
+        nm.className = "cr-name";
+        nm.textContent = full;
+        nm.title = full;
+        row.appendChild(nm);
+        function bit(txt){ var s = document.createElement("span"); s.textContent = txt; row.appendChild(s); }
+        if(it.date) bit((shotMode ? "摄于 " : "") + it.date);
+        if(it.author) bit((it.author.charAt(0) === "©" ? "" : "摄影：") + it.author);
+        if(it.lic) bit(it.lic);
+        if(it.note) bit(it.note);
+        if(it.link && /^https:\/\/(commons\.wikimedia\.org|www\.bing\.com)\//i.test(it.link)){
+          var a = document.createElement("a");
+          a.href = it.link; a.target = "_blank"; a.rel = "noopener noreferrer";
+          a.textContent = "来源 ↗";
+          row.appendChild(a);
+        }
+        box.appendChild(row);
+      });
+      setText("creditStat", "共 " + arr.length + " 张 · " + nAuthor + " 张有署名 · " + nLink + " 张可点开来源");
+    })
+    .catch(function(e){ CREDIT.loading = false; setText("creditStat", "出处读不出来：" + e.message); });
+}
+$("creditToggle").addEventListener("click", function(){
+  CREDIT.open = !CREDIT.open;
+  $("creditBody").style.display = CREDIT.open ? "" : "none";
+  setText("creditToggle", CREDIT.open ? "收起 ‹" : "展开 ›");
+  if (CREDIT.open) loadCredits();
+});
 Array.prototype.forEach.call(document.querySelectorAll(".lib-chip"), function(chip){
   chip.addEventListener("click", function(){
     Array.prototype.forEach.call(document.querySelectorAll(".lib-chip"), function(c){ c.classList.remove("on"); });
@@ -6954,7 +8196,11 @@ $("libFav").addEventListener("click", function(){
 });
 $("libReload").addEventListener("click", function(){ loadGallery(true); });
 $("libOpenDir").addEventListener("click", function(){
-  api("openDir", { name: G.src === "spotlight" ? "spotlight" : (G.src === "local" ? "local" : "bing") }).then(function(j){ if(j && j.ok) toast("已打开：" + (j.path || "?") + "（端口 " + location.port + "）"); else if(j && j.error) toast(j.error, true); });
+  /* 按图库当前筛的源打开它自己的文件夹；「全部」打开四个库共同的上级目录。
+     原来这里只认 聚焦/本地/必应, 切到万象或随拍会误开必应库。 */
+  var src = G.src;
+  if (src === "all") src = "base";
+  api("openDir", { name: src }).then(function(j){ if(j && j.ok) toast("已打开：" + (j.path || "?") + "（端口 " + location.port + "）"); else if(j && j.error) toast(j.error, true); });
 });
 $("libMore").addEventListener("click", function(){ loadGallery(false); });
 $("libEmptyBtn").addEventListener("click", function(){ loadGallery(true); });
@@ -7040,7 +8286,7 @@ bindNum("numRecycle", "recycle_min_days");
    是因为旧标签页(数据是几分钟前那一份)或者刚点完还没刷新的瞬间仍可能发出去,
    而服务端只会钉回 1440 —— 前端要是还弹一句"间隔已改成 10 分", 就是骗人。 */
 function bingLocked(){
-  if (!(S && S.cfg && S.cfg.bing_only)) return false;
+  if (curMode() !== "bing") return false;
   toast("必应模式固定 24 小时（每天一张），先切回聚焦模式才能改间隔", true);
   refresh(false);
   return true;
@@ -7059,13 +8305,24 @@ Array.prototype.forEach.call(document.querySelectorAll(".cyc-chip"), function(ch
   });
 });
 
-/* 更换模式: 切过去后端会当场换一张 */
-function setMode(bing){
-  var cur = !!(S && S.cfg && S.cfg.bing_only);
-  if (cur === bing){ toast(bing ? "已经是必应模式" : "已经是聚焦模式"); return; }
+/* 当前轮换模式: 显式 wallpaper_mode 优先, 老配置只有 bing_only 时推导 */
+function curMode(){
+  var cfg = (S && S.cfg) || {};
+  if (cfg.wallpaper_mode){
+    var m = ("" + cfg.wallpaper_mode).toLowerCase();
+    if (m === "focus" || m === "bing" || m === "commons" || m === "picsum") return m;
+  }
+  return cfg.bing_only ? "bing" : "focus";
+}
+var MODE_NAME = { focus:"聚焦模式", bing:"必应模式", commons:"万象模式", picsum:"随拍模式" };
+/* 更换模式: 切过去后端会清空旧队列、按新模式重洗, 并当场换一张 */
+function setMode(m){
+  var cur = curMode();
+  if (cur === m){ toast("已经是" + MODE_NAME[m]); return; }
   run(function(){
-    return api("set", { key: "bing_only", value: bing ? "true" : "false" }).then(function(){
-      toast(bing ? "已切到必应模式：正在换成今天的必应图…" : "已切到聚焦模式：正在按轮换换一张…");
+    return api("set", { key: "wallpaper_mode", value: m }).then(function(){
+      setLibSrcForMode(m);
+      toast("已切到" + MODE_NAME[m] + "：正在换一张…");
       /* 换图是后台那一轮干的, 前端这一刻拉状态还来不及。
          有上限地补拉两次(4 秒 / 12 秒), 只为把「当前壁纸」大卡对上桌面真正那张 ——
          不做持续轮询: 服务是单线程 TcpListener, 而且这一页的设计就是打开时拉一次。 */
@@ -7074,8 +8331,10 @@ function setMode(bing){
     });
   });
 }
-$("modeFocus").addEventListener("click", function(){ setMode(false); });
-$("modeBing").addEventListener("click", function(){ setMode(true); });
+["focus","bing","commons","picsum"].forEach(function(m){
+  var el = $("mode" + m.charAt(0).toUpperCase() + m.slice(1));
+  if (el) el.addEventListener("click", function(){ setMode(m); });
+});
 
 /* 补货 / 补齐 / 重置 / 换位置 */
 function startJob(name, arg, tip){
@@ -7158,12 +8417,19 @@ $("btnCheckUpd").addEventListener("click", function(){
   });
 });
 $("btnRefresh").addEventListener("click", function(){ refresh(true); });
+/* 2026-11-06 用户「点退出控制台没反应 / 要整个程序退出后台运行」。
+   后端现在写 daemon.stop 让后台守护进程一起收工, 网页服务随即关闭,
+   所以这里不依赖响应(连接可能被自己关掉): 请求一发出就给明确反馈,
+   并打上 BW_EXITED, 让下面的补拉/轮询别再对着已经关掉的服务发请求。 */
+var BW_EXITED = false;
 $("btnQuit").addEventListener("click", function(){
-  api("quit").then(function(){
-    $("statusPill").className = "pill bad";
-    setText("statusText", "已退出");
-    toast("控制台已退出，可以直接关掉这个标签页");
-  });
+  BW_EXITED = true;
+  $("statusPill").className = "pill bad";
+  setText("statusText", "已退出");
+  toast("正在退出…");
+  fetch("/api/do?t=" + encodeURIComponent(TOKEN) + "&do=quit", { cache: "no-store" })
+    .then(function(){ toast("程序已退出（含后台），可以直接关掉这个标签页"); })
+    .catch(function(){ toast("程序已退出（含后台），可以直接关掉这个标签页"); });
 });
 
 /* 键盘: Space 换一张 / F 收藏 / 1 2 3 切视图(Esc 从输入框退出) */
@@ -7189,6 +8455,7 @@ function setOffline(on, why){
   if (w) w.textContent = on ? ("（" + (why || "无响应") + "）") : "";
 }
 function refresh(showTip){
+  if (BW_EXITED) return Promise.resolve(null);   /* 退出后别再对已关的服务发请求 */
   LAST_STATE_AT = Date.now();
   return fetch("/api/state?t=" + encodeURIComponent(TOKEN), { cache: "no-store" })
     .then(function(r){ return r.json(); })
@@ -7225,7 +8492,7 @@ setInterval(tick, 1000);      /* 只有前端计时, 不发请求 */
    所以只在**页面可见**时问, 两次之间至少隔 12 秒。 */
 var NOW_AT = 0;
 function watchCurrent(){
-  if (!S || document.hidden) return;
+  if (BW_EXITED || !S || document.hidden) return;
   var now = Date.now();
   if (now - NOW_AT < 12000) return;
   NOW_AT = now;
@@ -7986,7 +9253,10 @@ function Send-BwPanelResponse($stream, [int]$code, [string]$type, [byte[]]$body,
 #   否则网格里几十张 4K 图每次重开面板都重下一遍, 单线程服务会被拖住。
 # 两个接口都是**只读**、只回数据目录内的图片、只认图片扩展名; 不返回任何绝对路径。
 function Get-BwPanelGalleryItems {
-  param([string]$src = 'all', [switch]$FavOnly, [int]$Skip = 0, [int]$Take = 48)
+  # 2026-11-06 用户「三个按钮必须指哪打哪」: -WithPath 只在请求带正确令牌时才开,
+  # 免令牌调用照旧不返回任何绝对路径(原安全口径不变)。带了 path, 图库的「原图」才能
+  # 走 /api/wall 拿磁盘上的真图, 而不是退回 ?panel=thumb 那个缩略图地址。
+  param([string]$src = 'all', [switch]$FavOnly, [int]$Skip = 0, [int]$Take = 48, [switch]$WithPath)
   if ($Take -le 0) { $Take = 48 }
   if ($Take -gt 200) { $Take = 200 }
   if ($Skip -lt 0) { $Skip = 0 }
@@ -8013,6 +9283,13 @@ function Get-BwPanelGalleryItems {
     $ld = Get-BwLocalDir $c
     if ($ld) { $dirs += [PSCustomObject]@{ key = 'local'; dir = $ld } }
   }
+  # 万象 / 随拍两个独立图库也能在「浏览图库」里按库筛选。
+  foreach ($sdef in @(Get-BwSourceDefs)) {
+    if (($srcL -eq 'all') -or ($srcL -eq [string]$sdef.Key)) {
+      $sd = Get-BwSrcDir $c $sdef.Key
+      if ($sd) { $dirs += [PSCustomObject]@{ key = [string]$sdef.Key; dir = $sd } }
+    }
+  }
   $files = @()
   foreach ($dd in $dirs) {
     $d = [string]$dd.dir
@@ -8038,7 +9315,9 @@ function Get-BwPanelGalleryItems {
     if ($seen -lt $Skip) { $seen++; continue }
     if ($out.Count -ge $Take) { break }
     $seen++
-    $out += [ordered]@{
+    # src 是这张图归属的库, 后端 use/del 靠它把查找范围钉死在这一个目录,
+    # 不再全库按名字找第一个命中(跨库万一重名就会指错图)。
+    $row = [ordered]@{
       name  = $nm
       src   = [string]$it.Src
       time  = $it.File.LastWriteTime.ToString('yyyy-MM-dd HH:mm')
@@ -8047,13 +9326,112 @@ function Get-BwPanelGalleryItems {
       thumb = ('/?panel=thumb&name=' + [System.Uri]::EscapeDataString($nm) +
                '&v=' + [string]$it.File.LastWriteTimeUtc.Ticks)
     }
+    if ($WithPath) { $row['path'] = [string]$it.File.FullName }
+    $out += $row
   }
   return $out
+}
+# 2026-11-06 「所有图片的出处都集中在主页上反映」: 每张图只读文件头 64KB,
+# 从 JPEG 自己的 COM 注释段里取署名元数据。绝不 ReadAllBytes 整张 4K 图 ——
+# 一个库最多 200 张, 全量读(单张 3~8 MB)会把单线程的本机服务拖住。
+function Get-BwFileCredit([string]$path) {
+  $n = 0; $buf = $null
+  try {
+    $fs = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+      $n = [int][Math]::Min(65536, $fs.Length)
+      $buf = New-Object byte[] $n
+      [void]$fs.Read($buf, 0, $n)
+    } finally { $fs.Dispose() }
+  } catch { return $null }
+  if ($n -lt 4 -or -not $buf -or $buf[0] -ne 0xFF -or $buf[1] -ne 0xD8) { return $null }
+  $i = 2
+  while ($i -lt ($n - 3)) {
+    if ($buf[$i] -ne 0xFF) { break }
+    $mk = $buf[$i + 1]
+    if ($mk -eq 0xDA) { break }
+    if ((($mk -ge 0xD0) -and ($mk -le 0xD7)) -or ($mk -eq 0x01)) { $i += 2; continue }
+    $len = ([int]$buf[$i + 2]) * 256 + ([int]$buf[$i + 3])
+    if ($len -lt 2) { break }
+    if ($mk -eq 0xFE) {
+      $payLen = $len - 2
+      if (($i + 4 + $payLen) -le $n) {
+        $s = ''
+        try { $s = [System.Text.Encoding]::UTF8.GetString($buf, ($i + 4), $payLen) } catch {}
+        if ($s.StartsWith('{') -and ($s -match '桌面壁纸|微软壁纸助手')) {
+          try { return ($s | ConvertFrom-Json) } catch { return $null }
+        }
+      }
+    }
+    $i += 2 + $len
+  }
+  return $null
+}
+# 主页「图片出处」清单的数据源: 当前模式那个库里每张图一行。
+# 出处只认图片自身元数据和 Commons / 必应官方域名: 不编作者、不把微软版权串当摄影署名。
+function Get-BwPanelCredits([string]$src) {
+  $sl = ([string]$src).Trim().ToLower()
+  if (-not $sl -or $sl -eq 'all') { $sl = 'spotlight' }
+  if (-not $global:BwCreditCache) { $global:BwCreditCache = @{} }
+  # 同一份清单 60 秒内复用, 免得反复展开 / 切模式重读 200 个文件头。
+  if ($global:BwCreditCache.ContainsKey($sl)) {
+    $hit = $global:BwCreditCache[$sl]
+    if ($hit -and (((Get-Date) - [datetime]$hit.At).TotalSeconds -lt 60)) { return @($hit.Rows) }
+  }
+  $c = Get-BwConfig
+  $dir = ''
+  switch ($sl) {
+    'bing'      { $dir = [string]$c.bing_save_dir }
+    'spotlight' { $dir = [string]$c.spotlight_save_dir }
+    'commons'   { $dir = Get-BwSrcDir $c 'commons' }
+    'picsum'    { $dir = Get-BwSrcDir $c 'picsum' }
+  }
+  $rows = @()
+  if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { return $rows }
+  $files = @()
+  try {
+    $files = @(Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue |
+               Where-Object { Test-BwImgFile $_.Name } | Sort-Object -Property Name)
+  } catch {}
+  foreach ($f in $files) {
+    $nm = [string]$f.Name
+    $fdate = ''
+    if ($nm -match '^(\d{4}-\d{2}-\d{2})') { $fdate = $Matches[1] }
+    $author = ''; $lic = ''; $link = ''; $note = ''; $shot = $fdate
+    $m = Get-BwFileCredit $f.FullName
+    if ($m) {
+      $cp = [string]$m.copyright
+      $bits = @($cp -split '\s+·\s+')
+      $sd = [string]$m.shot_date
+      if ($sd -match '^\d{4}-\d{2}-\d{2}') { $shot = $sd.Substring(0, 10) }
+      if (($sl -eq 'commons') -or ($sl -eq 'picsum')) {
+        if ($bits.Count -ge 2) { $lic = [string]$bits[0] }
+        $author = [string]$m.author
+        if (-not $author -and $bits.Count -ge 3) { $author = [string]$bits[1] }
+        $lk = [string]$m.source_link
+        if ($lk -like 'https://commons.wikimedia.org/*') { $link = $lk }
+      } elseif ($sl -eq 'spotlight') {
+        if ($cp) { $author = $cp }   # © 作者 / 图库 / Getty Images, 原样保留, 不改写成"摄影"
+        $note = 'Windows 聚焦'
+      } else {
+        if ($cp) { $note = $cp }     # 必应的 copyright 其实是中文图片说明
+        $link = 'https://www.bing.com'
+      }
+    } else {
+      if ($sl -eq 'spotlight') { $note = 'Windows 聚焦' }
+      elseif ($sl -eq 'bing') { $link = 'https://www.bing.com'; $note = '必应每日一图' }
+      else { $note = '维基共享' }
+    }
+    $rows += [ordered]@{ name = $nm; src = $sl; date = $shot; author = $author; lic = $lic; link = $link; note = $note }
+    if ($rows.Count -ge 500) { break }
+  }
+  $global:BwCreditCache[$sl] = [PSCustomObject]@{ At = (Get-Date); Rows = $rows }
+  return $rows
 }
 # 缩略图: 目前**直接回原图字节**(在浏览器里按网格缩放), 不引 GDI+ 缩放 ——
 # 这个服务是单线程手写 TcpListener, 现场解码 4K 图会把整页卡住;
 # 真正的代价(几 MB 的下载)被 ETag/304 + 浏览器缓存 + loading="lazy" 兜住了。
-function Send-BwPanelThumb($stream, [string]$name, [string]$ifNoneMatch, $utf8) {
+function Send-BwPanelThumb($stream, [string]$name, [string]$ifNoneMatch, $utf8, [string]$src = '') {
   $name = [string]$name
   # 只接受"一个纯文件名": 带路径分隔符、带 ..、带盘符冒号、非图片扩展名, 一律 403。
   $bad = $false
@@ -8068,7 +9446,7 @@ function Send-BwPanelThumb($stream, [string]$name, [string]$ifNoneMatch, $utf8) 
     return
   }
   $full = ''
-  try { $full = Get-BwPanelResolve $name } catch { $full = '' }
+  try { $full = Get-BwPanelResolve $name $src } catch { $full = '' }
   # 再兜一道: 解析出来的绝对路径必须真落在允许的目录里(防"解析函数之外的意外")
   $okPath = $false
   if ($full) {
@@ -8078,6 +9456,10 @@ function Send-BwPanelThumb($stream, [string]$name, [string]$ifNoneMatch, $utf8) 
       $roots = @([string]$c.bing_save_dir, [string]$c.spotlight_save_dir)
       $ld = Get-BwLocalDir $c
       if ($ld) { $roots += $ld }
+      foreach ($sdef in @(Get-BwSourceDefs)) {
+        $sd = Get-BwSrcDir $c $sdef.Key
+        if ($sd) { $roots += $sd }
+      }
       foreach ($d in $roots) {
         if (-not $d) { continue }
         $dd = ([System.IO.Path]::GetFullPath($d)).TrimEnd('\') + '\'
@@ -8327,8 +9709,10 @@ function Start-BwPanelServer {
               $fv = ([string]$q['fav']).Trim().ToLower()
               if (@('1','true','on','yes') -contains $fv) { $gfav = $true }
             } catch { $gfav = $false }
+            $gWithPath = $false
+            try { if ($q.ContainsKey('t') -and ([string]$q['t'] -eq $token)) { $gWithPath = $true } } catch {}
             $items = @()
-            try { $items = @(Get-BwPanelGalleryItems -src $gsrc -FavOnly:$gfav -Skip $gskip -Take $gtake) }
+            try { $items = @(Get-BwPanelGalleryItems -src $gsrc -FavOnly:$gfav -Skip $gskip -Take $gtake -WithPath:$gWithPath) }
             catch { Log ('面板: 图库清单出错: ' + $_.Exception.Message) 'WARN' }
             # 手写拼接(不走 ConvertTo-BwPanelJson): 空数组也必须是合法的 []
             $gjs = New-Object System.Text.StringBuilder
@@ -8341,6 +9725,41 @@ function Start-BwPanelServer {
             }
             [void]$gjs.Append(']')
             Send-BwPanelResponse $stream 200 'application/json; charset=utf-8' $utf8.GetBytes($gjs.ToString()) 'no-store'
+          }
+          elseif ($panelView -eq 'credits') {
+            # 主页「图片出处」清单: 要令牌(state 同口径), 只读文件头, 不回绝对路径。
+            if ([string]$q['t'] -ne $token) {
+              Send-BwPanelResponse $stream 403 'text/plain; charset=utf-8' $utf8.GetBytes('令牌不对')
+            } else {
+              $csrc = 'spotlight'
+              try { if ($q.ContainsKey('src')) { $csrc = [string]$q['src'] } } catch {}
+              $rows = @()
+              try { $rows = @(Get-BwPanelCredits $csrc) }
+              catch { Log ('面板: 出处清单出错: ' + $_.Exception.Message) 'WARN' }
+              $cjs = New-Object System.Text.StringBuilder
+              [void]$cjs.Append('[')
+              $cfirst = $true
+              foreach ($cit in $rows) {
+                if (-not $cfirst) { [void]$cjs.Append(',') }
+                $cfirst = $false
+                Add-BwPanelJson $cjs $cit
+              }
+              [void]$cjs.Append(']')
+              Send-BwPanelResponse $stream 200 'application/json; charset=utf-8' $utf8.GetBytes($cjs.ToString()) 'no-store'
+            }
+          }
+          elseif ($panelView -eq 'orig') {
+            # 「原图」按钮的直链: 要令牌、只认图库里的图片名, 回磁盘上那张真图的字节。
+            # 图库格子用 path 走 /api/wall; 最近换过 / 收藏那几排只有文件名时走这里。
+            # 两条路都指向真图, 按钮不再退回 ?panel=thumb 那个缩略图地址。
+            if ([string]$q['t'] -ne $token) {
+              Send-BwPanelResponse $stream 403 'text/plain; charset=utf-8' $utf8.GetBytes('令牌不对')
+            } else {
+              $on = ''; $osrc = ''
+              try { if ($q.ContainsKey('name')) { $on = [string]$q['name'] } } catch { $on = '' }
+              try { if ($q.ContainsKey('src')) { $osrc = [string]$q['src'] } } catch { $osrc = '' }
+              Send-BwPanelThumb $stream $on $inm $utf8 $osrc
+            }
           }
           elseif ($panelView -eq 'thumb') {
             $tn = ''
@@ -8420,6 +9839,13 @@ function Start-BwPanelServer {
                 # 2026-10-24: 本地文件夹图源的图也要能在大图里显示(/api/wall 仍然要令牌、只认图片)
                 $ld0 = Get-BwLocalDir $c
                 if ($ld0) { $roots += $ld0 }
+                # 2026-11-05: 两个独立模式的库也必须放行。漏了这里, 切到万象/随拍
+                # 之后「当前壁纸」大卡会整张打不开(实测 404), 而文件其实好好躺在库里。
+                # 切模式那一刻桌面还可能留着上一个源那张图, 所以四个库一律放行, 不按模式筛。
+                foreach ($sdef in @(Get-BwSourceDefs)) {
+                  $sd0 = Get-BwSrcDir $c $sdef.Key
+                  if ($sd0) { $roots += $sd0 }
+                }
                 foreach ($d in $roots) {
                   if (-not $d) { continue }
                   $dd = ([System.IO.Path]::GetFullPath($d)).TrimEnd('\') + '\'
@@ -8449,13 +9875,21 @@ function Start-BwPanelServer {
               if ($q.ContainsKey('key')) { Add-Member -InputObject $req NoteProperty key ([string]$q['key']) -Force }
               if ($q.ContainsKey('value')) { Add-Member -InputObject $req NoteProperty value ([string]$q['value']) -Force }
               if ($q.ContainsKey('name')) { Add-Member -InputObject $req NoteProperty name ([string]$q['name']) -Force }
+              # 2026-11-06: 图库每一项都带归属库, 后端按它在**同一个目录**里定位,
+              # 三个按钮不再有"点 A 图却作用到 B 图"的可能。
+              if ($q.ContainsKey('src')) { Add-Member -InputObject $req NoteProperty src ([string]$q['src']) -Force }
             }
             $res = $null
             try { $res = Invoke-BwPanelAction $req }
             catch { $res = [ordered]@{ ok = $false; error = $_.Exception.Message } }
             $json = ConvertTo-BwPanelJson $res
             Send-BwPanelResponse $stream 200 'application/json; charset=utf-8' $utf8.GetBytes($json)
-            if (([string]$q['do']).ToLower() -eq 'quit') { $running = $false }
+            if (([string]$q['do']).ToLower() -eq 'quit') {
+              # 先让上面的 200 响应真正发到浏览器再收服务, 否则 fetch 会被自己掐断,
+              # 页面反过来弹「本机服务没响应」, 看着像根本没退出。
+              Start-Sleep -Milliseconds 400
+              $running = $false
+            }
           }
         }
         else {
@@ -8490,7 +9924,7 @@ function Start-BwPanelServer {
 }
 
 # 把 state.json 里的文件名解析成库里的完整路径(必应库 / 聚焦库各找一遍)。
-function Get-BwPanelResolve([string]$name) {
+function Get-BwPanelResolve([string]$name, [string]$src = '') {
   if (-not $name) { return '' }
   $c = Get-BwConfig
   # state.json 里的「最近换过的 / 收藏」存的是**不带扩展名**的名字
@@ -8500,10 +9934,33 @@ function Get-BwPanelResolve([string]$name) {
   if (-not [System.IO.Path]::HasExtension($name)) {
     foreach ($e in @('.jpg', '.jpeg', '.png', '.webp', '.bmp')) { $cands += ($name + $e) }
   }
-  $dirs = @($c.bing_save_dir, $c.spotlight_save_dir)
-  # 2026-10-24: 本地文件夹图源里的图也要能解析到(否则图库里点它当壁纸会"找不到这张图")
-  $ld = Get-BwLocalDir $c
-  if ($ld) { $dirs += $ld }
+  # 2026-11-06 用户「指哪打哪」: 图库传来的 src 把查找范围钉死在这一张图所属的库,
+  # 不再全库按名字找第一个命中。不传 / 传 all 时保持原来的口径(状态里的
+  # 历史、收藏记录本身没有 src 字段)。
+  $sl = ([string]$src).Trim().ToLower()
+  $dirs = @()
+  if ($sl -eq 'bing') {
+    $dirs += [string]$c.bing_save_dir
+  } elseif ($sl -eq 'spotlight') {
+    $dirs += [string]$c.spotlight_save_dir
+  } elseif ($sl -eq 'local') {
+    $ld = Get-BwLocalDir $c
+    if ($ld) { $dirs += $ld }
+  } elseif (($sl -eq 'commons') -or ($sl -eq 'picsum')) {
+    $sd = Get-BwSrcDir $c $sl
+    if ($sd) { $dirs += $sd }
+  } else {
+    $dirs += [string]$c.bing_save_dir
+    $dirs += [string]$c.spotlight_save_dir
+    # 2026-10-24: 本地文件夹图源里的图也要能解析到(否则图库里点它当壁纸会"找不到这张图")
+    $ld = Get-BwLocalDir $c
+    if ($ld) { $dirs += $ld }
+    # 万象 / 随拍两个独立图库里的图同样要能"设为壁纸"。
+    foreach ($sdef in @(Get-BwSourceDefs)) {
+      $sd = Get-BwSrcDir $c $sdef.Key
+      if ($sd) { $dirs += $sd }
+    }
+  }
   foreach ($d in $dirs) {
     if (-not $d) { continue }
     foreach ($n in $cands) {
@@ -8526,17 +9983,27 @@ function Get-BwPanelIndex {
     return $global:BwPanelIdxCache
   }
   $c = Get-BwConfig
-  $dirs = @([string]$c.bing_save_dir, [string]$c.spotlight_save_dir)
-  $ld = Get-BwLocalDir $c
-  if ($ld) { $dirs += $ld }
+  # 位置固定: [0]必应 [1]聚焦 [2]本地 [3]万象 [4]随拍。
+  # 本地没配时也占一个空位(循环里会跳过), 否则后面的标签会整体错位。
+  $dirs = @([string]$c.bing_save_dir, [string]$c.spotlight_save_dir, [string](Get-BwLocalDir $c))
+  # 两个新图源(万象 / 随拍)也是独立图库: 当前壁纸、「最近换过」、收藏的缩略图
+  # 都要能在这里解析到, 否则切成那两个模式后整排图都是破图。
+  foreach ($sdef in @(Get-BwSourceDefs)) {
+    $sd = Get-BwSrcDir $c $sdef.Key
+    if ($sd) { $dirs += $sd }
+  }
   $map = @{}
   $kmap = @{}
   # 【2026-10-25 用户「必应模式下最近换过那一排也该切到必应图库」】同一趟扫描里再记一份
   # "完整路径 -> 属于哪个库"(bing / spotlight / local)。history 里存的是图片编号, 光看文件名
   # 分不出必应还是聚焦(两边的命名都是 yyyy-MM-dd_标题), 所以只能在解析出路径之后按目录认。
   $smap = @{}
+  # 目录顺序: 必应 / 聚焦 / 本地 / 万象 / 随拍(后两个由上面的循环追加)。
+  # 用 dirs.Count 而不是写死 3, 免得加库时标签错位。
   $srcTag = @('bing', 'spotlight', 'local')
-  $counts = @(0, 0, 0)
+  foreach ($sdef in @(Get-BwSourceDefs)) { $srcTag += [string]$sdef.Key }
+  $counts = @()
+  for ($ci = 0; $ci -lt $srcTag.Count; $ci++) { $counts += 0 }
   $i = 0
   foreach ($d in $dirs) {
     $n = 0
@@ -8547,7 +10014,7 @@ function Get-BwPanelIndex {
           $k = ([string]$f.Name).ToLower()
           if (-not $map.ContainsKey($k)) { $map[$k] = [string]$f.FullName }
           $tag = 'bing'
-          if ($i -lt 3) { $tag = [string]$srcTag[$i] }
+          if ($i -lt $srcTag.Count) { $tag = [string]$srcTag[$i] }
           $fk = ([string]$f.FullName).ToLower()
           if (-not $smap.ContainsKey($fk)) { $smap[$fk] = $tag }
           # 【2026-10-25 用户「最近换过的图不对」第二半】同一趟目录扫描里再存一份
@@ -8565,10 +10032,10 @@ function Get-BwPanelIndex {
         }
       } catch {}
     }
-    if ($i -lt 3) { $counts[$i] = $n }
+    if ($i -lt $counts.Count) { $counts[$i] = $n }
     $i++
   }
-  $idx = @{ Map = $map; KeyMap = $kmap; Src = $smap; Bing = [int]$counts[0]; Spotlight = [int]$counts[1]; Local = [int]$counts[2] }
+  $idx = @{ Map = $map; KeyMap = $kmap; Src = $smap; Bing = [int]$counts[0]; Spotlight = [int]$counts[1]; Local = [int]$counts[2]; Commons = [int]$counts[3]; Picsum = [int]$counts[4] }
   $global:BwPanelIdxCache = $idx
   $global:BwPanelIdxAt = [DateTime]::UtcNow
   return $idx
@@ -8611,7 +10078,7 @@ function Get-BwPanelState {
   foreach ($k in @('cycle_minutes','resolution_mode','wallpaper_style','auto_fetch','fav_only',
                    'art_fit_mode','desktop_shortcut','lib_cap','bing_cap','spotlight_per_cycle',
                    'fetch_round_cap','fetch_day_cap','recycle_min_days','src_timeout_sec','bing_only',
-                   'local_src_dir')) {
+                   'wallpaper_mode','local_src_dir')) {
     $v = $null
     try { if ($c.PSObject.Properties[$k]) { $v = $c.PSObject.Properties[$k].Value } } catch {}
     $cfg[$k] = $v
@@ -8729,7 +10196,18 @@ function Get-BwPanelState {
   try { $strangers = @($s.strangers | Where-Object { $_ }).Count } catch {}
 
   $poolLine = ''; $poolMode = ''
-  try { $ps1 = Get-BwSourcePoolStatus $s; $poolLine = [string]$ps1.Line; $poolMode = [string]$ps1.Mode } catch {}
+  # 独立模式: 源池那一行要说自己那个库, 别报聚焦源池的"还有新图/老图循环"。
+  $psMode = Get-BwMode
+  if ($psMode -eq 'commons' -or $psMode -eq 'picsum') {
+    try {
+      $sd = Get-BwSrcDef $psMode
+      $sn = @(Get-BwSrcFiles (Get-BwSrcDir $c $psMode)).Count
+      $poolLine = ([string]$sd.Name + ' 图库 ' + $sn + ' 张 · 只在这个库里独立循环')
+      $poolMode = 'new'
+    } catch { $poolLine = '' }
+  } else {
+    try { $ps1 = Get-BwSourcePoolStatus $s; $poolLine = [string]$ps1.Line; $poolMode = [string]$ps1.Mode } catch {}
+  }
   # 2026-10-24: 面板上的「显示器」只显示主屏(多屏这一步不做), 分辨率当场量一次
   $scrW = 0; $scrH = 0
   try { $scr = Get-BwScreenSize; $scrW = [int]$scr.W; $scrH = [int]$scr.H } catch { $scrW = 0; $scrH = 0 }
@@ -8737,16 +10215,48 @@ function Get-BwPanelState {
   $localDir = ''; $localCount = 0
   try { $localDir = Get-BwLocalDir $c; if ($idx) { $localCount = [int]$idx['Local'] } elseif ($localDir) { $localCount = @(Get-BwLocalFiles $c).Count } } catch { $localDir = ''; $localCount = 0 }
   # 2026-10-24: 张数直接用上面那份索引的统计, 不再对每个目录重列一遍
-  $bingCount = 0; $spotCount = 0
-  if ($idx) { $bingCount = [int]$idx['Bing']; $spotCount = [int]$idx['Spotlight'] }
+  $bingCount = 0; $spotCount = 0; $commonsCount = 0; $picsumCount = 0
+  if ($idx) {
+    $bingCount = [int]$idx['Bing']; $spotCount = [int]$idx['Spotlight']
+    $commonsCount = [int]$idx['Commons']; $picsumCount = [int]$idx['Picsum']
+  }
+  # 两个新图源的库容上限: 2026-11-06 起统一跟随「图库上限」(lib_cap), 与聚焦同口径。
+  # 回给面板画库容条, 免得前端拿不到配置就一律显示成"不限"。
+  $capCommons = 200; $capPicsum = 200
+  try { $capCommons = [int](Get-BwSrcCap $c 'commons') } catch {}
+  try { $capPicsum  = [int](Get-BwSrcCap $c 'picsum')  } catch {}
 
   # 2026-10-25: 「还原我原来的填充方式」要在面板上有个入口, 所以把原值记录也回给页面。
   # 只回"有没有记录 + 一句人话", 注册表原值本身留在 config.json 里不外传。
   $hasOrig = $false; $origTxt = ''
   try { $oOrig = Get-BwStyleOrig; if ($oOrig) { $hasOrig = $true; $origTxt = Format-BwStyleOrig $oOrig } } catch {}
 
+  # 2026-11-06 用户「尊重作者」: 万象/随拍把完整作者名 / 拍摄日 / 许可 / Commons 详情页
+  # 回给面板, 用一行小字单独显示; 中文短句命名一个字不动, 也不缩写成首字母
+  # (CC BY / CC BY-SA 要求完整署名标识, 缩写不构成合规署名)。
+  # 只在这两个模式返回 —— 必应/聚焦的 copyright 是微软版权串, 混进来会驴唇不对马嘴。
+  $credit = [ordered]@{ author = ''; shot = ''; lic = ''; link = '' }
+  if ($psMode -eq 'commons' -or $psMode -eq 'picsum') {
+    try {
+      if ($lastWall -and (Test-Path -LiteralPath $lastWall)) {
+        $cm = Read-BwImageMeta $lastWall
+        if ($cm) {
+          $cp = [string]$cm.copyright
+          $bits = @($cp -split '\s+·\s+')
+          $credit.shot = [string]$cm.shot_date
+          if (-not $credit.shot) { $credit.shot = [string]$cm.date }
+          $credit.link = [string]$cm.source_link
+          $credit.author = [string]$cm.author
+          if ($bits.Count -ge 2) { $credit.lic = [string]$bits[0] }
+          if (-not $credit.author -and $bits.Count -ge 3) { $credit.author = [string]$bits[1] }
+        }
+      }
+    } catch {}
+  }
+
   return [ordered]@{
     ok          = $true
+    credit      = $credit
     scriptVer   = $ver
     launcherVer = $lauVer
     dataDir     = [string]$global:BWRoot
@@ -8771,7 +10281,8 @@ function Get-BwPanelState {
     local       = [ordered]@{ dir = $localDir; count = $localCount }
     auto        = [ordered]@{ startup = $autoOn; daemon = $daemonOn; dlTotal = $dlTotal; strangers = $strangers }
     desktop     = [ordered]@{ on = $deskOn; exists = $deskExists; path = $deskPath }
-    counts      = [ordered]@{ bing = $bingCount; spotlight = $spotCount }
+    counts      = [ordered]@{ bing = $bingCount; spotlight = $spotCount; commons = $commonsCount; picsum = $picsumCount }
+    srcCaps     = [ordered]@{ commons = $capCommons; picsum = $capPicsum }
     log         = $logTail
   }
 }
@@ -8792,6 +10303,13 @@ function Invoke-BwPanelSet([string]$key, $value) {
       $n = 1440
     }
     $c | Add-Member -NotePropertyName $key -NotePropertyValue $n -Force
+  } elseif ($key -eq 'wallpaper_mode') {
+    # 四个轮换模式。bing_only 是老字段, 后台/前端还有多处直接读它(24 小时节奏钉住、
+    # tick、最近换过筛选), 这里一并写成同一口径, 免得两份状态打架。
+    $v2 = ([string]$value).Trim().ToLower()
+    if (@('focus','bing','commons','picsum') -notcontains $v2) { throw ('轮换模式不支持: ' + $v2) }
+    $c | Add-Member -NotePropertyName wallpaper_mode -NotePropertyValue $v2 -Force
+    $c | Add-Member -NotePropertyName bing_only -NotePropertyValue ([bool]($v2 -eq 'bing')) -Force
   } elseif ($key -eq 'auto_fetch' -or $key -eq 'fav_only' -or $key -eq 'bing_only') {
     # 注意: [bool]"false" 在 PowerShell 里是 $true(非空字符串), 直接转会把开关"关不掉"。
     # 面板传来的都是字符串, 必须按白名单判。
@@ -8803,6 +10321,12 @@ function Invoke-BwPanelSet([string]$key, $value) {
       if ($s2 -notin @('false', '0', 'off', 'no', '关', '')) { $b = $true }
     }
     $c | Add-Member -NotePropertyName $key -NotePropertyValue $b -Force
+    # 旧前端 / 旧标签页仍可能只发 bing_only: 同步写 wallpaper_mode, 保持两者一致。
+    if ($key -eq 'bing_only') {
+      $c | Add-Member -NotePropertyName wallpaper_mode -NotePropertyValue $(
+        if ($b) { 'bing' } else { 'focus' }
+      ) -Force
+    }
   } elseif ($key -eq 'resolution_mode') {
     $v = ([string]$value).Trim().ToLower()
     if (@('auto','uhd') -notcontains $v) { throw ('画质档不支持: ' + $v) }
@@ -8852,44 +10376,62 @@ function Invoke-BwPanelSet([string]$key, $value) {
       [void](New-BwDesktopShortcutForce)
     }
   }
-  # 必应模式一打开就立刻换成"今天这张": 用户在面板上开它, 期待的是当场看到今天的图,
-  # 而不是等到下一个轮换周期(最多 30 分钟)才动。用独立进程跑, 不占住面板的请求。
-  if ($key -eq 'bing_only') {
+  # 切模式要当场换一张: 用户在面板上点一下, 期待的是立刻看到新模式的图,
+  # 而不是等到下一个轮换周期(最多 30 分钟)。用独立进程跑, 不占住面板的请求。
+  if ($key -eq 'bing_only' -or $key -eq 'wallpaper_mode') {
+    $newMode = Get-BwMode
+    $isBingNow = ($newMode -eq 'bing')
     # 2026-10-23 用户要求：「必应模式以后，更换节奏应该变成 24 小时」。
-    # 必应模式本来就一天一张，间隔再留着 30 分钟会自相矛盾（界面上还会显示"约 30 分钟后换"）。
-    # 进必应 -> 固定 1440 分钟；退出必应 -> 还原进之前的值（缺省 30）。
-    if ([bool]$c.bing_only) {
+    # 只在**真正进/出必应**时动间隔: 聚焦 <-> 万象 <-> 随拍 之间互切
+    # 全都是"按间隔随机换", 不该把用户自己设的 10 分钟/1 小时重置成 30 分钟。
+    if ($isBingNow) {
       $prev = 30
       try { if ($c.PSObject.Properties['cycle_minutes']) { $prev = [int]$c.cycle_minutes } } catch {}
-      if ($prev -ne 1440) {
+      if (($prev -ne 1440) -and -not $c.PSObject.Properties['cycle_before_bing']) {
         $c | Add-Member -NotePropertyName cycle_before_bing -NotePropertyValue $prev -Force
       }
       $c | Add-Member -NotePropertyName cycle_minutes -NotePropertyValue 1440 -Force
       Log '面板: 必应模式开启 -> 更换节奏固定 24 小时'
-    } else {
+    } elseif (([int]$c.cycle_minutes -eq 1440) -and $c.PSObject.Properties['cycle_before_bing']) {
       $restore = 30
       try {
-        if ($c.PSObject.Properties['cycle_before_bing']) {
-          $r = [int]$c.cycle_before_bing
-          if ($r -ge 5 -and $r -le 1440) { $restore = $r }
-        }
+        $r = [int]$c.cycle_before_bing
+        if ($r -ge 5 -and $r -le 1440) { $restore = $r }
       } catch {}
       $c | Add-Member -NotePropertyName cycle_minutes -NotePropertyValue $restore -Force
-      Log ('面板: 必应模式关闭 -> 更换节奏还原为 ' + $restore + ' 分钟')
+      Log ('面板: 离开必应模式 -> 更换节奏还原为 ' + $restore + ' 分钟')
     }
     # 注意：Save-BwConfig 在这段之前已经执行过了（在开关解析之后），
     # 所以这里改的 cycle_minutes 必须再存一次盘，否则只改了内存、下次读回来还是旧值。
     Save-BwConfig $c
+    # 旧队列是上一个模式洗出来的, 里面全是那个库的图。清空后下一次换图会按新模式重洗,
+    # 不会出现"切到万象了, 桌面却先换出一张聚焦图"。
+    try {
+      $sm = Get-BwState
+      if ($sm) { $sm.queue = @(); Save-BwStateKeepFav $sm }
+    } catch {}
     $jobName = 'normalnow'
-    if ([bool]$c.bing_only) { $jobName = 'bingnow' }
+    if ($isBingNow) { $jobName = 'bingnow' }
     try {
       $coreFile = Join-Path $global:BWRoot 'core.ps1'
       Start-Process 'powershell.exe' -ArgumentList @(
         '-NoProfile','-ExecutionPolicy','Bypass','-File',('"{0}"' -f $coreFile),'-PanelJob',$jobName
       ) -WindowStyle Hidden | Out-Null
-      if ($jobName -eq 'bingnow') { Log '面板: 必应模式已开, 正在切成今天的必应图' }
-      else { Log '面板: 必应模式已关, 正在恢复默认轮换' }
+      if ($isBingNow) { Log '面板: 必应模式已开, 正在切成今天的必应图' }
+      else { Log ('面板: 已切到 ' + $newMode + ' 模式, 正在按新模式换一张') }
     } catch {}
+    # 切到独立模式时立刻安排后台攒几张备用图: 维基单张要 8~30 秒,
+    # 全放在换图那一刻干等用户体验很差。延迟 20 秒起步, 避开上面那次「当场换一张」。
+    if ($newMode -eq 'commons' -or $newMode -eq 'picsum') {
+      try { Remove-Item -LiteralPath (Join-Path $global:BWRoot 'backfill.lock') -Force -ErrorAction SilentlyContinue } catch {}
+      try {
+        $coreFile = Join-Path $global:BWRoot 'core.ps1'
+        $pre = "Start-Sleep -Seconds 20; . '$coreFile'; Start-BwPrefetch"
+        $b64p = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($pre))
+        Start-Process 'powershell.exe' -WindowStyle Hidden -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand', $b64p) | Out-Null
+        Log ('面板: 已安排 ' + $newMode + ' 模式后台预热(攒 4 张备用图, 不挡换图)')
+      } catch {}
+    }
   }
   return $true
 }
@@ -9010,6 +10552,9 @@ public class BwFolderWin {
 function Invoke-BwPanelAction($req) {
   $do = ''
   try { $do = ([string]$req.do).Trim().ToLower() } catch {}
+  # 2026-11-06: 图库每一项带 src(归属库), 下面 use / fav / del 都按它把作用对象钉死。
+  $reqSrc = ''
+  try { if ($req -and $req.PSObject.Properties['src']) { $reqSrc = ([string]$req.src).Trim() } } catch {}
   # 2026-10-24: 写操作后立刻失效面板的只读缓存（状态/索引/图库），避免点到旧数据。
   if (($do -ne '') -and ($do -ne 'state')) {
     $global:BwPanelStateCache = ''
@@ -9067,6 +10612,8 @@ function Invoke-BwPanelAction($req) {
       try { if ($s.last_wall) { $nm = Split-Path ([string]$s.last_wall) -Leaf } } catch {}
     }
     if (-not $nm) { throw '不知道该收藏哪一张' }
+    # 指哪收藏哪: 图库来的请求带 src, 必须这张图真的在那个库里, 不接受模糊命中。
+    if ($reqSrc -and -not (Get-BwPanelResolve $nm $reqSrc)) { throw '这张图不在当前图库里' }
     $favs = @()
     try { $favs = @($s.favorites | Where-Object { $_ }) } catch { $favs = @() }
     if ($do -eq 'fav') {
@@ -9085,19 +10632,83 @@ function Invoke-BwPanelAction($req) {
     return $st
   }
 
+  # 2026-11-05 用户「收藏的图片，删除不了」: 图库里手动删除。
+  # 移进回收站(可还原), 不永久删; 收藏 / 队列 / 看过名单 / 当前壁纸指针一起清。
+  if ($do -eq 'del') {
+    $nm = [string]$req.name
+    $p = Get-BwPanelResolve $nm $reqSrc
+    if (-not $p) { $st0 = Get-BwPanelState; $st0['ok'] = $false; $st0['msg'] = '这张图找不到了'; return $st0 }
+    if (-not (Move-BwToRecycle $p)) { $st0 = Get-BwPanelState; $st0['ok'] = $false; $st0['msg'] = '移进回收站失败'; return $st0 }
+    $s = Get-BwState
+    if ($s) {
+      $s.favorites = @(@(Get-BwFav $s) | Where-Object { [string]$_ -ne $nm })
+      $s.queue = @(@($s.queue | Where-Object { $_ }) | Where-Object { [string]$_ -ne $nm })
+      $dk = Get-BwNameKey $nm
+      $s.history = @(@($s.history | Where-Object { $_ }) | Where-Object { [string]$_ -ne $dk })
+      if ($s.last_wall -and ([string](Split-Path ([string]$s.last_wall) -Leaf) -eq $nm)) { $s.last_wall = '' }
+      Save-BwState $s
+    }
+    Log ('面板: 删除图片(移进回收站) ' + $nm)
+    $st = Get-BwPanelState
+    $st['ok'] = $true
+    return $st
+  }
+
   if ($do -eq 'use') {
     $nm = [string]$req.name
-    $p = Get-BwPanelResolve $nm
+    $p = Get-BwPanelResolve $nm $reqSrc
     if (-not $p) { throw '这张图找不到了（可能已被自动清理）' }
+    # 2026-11-05 用户「图库里的图片，不管任何模式都能当壁纸，应该划分开」:
+    # 从图库点哪张图, 轮换模式就自动归到那张图所属的库 —— 桌面上的图和当前模式
+    # 永远一致, 之后按间隔轮换也只在这个库里循环。服务端统一处理,
+    # 图库 / 最近换过 / 收藏 三个入口都走这一条, 前端和老标签页绕不过去。
+    $switched = ''
+    try {
+      $idx2 = Get-BwPanelIndex
+      $smap2 = $idx2['Src']
+      $src2 = ''
+      if ($smap2) { $src2 = [string]$smap2[[string]$p.ToLower()] }
+      $want2 = ''
+      switch ($src2) {
+        'bing'      { $want2 = 'bing' }
+        'spotlight' { $want2 = 'focus' }
+        'commons'   { $want2 = 'commons' }
+        'picsum'    { $want2 = 'picsum' }
+      }
+      if ($want2 -and ($want2 -ne (Get-BwMode))) {
+        $c2 = Get-BwConfig
+        $c2 | Add-Member -NotePropertyName wallpaper_mode -NotePropertyValue $want2 -Force
+        $c2 | Add-Member -NotePropertyName bing_only -NotePropertyValue ([bool]($want2 -eq 'bing')) -Force
+        # 必应模式固定 24 小时、离开时还原 —— 与面板上点模式切换同一口径
+        if ($want2 -eq 'bing') {
+          $prevCycle = 30
+          try { if ($c2.PSObject.Properties['cycle_minutes']) { $prevCycle = [int]$c2.cycle_minutes } } catch {}
+          if (($prevCycle -ne 1440) -and -not $c2.PSObject.Properties['cycle_before_bing']) {
+            $c2 | Add-Member -NotePropertyName cycle_before_bing -NotePropertyValue $prevCycle -Force
+          }
+          $c2 | Add-Member -NotePropertyName cycle_minutes -NotePropertyValue 1440 -Force
+        } elseif (([int]$c2.cycle_minutes -eq 1440) -and $c2.PSObject.Properties['cycle_before_bing']) {
+          $restoreCycle = 30
+          try { $rc = [int]$c2.cycle_before_bing; if ($rc -ge 5 -and $rc -le 1440) { $restoreCycle = $rc } } catch {}
+          $c2 | Add-Member -NotePropertyName cycle_minutes -NotePropertyValue $restoreCycle -Force
+        }
+        Save-BwConfig $c2
+        $switched = $want2
+        Log ('面板: 图库选了 ' + $src2 + ' 的图, 轮换模式自动归到 ' + $want2)
+      }
+    } catch { Log ('面板: 自动归模式没成(不影响设壁纸): ' + $_.Exception.Message) 'WARN' }
     $ok = Set-BwWall $p
     $s = Get-BwState
     $s.last_wall = $p
     $s.last_swap = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+    # 换了模式就把旧队列清空, 下一轮按新库重洗, 不把上一个模式的图混进来
+    if ($switched) { $s.queue = @() }
     Add-BwHist $s $nm
     Save-BwStateKeepFav $s
     Log ('面板: 手动设为壁纸 ' + $nm + ' (ok=' + $ok + ')')
     $st = Get-BwPanelState
     $st['ok'] = [bool]$ok
+    if ($switched) { $st['modeSwitched'] = $switched }
     return $st
   }
 
@@ -9165,7 +10776,21 @@ function Invoke-BwPanelAction($req) {
     return $st
   }
 
-  if ($do -eq 'quit') { return [ordered]@{ ok = $true } }
+  if ($do -eq 'quit') {
+    # 2026-11-06 用户「点退出控制台没反应 / 要整个程序退出后台运行」:
+    # 原来这里只回一句 ok, HTTP 循环接着只把面板网页服务关掉, --daemon 后台仍在按节拍换图,
+    # 用户看到的就是「点了没反应」。现在写 daemon.stop: launcher.py 的 mode_daemon
+    # 每轮开头都查它(分片睡眠也按 1 秒盯着), 最迟 1 秒收工; 面板服务由 HTTP 循环关闭,
+    # 两边一起退 = 整个程序退出后台。daemon 下次启动会自己清掉这个标记。
+    $sf = Join-Path $global:BWRoot 'daemon.stop'
+    try {
+      [System.IO.File]::WriteAllText($sf, 'stop', (New-Object System.Text.UTF8Encoding($false)))
+      Log '面板: 退出程序 -> 已通知后台守护进程收工'
+    } catch {
+      Log ('面板: 退出程序 -> 停止信号没写上: ' + $_.Exception.Message) 'WARN'
+    }
+    return [ordered]@{ ok = $true; exiting = $true; note = '面板和后台都已退出，可以直接关掉这个标签页' }
+  }
 
   if ($do -eq 'autostart') {
     # 三件事: 开(建启动项+立刻拉后台) / 关(删启动项+让后台收工) / 已开着但后台没跑就只拉后台
@@ -9206,6 +10831,13 @@ function Invoke-BwPanelAction($req) {
     if ($which -eq 'spotlight') { $p = [string]$c.spotlight_save_dir }
     elseif ($which -eq 'local') { $p = Get-BwLocalDir $c }
     elseif ($which -eq 'data') { $p = [string]$global:BWRoot }
+    elseif ($which -eq 'base') { try { $p = [string](Split-Path ([string]$c.bing_save_dir) -Parent) } catch { $p = '' } }
+    elseif ($which -eq 'commons' -or $which -eq 'picsum') {
+      # 图库筛到「万象 / 随拍」时, 打开的是那一个源自己的库, 不是必应库。
+      # 目录可能还没建(刚切模式、一张图都没下过), 顺手建出来, 免得退回到必应。
+      $p = Get-BwSrcDir $c $which
+      if ($p -and -not (Test-Path -LiteralPath $p)) { [void](New-BwDir $p) }
+    }
     # 2026-10-24 用户要求：本地源没启用时不要拦着，直接退回到程序默认的壁纸库根目录
     if (-not $p -or -not (Test-Path -LiteralPath $p)) {
       $fallback = ''
@@ -9275,12 +10907,15 @@ function Invoke-BwPanelBingNow {
 # 要等下一个轮换周期(最多 30 分钟)才动 —— 用户会觉得"关了没反应"。
 function Invoke-BwPanelNormalNow {
   $s = Get-BwState
-  $ok = Invoke-BwSwap $s (Get-Date) '面板: 关闭必应模式, 恢复默认轮换'
+  $m = Get-BwMode
+  $nm = @{ focus='聚焦'; bing='必应'; commons='万象'; picsum='随拍' }[$m]
+  if (-not $nm) { $nm = '聚焦' }
+  $ok = Invoke-BwSwap $s (Get-Date) ('面板: 切到 ' + $nm + ' 模式, 当场换一张')
   Save-BwStateKeepFav $s
   if (-not $ok) {
-    Log '面板: 恢复默认轮换时没换成图(队列可能是空的), 后台下一轮会补; 也可以点「补几张新图」'
+    Log ('面板: ' + $nm + ' 模式当场没换成图(库可能是空的), 后台会补; 也可以点「补几张新图」')
   } else {
-    Log '面板: 已关闭必应模式, 并已按默认轮换换了一张'
+    Log ('面板: 已切到 ' + $nm + ' 模式, 并当场换了一张')
   }
   return [bool]$ok
 }
@@ -9295,6 +10930,31 @@ function Invoke-BwPanelRefill {
   $want = 6
   try { $want = [int]$c.spotlight_per_cycle } catch { $want = 6 }
   if ($want -gt 50) { $want = 50 }
+  $curMode = Get-BwMode
+  if ($curMode -eq 'bing') {
+    Log '面板任务: 必应模式只补齐错过的日期, 不抓聚焦或其它图源'
+    [void](Invoke-BwBackfill (Get-BwState))
+    Log '面板任务: 必应补漏结束'
+    return
+  }
+  $mk = Get-BwModeSrcKey
+  if ($mk) {
+    # 2026-11-05 修: 原来这个函数无条件抓聚焦, 在万象/随拍模式下点「补新图」时
+    # 一张本源的图都不下, 反而把聚焦图插进独立队列(实测日志 22:28~22:31),
+    # 用户干等还破坏了「各自独立循环」。独立模式只补自己那一个源。
+    Log ('面板任务: 开始补货(' + $mk + ' 独立模式), 本轮最多 ' + $want + ' 张')
+    $dir = Get-BwSrcDir $c $mk
+    $before = @{}
+    foreach ($f in @(Get-BwSrcFiles $dir)) { $before[[string]$f.Name] = $true }
+    [void](Invoke-BwSrcFetch -key $mk -count $want -Quiet -Force)
+    $names = @()
+    foreach ($f in @(Get-BwSrcFiles $dir)) {
+      if (-not $before.ContainsKey([string]$f.Name)) { $names += [string]$f.Name }
+    }
+    if ($names.Count -gt 0) { [void](Add-BwNewToQueue $s $names); Save-BwStateKeepFav $s }
+    Log ('面板任务: 补货结束(' + $mk + '), 新下载 ' + $names.Count + ' 张')
+    return
+  }
   Log ('面板任务: 开始补货, 本轮最多 ' + $want + ' 张')
   $new = @(Invoke-SpotlightFetch -count $want -Quiet -Counter)
   if ($new.Count -gt 0) {
