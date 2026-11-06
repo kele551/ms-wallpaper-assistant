@@ -100,6 +100,29 @@
   .cr-row .cr-name{color:var(--txt);max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .cr-row a{color:inherit;text-decoration:underline;text-underline-offset:2px;opacity:.85}
   .mono{font-family:var(--mono);font-size:var(--fs-meta)}
+  /* 2026-11-06 用户「这个位置安排照片的曝光参数，GPS」+「照片的好多信息没有展示」：
+     署名行下面再加两行 —— 第二行放曝光与拍摄地点，第三块放原图信息（页面原文+译文）。 */
+  /* 2026-11-06 用户「好好规整一下，怎么看着比较凌乱，没有那种工业感觉」：
+     署名区按仪表读数排版 —— 标签低对比、值用等宽数字、项间 1px 细线分隔，
+     不再用全角空格 + 小圆点混排（那种排法每段宽度不齐，看着散）。 */
+  .crd1,.crd2{display:flex;flex-wrap:wrap;align-items:baseline;row-gap:2px}
+  .crd2{margin-top:5px}
+  .ci{display:inline-flex;align-items:baseline;white-space:nowrap}
+  /* 分隔竖线用显式 <i class=cs>（跟在前项后面）而不是 ::before，
+     这样折行时竖线留在上一行行尾，新行不会以孤线开头。 */
+  .cs{align-self:center;width:1px;height:9px;margin:0 11px;background:currentColor;opacity:.22;flex:none}
+  .cl{color:var(--txt-3);margin-right:7px;font-size:.94em;letter-spacing:.06em}
+  .cv{color:var(--txt-2);font-variant-numeric:tabular-nums}
+  .cv.tec{font-family:var(--mono);font-size:.93em;letter-spacing:.01em}
+  .crd1 .cam,.crd2 .cam{color:var(--txt-2)}
+  .crd1 a{color:inherit;text-decoration:none;border-bottom:1px solid currentColor;padding-bottom:1px;opacity:.9}
+  .crd1 a:hover{opacity:1}
+  .imeta{margin:2px 16px 14px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card-2)}
+  .imeta-h{display:flex;align-items:baseline;gap:8px;margin:0 0 7px}
+  .imeta-h b{font-size:var(--fs-micro);font-weight:600;letter-spacing:.02em;color:var(--txt-2)}
+  .imeta-list{display:block;margin:0;font-size:var(--fs-micro);line-height:1.7}
+  .imeta-list dt{color:var(--txt-3)}
+  .imeta-list dd{margin:0;color:var(--txt-2);overflow-wrap:anywhere}
   .xs{font-size:var(--fs-micro)}
   .t-lg{font-size:17px;font-weight:650}
 
@@ -230,6 +253,8 @@
   .cam.nikon,.cam.sony{text-transform:uppercase;letter-spacing:.09em;font-weight:600}
   .cam.canon{font-weight:650;letter-spacing:.005em}
   .cam.lumix,.cam.fuji,.cam.olympus{letter-spacing:.03em;font-weight:600}
+  /* 手机拍的：小一号、不加重，别和单反机型抢注意力（Redmi 3S / iPhone 15 这类）。 */
+  .cam.phone{font-size:.92em;opacity:.85;letter-spacing:.01em}
   .art .empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--txt-3);
     font-size:var(--fs-meta);z-index:1}
 
@@ -466,6 +491,12 @@
             <!-- 2026-11-06 尊重作者: 万象/随拍的一行小字署名(完整作者名 + 拍摄日 + 许可 + 来源)。
                  只在当前壁纸属于这两个模式时出现, 低对比小字, 不抢画面也不动中文短句命名。 -->
             <div class="muted xs" id="heroCredit" style="display:none;padding:0 16px 12px;line-height:1.6;white-space:normal;overflow-wrap:anywhere"></div>
+            <!-- 2026-11-06 用户「留着吧，有些介绍的蛮详细的」：保留页面介绍（中文译文）这一块，
+                 只在有译文时出现；没有译文整块隐藏，不留空位。 -->
+            <div class="imeta" id="heroMeta" style="display:none">
+              <div class="imeta-h"><b>原图介绍</b><span class="muted xs" id="imetaFrom"></span></div>
+              <dl class="imeta-list" id="imetaList"></dl>
+            </div>
             <div class="monrow">
               <span class="muted xs lbl">显示器</span>
               <span class="chip on" id="chipScreen" title="多屏支持暂不做">主屏 —</span>
@@ -900,6 +931,7 @@ function camBrand(t){
   if (/nikon/.test(s)) return "nikon";
   if (/sony|slt-|ilce-|dsc-|alpha|nex-/.test(s)) return "sony";
   if (/canon/.test(s)) return "canon";
+  if (/xiaomi|redmi|poco|iphone|apple|samsung|galaxy|huawei|honor|oneplus|oppo|vivo|pixel|motorola|nokia|realme/.test(s)) return "phone";
   if (/panasonic|lumix|dmc-/.test(s)) return "lumix";
   if (/fujifilm|finepix|x-t\d|x100|x-pro/.test(s)) return "fuji";
   if (/olympus|om-d|e-pl\d|e-m\d/.test(s)) return "olympus";
@@ -1152,31 +1184,109 @@ function render(s){
     var _cel = $("heroCredit");
     if (_cel) {
       if (_shotMode && _cr.author) {
-        /* 2026-11-06 用户「底部署名行就写日期」：日期归署名行，副行不再重复。
-           仍是完整作者名 + 拍摄日 + 许可 + 来源链接, 一行小字; 作者用 textContent 写。 */
-        var _segs = [{ t: "摄影：" + _cr.author }];
-        if (_cr.shot) { _segs.push({ t: "摄于 " + _cr.shot }); }
-        /* 2026-11-06 用户「有采用什么设备拍摄的信息吗」：机型来自 Commons 完整 EXIF，
-           取不到就不写（不编设备）。机型单独成段，好按品牌上近似排版（见 camSpan）。 */
-        if (_cr.cam) { _segs.push({ t: _cr.cam, cam: true }); }
-        if (_cr.lic) { _segs.push({ t: _cr.lic }); }
+        /* 2026-11-06 用户「好好规整一下…没有那种工业感觉」：
+           改成「标签 + 值」两行仪表排版。标签统一低对比小字，值用等宽数字，
+           项目之间由 CSS 的 1px 竖线分隔（.ci+.ci::before），不再手工拼全角空格。 */
+        function _ci(label, val, cls) {
+          var s = document.createElement("span");
+          s.className = "ci";
+          if (label) {
+            var l = document.createElement("span");
+            l.className = "cl"; l.textContent = label;
+            s.appendChild(l);
+          }
+          var v = document.createElement("span");
+          v.className = "cv" + (cls ? " " + cls : "");
+          v.textContent = val;
+          s.appendChild(v);
+          return s;
+        }
+        function _sep() {
+          var i = document.createElement("i");
+          i.className = "cs";
+          return i;
+        }
+        function _row(cls) { var d = document.createElement("div"); d.className = cls; return d; }
+        function _add(row, item) {
+          if (row.childNodes.length) { row.appendChild(_sep()); }
+          row.appendChild(item);
+        }
         _cel.textContent = "";
-        _cel.title = _segs.map(function (x) { return x.t; }).join("　·　");
-        _segs.forEach(function (x, i) {
-          if (i) { _cel.appendChild(document.createTextNode("　·　")); }
-          _cel.appendChild(x.cam ? camSpan(x.t) : document.createTextNode(x.t));
-        });
+        _cel.removeAttribute("title");
+        var _r1 = document.createElement("div");
+        _r1.className = "crd1";
+        _add(_r1, _ci("摄影", _cr.author));
+        if (_cr.shot) { _add(_r1, _ci("摄于", _cr.shot)); }
+        /* 机型来自 Commons 完整 EXIF，取不到就不写（不编设备）；品牌近似字体见 camSpan。 */
+        if (_cr.cam) {
+          var _ciCam = document.createElement("span");
+          _ciCam.className = "ci"; _ciCam.appendChild(camSpan(_cr.cam));
+          _add(_r1, _ciCam);
+        }
+        if (_cr.lic) { _add(_r1, _ci("", _cr.lic)); }
         if (_cr.link && /^https:\/\/commons\.wikimedia\.org\//i.test(_cr.link)) {
           var _lk = document.createElement("a");
           _lk.href = _cr.link; _lk.target = "_blank"; _lk.rel = "noopener noreferrer";
           _lk.textContent = "来源";
-          _lk.style.cssText = "margin-left:8px;color:inherit;text-decoration:underline;text-underline-offset:2px;opacity:.75";
-          _cel.appendChild(_lk);
+          var _ciLk = document.createElement("span");
+          _ciLk.className = "ci"; _ciLk.appendChild(_lk);
+          _add(_r1, _ciLk);
+        }
+        _cel.appendChild(_r1);
+        /* 第二行同样是「标签 + 值」，暴露参数与坐标用等宽字体，读起来像仪表读数。 */
+        if (_cr.expo || _cr.gps) {
+          var _r2 = document.createElement("div");
+          _r2.className = "crd2";
+          if (_cr.expo) { _add(_r2, _ci("参数", _cr.expo, "tec")); }
+          if (_cr.gps) { _add(_r2, _ci("位置", _cr.gps, "tec")); }
+          _cel.appendChild(_r2);
         }
         _cel.style.display = "";
       } else {
         _cel.textContent = ""; _cel.title = ""; _cel.style.display = "none";
       }
+    }
+    /* 2026-11-06 用户「这些不要」：原始作品名/原始介绍/分类/上传时间一律去掉，
+       悬停只保留拍摄地点、设备、参数。 */
+    var _tip = [];
+    if (_cr.gps) { _tip.push("位置：" + _cr.gps + "（WGS-84）"); }
+    if (_cr.cam) { _tip.push("拍摄设备：" + _cr.cam); }
+    if (_cr.expo) { _tip.push("参数：" + _cr.expo); }
+    var _him = $("heroImg");
+    if (_him) {
+      if (_tip.length) { _him.title = _tip.join("\n"); } else { _him.removeAttribute("title"); }
+    }
+    /* 2026-11-06 用户「留着吧，有些介绍的蛮详细的」：只保留页面介绍（中文译文），
+       没有译文就不显示这块。 */
+    var _mbox = $("heroMeta"), _mlist = $("imetaList");
+    if (_mbox && _mlist) {
+      _mlist.textContent = "";
+      var _rows = [];
+      /* 2026-11-06 用户「名字和介绍一模一样」：名字本来就取自页面介绍，两者高度重复时
+         这块卡就是复读，自动收起；只有介绍里确有名字没覆盖的信息（公共字占比 < 0.6）才显示。 */
+      var _zn = String(_cr.zhname || "").replace(/[\s，。、·,.!！?？:：]/g, "");
+      var _zd = String(_cr.zhdesc || "").replace(/[\s，。、·,.!！?？:：]/g, "");
+      var _dup = false;
+      if (_zn && _zd) {
+        if (_zd.indexOf(_zn) !== -1 || _zn.indexOf(_zd) !== -1) {
+          _dup = true;
+        } else {
+          var _set = {};
+          for (var _i = 0; _i < _zn.length; _i++) { _set[_zn.charAt(_i)] = 1; }
+          var _hit = 0;
+          for (var _j = 0; _j < _zd.length; _j++) { if (_set[_zd.charAt(_j)]) { _hit++; } }
+          if (_hit / Math.max(_zn.length, _zd.length) >= 0.6) { _dup = true; }
+        }
+      }
+      if (_cr.zhdesc && !_dup) { _rows.push(["", _cr.zhdesc, false]); }
+      /* 2026-11-06 用户「别写什么中文了，本来就是中文」：不再放「中文/介绍」这类行标签，
+         介绍文本直接排开，干净。 */
+      _rows.forEach(function (r) {
+        var _dd = document.createElement("dd"); _dd.textContent = r[1];
+        _mlist.appendChild(_dd);
+      });
+      setText("imetaFrom", (_cr.link && /commons\.wikimedia\.org/i.test(_cr.link)) ? "来自 Commons 页面" : "");
+      _mbox.style.display = _rows.length ? "" : "none";
     }
     setText("heroBadge", isBing ? "必应模式 · 每日一图"
       : ((mode === "commons" || mode === "picsum") ? (MODE_NAME[mode] + " · 当前壁纸") : "当前壁纸"));
@@ -1191,6 +1301,7 @@ function render(s){
     $("heroSub").style.display = "none";
     setText("heroBadge", "当前壁纸");
     if (_cel) { _cel.textContent = ""; _cel.title = ""; _cel.style.display = "none"; }
+    var _him0 = $("heroImg"); if (_him0) { _him0.removeAttribute("title"); }
     $("btnOpenImg").style.display = "none";
   }
 
@@ -1741,7 +1852,18 @@ function galleryUrl(){
 function loadGallery(reset){
   if (reset){ G.skip = 0; G.items = []; $("lib").innerHTML = ""; }
   G.more = false;
-  $("libEmpty").style.display = "none";
+  /* 2026-11-06 用户截图(万象"空库"): 切库那一瞬间, 旧库的计数还挂在头上
+     (「已显示 25 张」其实是随拍库的), 格子已清空, 空态提示又被原来这行 hide 藏掉
+     —— 一整块空白看着就像坏了。其实数据马上就到(日志为证: 截图 10 秒后用户就
+     点中了万象的图设成壁纸)。现在一进加载先摆出「正在读取」的姿态: 计数改读取中、
+     空态框显示"正在读取图库…"(只在重读时), 「加载更多」先藏掉免得上一库的按钮
+     残留; 读完立刻被真实内容覆盖, 出错仍走原来的错误提示。 */
+  setText("libCount", "正在读取…");
+  if (reset){
+    $("libEmptyText").textContent = "正在读取图库…";
+    $("libEmpty").style.display = "";
+    $("libMoreWrap").style.display = "none";
+  }
   return fetch(galleryUrl(), { cache: "no-store" })
     .then(function(r){
       if (!r.ok) throw new Error("HTTP " + r.status);
@@ -1761,6 +1883,7 @@ function loadGallery(reset){
         arr.forEach(function(it){ G.items.push(it); });
         G.skip += arr.length;
         G.more = arr.length >= 48;
+        $("libEmpty").style.display = "none";
         var box = $("lib");
         var cur = baseName(S && S.st ? S.st.lastWall : "");
         arr.forEach(function(it){ box.appendChild(tileFor(it, { currentName: cur })); });

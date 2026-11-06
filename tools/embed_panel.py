@@ -40,6 +40,12 @@ def main():
     )
     out = head + block + tail
 
+    # 2026-11-06: 仓库约定(.gitattributes * -text + TASKS.md)是「行尾保持 LF」。
+    # 上游 io.open 虽然做了通用换行(CRLF→LF), 但以前有部署流程会把整个文件写回成 CRLF,
+    # 再嵌一次就整文件报差异。这里显式把换行统一成 LF, 保证无论输入是什么,
+    # 写出去的 core.ps1 永远是 LF + UTF-8 BOM, 与 HEAD 里的版本同构。
+    out = out.replace("\r\n", "\n")
+
     with io.open(CORE, "w", encoding="utf-8-sig", newline="") as f:
         f.write(out)
     size = len(out.encode("utf-8"))
