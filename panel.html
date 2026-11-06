@@ -261,9 +261,11 @@
     background:linear-gradient(to top,var(--scrim),transparent);opacity:0;transform:translateY(4px);
     transition:opacity .15s,transform .15s}
   .tile:hover .tile-acts,.tile:focus-within .tile-acts{opacity:1;transform:none}
-  /* 2026-11-06 用户「三个按钮均匀分布、居中、大小一致」: 等宽(flex:1 1 0)居中铺满一行,
+  /* 2026-11-06 用户「三个按钮均匀分布、居中、大小一致」: 等宽(flex:1 1 0%, 单位%不可省——
+     裸 0 在部分 WebView 会被判非法而整条 flex 丢弃, 退化为内容宽度导致三钮参差/偏移);
+     文字水平+垂直居中用 display:flex;align-items:center;justify-content:center(仅 text-align 对 flex 子项不生效),
      字号略缩到 10px 保证最宽的「设为壁纸/取消收藏」在窄格也不挤、不裁字。 */
-  .tile-acts .btn{flex:1 1 0;min-width:0;height:24px;padding:0;font-size:10px;text-align:center;
+  .tile-acts .btn{flex:1 1 0%;min-width:0;max-width:none;margin:0;height:24px;padding:0;font-size:10px;line-height:24px;text-align:center;display:flex;align-items:center;justify-content:center;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .empty{padding:var(--sp-5) var(--sp-4);text-align:center;color:var(--txt-3);font-size:var(--fs-meta);
     display:flex;flex-direction:column;align-items:center;gap:var(--sp-2)}
