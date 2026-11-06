@@ -3161,6 +3161,17 @@ function Get-BwSrcKeyToken([string]$key, [string]$id) {
   if ($tk.Length -lt 8) { $tk = $tk + (Get-BwHash ($key + '|' + $id)).Substring(0, 8) }
   return $tk
 }
+# 2026-11-06 防重复抓取: 从候选里抽出 Wikimedia Commons 的"源文件号"(数字 file/page id)。
+# 一张图不管被哪个关键词命中、标题前缀怎么变, 只要源文件号相同就是同一张。据此查重比单纯比
+# $token(由 $cd.id 派生) 更稳: 不同查询偶尔会返回不同 $cd.id, 但源文件号不变, 仍能拦住重复。
+# 取不到(非 Commons 源 / id 里没有 5 位以上数字)就返回空串, 调用方照常走原有 token 去重。
+function Get-BwCommonsFileId([string]$id, [string]$url, [string]$link) {
+  foreach ($s in @([string]$id, [string]$url, [string]$link)) {
+    $m = [regex]::Match($s, '\d{5,}')
+    if ($m.Success) { return $m.Value }
+  }
+  return ''
+}
 # 2026-11-06 用户「我们应该尊重作者的拍摄时间」: 文件名前缀 / 图片元数据 / 面板上的
 # 日期, 一律用 Commons 的 extmetadata.DateTimeOriginal(作者实际拍摄那天), 不再用下载当天。
 # 实测本机 30/30 张都带这个值, 但格式有四类: 2009-09-10 / 2014-07-23 17:31:09 /
@@ -4056,6 +4067,13 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
       $k = Get-BwNameKey $f.Name
       if ($k) { $haveKeys[[string]$k] = $true }
     }
+    # 2026-11-06 防重复: 库里已有的 Commons 源文件号(文件名里的 commons<数字>)收进一张表,
+    # 候选的源文件号命中就跳过 —— 不论这轮用哪个关键词、标题怎么变, 同一张图只下一份。
+    $haveCommonsIds = @{}
+    foreach ($f in $have) {
+      $m = [regex]::Match($f.Name, '(?i)commons(\d+)')
+      if ($m.Success) { $haveCommonsIds[[string]$m.Groups[1].Value] = $true }
+    }
     # 库满不补: 到了该源自己的上限就不再下载(下回来也只会挤掉别的图, 白费源池)。
     # 只有 -IgnoreCap(库整个空了、有图最重要)才穿透这道闸; 菜单里的手动抓取不算。
     if (($cap -gt 0) -and ($have.Count -ge $cap) -and (-not $IgnoreCap)) {
@@ -4099,6 +4117,12 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
     $rotMap = Get-BwSrcMap $rec.rot
     $usedGlobal = @{}
     try { foreach ($hh in @(Get-BwHist (Get-BwState))) { if ($hh) { $usedGlobal[[string]$hh] = $true } } } catch {}
+    # 2026-11-06 防重复: 把 seen 表里以 'c:' 前缀记的源文件号还原出来, 跨运行也能拦重复。
+    $seenCommonsIds = @{}
+    foreach ($sk in @($seenMap.Keys)) {
+      $m = [regex]::Match([string]$sk, '^c:(\d+)$')
+      if ($m.Success) { $seenCommonsIds[[string]$m.Groups[1].Value] = $true }
+    }
     $ki = 0
     try { $ki = [int]$rec.kw_i } catch { $ki = 0 }
     if ($ki -lt 0) { $ki = 0 }
@@ -4126,6 +4150,12 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
       $token = Get-BwSrcKeyToken $key ([string]$cd.id)
       if (-not $token) { continue }
       if ($haveKeys.ContainsKey([string]$token)) { $skip++; Start-Sleep -Milliseconds 300; continue }
+      # 2026-11-06 防重复(兜底): 同一 Commons 源文件号已在库里或已记过 -> 跳过, 不重复下同一张图。
+      # 这一道独立于上面的 token 去重, 专治"同一张图经不同关键词命中、cd.id 不一样"导致 token 也不同的情况。
+      $cid = Get-BwCommonsFileId ([string]$cd.id) '' ''
+      if ($cid -and ($haveCommonsIds.ContainsKey($cid) -or $seenCommonsIds.ContainsKey($cid))) {
+        $skip++; Start-Sleep -Milliseconds 300; continue
+      }
       $isReuse = $false
       if ($seenMap.ContainsKey([string]$token) -or $rotMap.ContainsKey([string]$token) -or $usedGlobal.ContainsKey([string]$token)) {
         $skip++
@@ -4166,6 +4196,11 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
         $out += $path
         $seenMap[[string]$token] = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
         $haveKeys[[string]$token] = $true
+        # 2026-11-06 防重复: 把这张的 Commons 源文件号也记下来(本轮后续候选 + 跨运行 seen 表都拦得住)。
+        if ($cid) {
+          $seenMap['c:' + $cid] = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+          $haveCommonsIds[[string]$cid] = $true
+        }
         if (-not $Quiet) { Write-Host ('    OK  [' + [string]$def.Name + '] ' + (Split-Path $path -Leaf) + '  ' + (Get-BwImageDim $path)) }
       } elseif (($dlSt -eq 'toosmall') -or ($dlSt -eq 'aspect') -or ($dlSt -eq 'toobig')) {
         # 画质门槛筛掉的: 不是网络失败, 是"这张不合用"。单独记一笔, 日志里分得清。
