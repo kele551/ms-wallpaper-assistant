@@ -3172,6 +3172,22 @@ function Get-BwCommonsFileId([string]$id, [string]$url, [string]$link) {
   }
   return ''
 }
+# 2026-11-06 用户「这些图片的原始信息有采用什么设备拍摄的信息吗」:
+# Commons 的 extmetadata 里没有机型, 但 metadata(完整 EXIF) 段里有 "Model"。
+# 候选查询带上 iiprop=metadata 后, 这里从元数据数组里取机型(取不到就空, 不编)。
+function Get-BwCameraModel($md) {
+  if (-not $md) { return '' }
+  foreach ($it in @($md)) {
+    try {
+      $nm = [string]$it.name
+      if ($nm -eq 'Model' -or $nm -eq 'Camera model') {
+        $v = ([string]$it.value).Trim()
+        if ($v) { return $v }
+      }
+    } catch {}
+  }
+  return ''
+}
 # 2026-11-06 用户「我们应该尊重作者的拍摄时间」: 文件名前缀 / 图片元数据 / 面板上的
 # 日期, 一律用 Commons 的 extmetadata.DateTimeOriginal(作者实际拍摄那天), 不再用下载当天。
 # 实测本机 30/30 张都带这个值, 但格式有四类: 2009-09-10 / 2014-07-23 17:31:09 /
@@ -3384,7 +3400,7 @@ function Get-BwSrcAsset([string]$key, $item) {
     $copy = [string]$item.lic
     if ($item.artist) { $copy = $copy + ' · ' + $item.artist }
     $copy = $copy + ' · 万象'
-    return [PSCustomObject]@{ url = [string]$item.thumb; title = [string]$item.title; link = [string]$item.link; copy = $copy; shot = [string]$item.shot; author = ([string]$item.artist).Trim() }
+    return [PSCustomObject]@{ url = [string]$item.thumb; title = [string]$item.title; link = [string]$item.link; copy = $copy; shot = [string]$item.shot; author = ([string]$item.artist).Trim(); camera = ([string]$item.camera).Trim() }
   }
   if ($key -eq 'picsum') {
     # 2026-11-06: 随拍已换成 Commons 摄影图, 署名按合规四项写(作品名/作者/许可/来源)。
@@ -3392,7 +3408,7 @@ function Get-BwSrcAsset([string]$key, $item) {
     if (-not $cp) { $cp = 'Wikimedia Commons' }
     if ($item.artist) { $cp = $cp + ' · ' + ([string]$item.artist).Trim() }
     $cp = $cp + ' · 随拍'
-    return [PSCustomObject]@{ url = [string]$item.thumb; title = [string]$item.title; link = [string]$item.link; copy = $cp; shot = [string]$item.shot; author = ([string]$item.artist).Trim() }
+    return [PSCustomObject]@{ url = [string]$item.thumb; title = [string]$item.title; link = [string]$item.link; copy = $cp; shot = [string]$item.shot; author = ([string]$item.artist).Trim(); camera = ([string]$item.camera).Trim() }
   }
   return $null
 }
@@ -3673,7 +3689,7 @@ function Get-BwCommonsCandidates([string]$kw) {
   if (($w -lt 1920) -or ($w -gt 8000)) { $w = 2560 }
   $eq = [uri]::EscapeDataString($kw)
   $api = ('https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=' + $eq +
-          '&gsrnamespace=6&gsrlimit=20&prop=imageinfo&iiprop=url%7Cmime%7Csize%7Cextmetadata&iiurlwidth=' + $w + '&format=json')
+          '&gsrnamespace=6&gsrlimit=20&prop=imageinfo&iiprop=url%7Cmime%7Csize%7Cextmetadata%7Cmetadata&iiurlwidth=' + $w + '&format=json')
   $txt = Get-BwText $api 25
   if (-not $txt) { return @() }
   try { $j = $txt | ConvertFrom-Json } catch { return @() }
@@ -3729,6 +3745,7 @@ function Get-BwCommonsCandidates([string]$kw) {
       lic    = $lic
       artist = $artist.Trim()
       shot   = $shot
+      camera = (Get-BwCameraModel $ii.metadata)
       scaled = $scaled
     }
     if ($out.Count -ge 12) { break }
@@ -3795,7 +3812,7 @@ function Get-BwPicsumCandidates([string]$kw) {
   # 精确 16:9 合格率实测只有 4~16%, 所以一次取 50 个候选, 不够时由 Invoke-BwSrcFetch
   # 自动换下一个中文主题词继续凑, 不会在一个词上空转。
   $api = ('https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=' + $eq +
-          '&gsrnamespace=6&gsrlimit=50&gsroffset=' + $off + '&prop=imageinfo&iiprop=url%7Cmime%7Csize%7Cextmetadata&iiurlwidth=' + $w + '&format=json')
+          '&gsrnamespace=6&gsrlimit=50&gsroffset=' + $off + '&prop=imageinfo&iiprop=url%7Cmime%7Csize%7Cextmetadata%7Cmetadata&iiurlwidth=' + $w + '&format=json')
   $txt = Get-BwText $api 25
   if (-not $txt) { return @() }
   try { $j = $txt | ConvertFrom-Json } catch { return @() }
@@ -3864,6 +3881,7 @@ function Get-BwPicsumCandidates([string]$kw) {
       lic     = $lic
       artist  = $artist.Trim()
       shot    = $shot
+      camera  = (Get-BwCameraModel $ii.metadata)
       scaled  = $scaled
     }
     if ($out.Count -ge 12) { break }
@@ -4176,6 +4194,7 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
       # 三者不混; 元数据写在图片自己身上, 拷走也不丢拍摄时间。
       $m = @{ date=$shotDay; shot_date=$shotDay; added_date=(Get-Date -Format 'yyyy-MM-dd');
               title=[string]$asset.title; copyright=[string]$asset.copy; author=[string]$asset.author;
+              camera=[string]$asset.camera;
               source_type=[string]$def.Name; source_url=[string]$asset.url; source_link=[string]$asset.link }
       # 单张下载: 超时 $toSec 秒(默认 20, 可配), 宽度不到门槛 / 宽高比不达标的不落盘。
       # 真实分辨率由 Save-BwFile 用 System.Drawing 量, 写进日志与图片元数据。
@@ -5339,9 +5358,9 @@ function Get-BwHash([string]$s) {
 function Get-BwMetaPayload($info) {
   # 2026-11-06: 两个新图源额外写 shot_date(作者拍摄日)、added_date(本机入库日)、
   # author(完整作者名)。CC BY / CC BY-SA 的署名要用完整标识, 缩写不算合规署名。
-  $o = [ordered]@{ app = '桌面壁纸'; date = ''; shot_date = ''; added_date = ''; title = ''; copyright = ''; author = ''; source_type = ''; source_url = ''; source_link = ''; width = 0; height = 0 }
+  $o = [ordered]@{ app = '桌面壁纸'; date = ''; shot_date = ''; added_date = ''; title = ''; copyright = ''; author = ''; camera = ''; source_type = ''; source_url = ''; source_link = ''; width = 0; height = 0 }
   if ($info) {
-    foreach ($k in @('date', 'shot_date', 'added_date', 'title', 'copyright', 'author', 'source_type', 'source_url', 'source_link')) {
+    foreach ($k in @('date', 'shot_date', 'added_date', 'title', 'copyright', 'author', 'camera', 'source_type', 'source_url', 'source_link')) {
       if ($info.ContainsKey($k)) { $o[$k] = [string]$info[$k] }
     }
     # 2026-10-09: 真实分辨率也写进去(用户要求"每张图落盘时把宽度 x 高度写进元数据/日志")。
@@ -5382,6 +5401,7 @@ function Read-BwImageMeta([string]$path) {
               shot_date   = [string]$o.shot_date
               added_date  = [string]$o.added_date
               author      = [string]$o.author
+              camera      = [string]$o.camera
               width       = [int]$o.width
               height      = [int]$o.height
             }
@@ -6656,10 +6676,15 @@ $global:BwPanelHtml = @'
   .art .cap{position:absolute;left:var(--sp-4);right:var(--sp-4);bottom:var(--sp-3);z-index:2}
   .art .cap .badge{display:inline-block;font-size:var(--fs-micro);letter-spacing:.05em;color:var(--on-art);
     background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.22);border-radius:var(--r-pill);
-    padding:3px var(--sp-2)}
-  .art .cap h3{color:var(--on-art);font-size:var(--fs-title);font-weight:650;margin-top:var(--sp-2);
+    padding:3px var(--sp-2);margin-top:var(--sp-2)}
+  .art .cap h3{color:var(--on-art);font-size:var(--fs-title);font-weight:650;margin-top:0;
     text-shadow:0 2px 12px rgba(0,0,0,.45);word-break:break-all}
   .art .cap p{color:var(--on-art-2);font-size:var(--fs-meta);margin-top:2px}
+  /* 2026-11-06 机型小字：按品牌做排版性格近似（见 camSpan 注释），不引字体文件、不用商标字形。 */
+  .cam{font-variant-numeric:tabular-nums;white-space:nowrap}
+  .cam.nikon,.cam.sony{text-transform:uppercase;letter-spacing:.09em;font-weight:600}
+  .cam.canon{font-weight:650;letter-spacing:.005em}
+  .cam.lumix,.cam.fuji,.cam.olympus{letter-spacing:.03em;font-weight:600}
   .art .empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--txt-3);
     font-size:var(--fs-meta);z-index:1}
 
@@ -6882,8 +6907,9 @@ $global:BwPanelHtml = @'
               <img id="heroImg" alt="">
               <div class="empty" id="heroEmpty">正在读取本机状态…</div>
               <div class="cap">
-                <span class="badge" id="heroBadge">当前壁纸</span>
+                <!-- 2026-11-06 用户「这个标题移到图片的名字下方」：模式徽标放到标题下面。 -->
                 <h3 id="heroTitle">—</h3>
+                <span class="badge" id="heroBadge">当前壁纸</span>
                 <p id="heroSub">—</p>
               </div>
             </div>
@@ -6894,7 +6920,7 @@ $global:BwPanelHtml = @'
             </div>
             <!-- 2026-11-06 尊重作者: 万象/随拍的一行小字署名(完整作者名 + 拍摄日 + 许可 + 来源)。
                  只在当前壁纸属于这两个模式时出现, 低对比小字, 不抢画面也不动中文短句命名。 -->
-            <div class="muted xs" id="heroCredit" style="display:none;padding:0 16px 12px;line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+            <div class="muted xs" id="heroCredit" style="display:none;padding:0 16px 12px;line-height:1.6;white-space:normal;overflow-wrap:anywhere"></div>
             <div class="monrow">
               <span class="muted xs lbl">显示器</span>
               <span class="chip on" id="chipScreen" title="多屏支持暂不做">主屏 —</span>
@@ -6919,6 +6945,8 @@ $global:BwPanelHtml = @'
               <h2>更换节奏</h2>
               <span class="pill ok"><i></i><span id="cycPill">—</span></span>
             </div>
+            <!-- 2026-11-06 用户「把图片上时间安排在这里」：换上时间从标题副行挪进本卡。 -->
+            <p class="muted xs" id="cycLastSwap" style="margin:0 0 10px">—</p>
             <div class="chiprow" id="cycChips">
               <button class="chip cyc-chip" data-v="10">10 分</button>
               <button class="chip cyc-chip" data-v="30">30 分</button>
@@ -7318,6 +7346,26 @@ function baseName(p){
   var i = Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"));
   return i >= 0 ? p.slice(i + 1) : p;
 }
+/* 2026-11-06 用户「这些设备的名称字体，能不能按照厂家的字体来体现出来」：
+   厂家字标是注册商标 + 定制字形，商用授权不开放，不能拿来用。
+   这里只用系统自带字体做**排版性格近似**（大写/字距/粗细），不嵌任何字体文件，
+   也不冒充商标 —— NIKON/SONY 字标是大写宽字距，Canon 偏正体，机型数字用等宽。 */
+function camBrand(t){
+  var s = String(t || "").toLowerCase();
+  if (/nikon/.test(s)) return "nikon";
+  if (/sony|slt-|ilce-|dsc-|alpha|nex-/.test(s)) return "sony";
+  if (/canon/.test(s)) return "canon";
+  if (/panasonic|lumix|dmc-/.test(s)) return "lumix";
+  if (/fujifilm|finepix|x-t\d|x100|x-pro/.test(s)) return "fuji";
+  if (/olympus|om-d|e-pl\d|e-m\d/.test(s)) return "olympus";
+  return "";
+}
+function camSpan(txt){
+  var s = document.createElement("span");
+  s.className = "cam" + (camBrand(txt) ? " " + camBrand(txt) : "");
+  s.textContent = txt;
+  return s;
+}
 /* state.json 里存的名字有的带扩展名、有的不带 —— 比"是不是同一张"时统一去扩展名小写 */
 function sameName(a, b){
   var sa = String(a || "").replace(/\.[a-z0-9]+$/i, "").toLowerCase();
@@ -7542,21 +7590,37 @@ function render(s){
        必应/聚焦的前缀是微软发布日，保持「YYYY-MM-DD 的图」不变。
        取不到日期就不硬凑，只留换上的时间，依旧不露原始 id / 英文 slug。 */
     var _shotMode = (mode === "commons" || mode === "picsum");
-    var _imgDay = bn.date ? (_shotMode ? ("摄于 " + bn.date) : (bn.date + " 的图")) : "";
-    var _when = st.lastSwap ? (String(st.lastSwap).slice(0, 16) + " 换上") : "";
-    setText("heroSub", _imgDay && _when ? (_imgDay + "　·　" + _when) : (_imgDay || _when || "—"));
+    /* 2026-11-06 用户「底部署名行就写日期」：日期只在底部署名行出现一次，
+       标题下副行不再重复。署名行取不到作者/拍摄日时，日期仍留在副行兜底；
+       必应/聚焦没有署名行，继续写「YYYY-MM-DD 的图」不变。 */
+    var _cr = s.credit || {};
+    var _credHasDate = !!(_shotMode && _cr.author && _cr.shot);
+    var _imgDay = bn.date ? (_shotMode ? (_credHasDate ? "" : ("摄于 " + bn.date)) : (bn.date + " 的图")) : "";
+    /* 2026-11-06 用户「把图片上时间安排在更换节奏卡」：换上时间归「更换节奏」卡,
+       副行只写图片自己的日期; 没有日期就整行隐藏, 不再挂一个孤零零的「—」。 */
+    var _sub = $("heroSub");
+    if (_imgDay) { setText("heroSub", _imgDay); _sub.style.display = ""; }
+    else { setText("heroSub", ""); _sub.style.display = "none"; }
     /* 2026-11-06 用户「尊重作者」: 完整作者名 + 拍摄日 + 许可 + 来源链接, 一行小字。
        不用首字母缩写 —— CC BY / CC BY-SA 要求完整署名标识; 来源只认 Commons 官方域名。
        作者名来自 Commons 元数据, 用 textContent 写入, 不拼 HTML。 */
-    var _cr = s.credit || {}, _cel = $("heroCredit");
+    var _cel = $("heroCredit");
     if (_cel) {
       if (_shotMode && _cr.author) {
-        var _bits = ["摄影：" + _cr.author];
-        if (_cr.shot) { _bits.push("摄于 " + _cr.shot); }
-        if (_cr.lic) { _bits.push(_cr.lic); }
-        var _txt = _bits.join("　·　");
-        _cel.textContent = _txt;
-        _cel.title = _txt;
+        /* 2026-11-06 用户「底部署名行就写日期」：日期归署名行，副行不再重复。
+           仍是完整作者名 + 拍摄日 + 许可 + 来源链接, 一行小字; 作者用 textContent 写。 */
+        var _segs = [{ t: "摄影：" + _cr.author }];
+        if (_cr.shot) { _segs.push({ t: "摄于 " + _cr.shot }); }
+        /* 2026-11-06 用户「有采用什么设备拍摄的信息吗」：机型来自 Commons 完整 EXIF，
+           取不到就不写（不编设备）。机型单独成段，好按品牌上近似排版（见 camSpan）。 */
+        if (_cr.cam) { _segs.push({ t: _cr.cam, cam: true }); }
+        if (_cr.lic) { _segs.push({ t: _cr.lic }); }
+        _cel.textContent = "";
+        _cel.title = _segs.map(function (x) { return x.t; }).join("　·　");
+        _segs.forEach(function (x, i) {
+          if (i) { _cel.appendChild(document.createTextNode("　·　")); }
+          _cel.appendChild(x.cam ? camSpan(x.t) : document.createTextNode(x.t));
+        });
         if (_cr.link && /^https:\/\/commons\.wikimedia\.org\//i.test(_cr.link)) {
           var _lk = document.createElement("a");
           _lk.href = _cr.link; _lk.target = "_blank"; _lk.rel = "noopener noreferrer";
@@ -7578,7 +7642,8 @@ function render(s){
     $("heroEmpty").style.display = "grid";
     setText("heroEmpty", "还没有设置过壁纸，点「立即换一张」");
     setText("heroTitle", "—");
-    setText("heroSub", "—");
+    setText("heroSub", "");
+    $("heroSub").style.display = "none";
     setText("heroBadge", "当前壁纸");
     if (_cel) { _cel.textContent = ""; _cel.title = ""; _cel.style.display = "none"; }
     $("btnOpenImg").style.display = "none";
@@ -7601,6 +7666,8 @@ function render(s){
      必应模式下别再显示"24 小时" —— 那不是真的"下次换图点", 后台按天走:
      明天第一次开机(开机后第一轮巡检)才换成当天的新图。 */
   setText("cycPill", isBing ? "明天开机" : fmtCycle(cycMin));
+  /* 2026-11-06 用户「把图片上时间安排在这里」：上次换上时间显示在「更换节奏」卡。 */
+  setText("cycLastSwap", st.lastSwap ? ("上次换上 " + String(st.lastSwap).slice(0, 16)) : "还没换过");
   setText("setCycNum", fmtCycle(cycMin));
   var chips = document.querySelectorAll(".cyc-chip");
   for (var i = 0; i < chips.length; i++){
@@ -8197,6 +8264,7 @@ function loadCredits(){
         function bit(txt){ var s = document.createElement("span"); s.textContent = txt; row.appendChild(s); }
         if(it.date) bit((shotMode ? "摄于 " : "") + it.date);
         if(it.author) bit((it.author.charAt(0) === "©" ? "" : "摄影：") + it.author);
+        if(it.cam) row.appendChild(camSpan(it.cam));
         if(it.lic) bit(it.lic);
         if(it.note) bit(it.note);
         if(it.link && /^https:\/\/(commons\.wikimedia\.org|www\.bing\.com)\//i.test(it.link)){
@@ -9434,7 +9502,7 @@ function Get-BwPanelCredits([string]$src) {
     $nm = [string]$f.Name
     $fdate = ''
     if ($nm -match '^(\d{4}-\d{2}-\d{2})') { $fdate = $Matches[1] }
-    $author = ''; $lic = ''; $link = ''; $note = ''; $shot = $fdate
+    $author = ''; $lic = ''; $link = ''; $note = ''; $shot = $fdate; $cam = ''
     $m = Get-BwFileCredit $f.FullName
     if ($m) {
       $cp = [string]$m.copyright
@@ -9445,6 +9513,7 @@ function Get-BwPanelCredits([string]$src) {
         if ($bits.Count -ge 2) { $lic = [string]$bits[0] }
         $author = [string]$m.author
         if (-not $author -and $bits.Count -ge 3) { $author = [string]$bits[1] }
+        $cam = [string]$m.camera
         $lk = [string]$m.source_link
         if ($lk -like 'https://commons.wikimedia.org/*') { $link = $lk }
       } elseif ($sl -eq 'spotlight') {
@@ -9459,7 +9528,7 @@ function Get-BwPanelCredits([string]$src) {
       elseif ($sl -eq 'bing') { $link = 'https://www.bing.com'; $note = '必应每日一图' }
       else { $note = '维基共享' }
     }
-    $rows += [ordered]@{ name = $nm; src = $sl; date = $shot; author = $author; lic = $lic; link = $link; note = $note }
+    $rows += [ordered]@{ name = $nm; src = $sl; date = $shot; author = $author; lic = $lic; link = $link; note = $note; cam = $cam }
     if ($rows.Count -ge 500) { break }
   }
   $global:BwCreditCache[$sl] = [PSCustomObject]@{ At = (Get-Date); Rows = $rows }
@@ -10272,7 +10341,7 @@ function Get-BwPanelState {
   # 回给面板, 用一行小字单独显示; 中文短句命名一个字不动, 也不缩写成首字母
   # (CC BY / CC BY-SA 要求完整署名标识, 缩写不构成合规署名)。
   # 只在这两个模式返回 —— 必应/聚焦的 copyright 是微软版权串, 混进来会驴唇不对马嘴。
-  $credit = [ordered]@{ author = ''; shot = ''; lic = ''; link = '' }
+  $credit = [ordered]@{ author = ''; shot = ''; lic = ''; link = ''; cam = '' }
   if ($psMode -eq 'commons' -or $psMode -eq 'picsum') {
     try {
       if ($lastWall -and (Test-Path -LiteralPath $lastWall)) {
@@ -10284,6 +10353,7 @@ function Get-BwPanelState {
           if (-not $credit.shot) { $credit.shot = [string]$cm.date }
           $credit.link = [string]$cm.source_link
           $credit.author = [string]$cm.author
+          $credit.cam = [string]$cm.camera
           if ($bits.Count -ge 2) { $credit.lic = [string]$bits[0] }
           if (-not $credit.author -and $bits.Count -ge 3) { $credit.author = [string]$bits[1] }
         }
