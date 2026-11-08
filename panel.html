@@ -18,16 +18,21 @@
   :root{
     --font:"Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif;
     --mono:"Cascadia Mono",Consolas,"Courier New",monospace;
+    /* 2026-11-06 工业风署名条用的 DIN 系字体：Windows 10+ 自带 Bahnschrift（DIN 1451 血统），
+       没有就退到 DIN Alternate / Segoe UI。只做排版性格近似，不嵌字体文件。 */
+    --din:"Bahnschrift","DIN Alternate","Segoe UI",system-ui,sans-serif;
     /* 暗色(默认) = 石墨灰 */
-    --bg:#171a20; --bg-1:#1c2027; --card:#20252d; --card-2:#262d37;
-    --line:#303844; --line-2:#3e4856;
+    /* 2026-11-07 精修：三级灰拉开层次（底 / 卡 / 浮层）——原来卡片和背景明度差太小，看着糊在一起。 */
+    --bg:#101318; --bg-1:#151920; --card:#1a1f27; --card-2:#222831;
+    --line:#2c333d; --line-2:#3b4450;
     --txt:#e7ebf1; --txt-2:#a3aebe; --txt-3:#76818f;
     --ok:#3ecf8e; --warn:#f0b429; --danger:#f2555a; --info:#4f8cff;
     --accent:#35d07f; --accent-ink:#062016;
     --fs-title:20px; --fs-h:14px; --fs-body:13px; --fs-meta:12px; --fs-micro:11px;
     --r-card:10px; --r-btn:8px; --r-pill:999px;
     --shadow-1:0 1px 0 rgba(0,0,0,.18); --shadow-2:0 14px 40px rgba(0,0,0,.45);
-    --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:20px; --sp-6:24px;
+    /* 2026-11-07 精修：间距阶梯统一成 4/8/12/16/24/32（原来是 4/8/12/16/20/24，页面顶部和卡片节奏对不齐）。 */
+    --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px; --sp-6:32px;
     --knob:#fff; --on-art:#fff; --on-art-2:rgba(255,255,255,.78);
     --scrim:rgba(6,9,14,.66); --scrim-2:rgba(6,9,14,.12);
     --accent-soft:rgba(53,208,127,.14);
@@ -79,7 +84,7 @@
   .seg-btn{height:28px;padding:0 var(--sp-4);border-radius:var(--r-pill);border:0;background:none;
            color:var(--txt-2);font-size:var(--fs-meta);transition:color .15s,background .15s}
   .seg-btn:hover{color:var(--txt)}
-  .seg-btn.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+  .seg-btn.on{background:var(--card-2);color:var(--txt);font-weight:600}
   .seg-info{margin-left:auto;color:var(--txt-3);font-size:var(--fs-micro);font-family:var(--mono)}
   .screen{display:none}
   .screen.on{display:block;animation:fade .15s ease}
@@ -95,28 +100,37 @@
   .muted{color:var(--txt-3)}
   /* 2026-11-06 用户「所有图片的出处都集中在主页上反映」: 一行一条, 低对比小字,
      默认收起、展开才按需加载, 不抢当前壁纸那张卡的画面。 */
-  .credit-list{max-height:320px;overflow:auto}
-  .cr-row{display:flex;flex-wrap:wrap;gap:3px 12px;align-items:baseline;padding:6px 2px;border-top:1px solid var(--line);line-height:1.5}
-  .cr-row .cr-name{color:var(--txt);max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .cr-row a{color:inherit;text-decoration:underline;text-underline-offset:2px;opacity:.85}
+  /* 2026-11-06 用户「还是按照原来的布局」：它是一张备查清单，不是主界面 ——
+     就用普通卡片的 .card / .card-h 外壳，标题在左、右侧一个「展开 ›」小按钮，
+     收起时只占一行。不另做遥测条、不塞进两栏。 */
   .mono{font-family:var(--mono);font-size:var(--fs-meta)}
   /* 2026-11-06 用户「这个位置安排照片的曝光参数，GPS」+「照片的好多信息没有展示」：
      署名行下面再加两行 —— 第二行放曝光与拍摄地点，第三块放原图信息（页面原文+译文）。 */
-  /* 2026-11-06 用户「好好规整一下，怎么看着比较凌乱，没有那种工业感觉」：
-     署名区按仪表读数排版 —— 标签低对比、值用等宽数字、项间 1px 细线分隔，
-     不再用全角空格 + 小圆点混排（那种排法每段宽度不齐，看着散）。 */
+  /* 2026-11-06 用户「有工业风、品牌相机的字体加持」，参考 GitHub：
+  /* 2026-11-06 用户「还是按照没有改之前的样子排版」：署名行回到最初那两行 ——
+     第一行「摄影 / 摄于 / 机型 / 许可 / 来源」，第二行「参数 / 位置」，
+     标签低对比、值等宽数字、项间 1px 细线，不做分舱格子，也不加外壳边框。
+     机型保留用户选定的粗 grotesque 字体（Helvetica/Arial），大小写按品牌官方写法。 */
   .crd1,.crd2{display:flex;flex-wrap:wrap;align-items:baseline;row-gap:2px}
   .crd2{margin-top:5px}
   .ci{display:inline-flex;align-items:baseline;white-space:nowrap}
-  /* 分隔竖线用显式 <i class=cs>（跟在前项后面）而不是 ::before，
-     这样折行时竖线留在上一行行尾，新行不会以孤线开头。 */
   .cs{align-self:center;width:1px;height:9px;margin:0 11px;background:currentColor;opacity:.22;flex:none}
   .cl{color:var(--txt-3);margin-right:7px;font-size:.94em;letter-spacing:.06em}
   .cv{color:var(--txt-2);font-variant-numeric:tabular-nums}
   .cv.tec{font-family:var(--mono);font-size:.93em;letter-spacing:.01em}
-  .crd1 .cam,.crd2 .cam{color:var(--txt-2)}
+  /* 坐标：DIN 读数 + 虚线可点，点一下复制（不跳外网地图）。 */
+  .cv.coordm{font-family:var(--din);font-weight:600;font-size:.98em;letter-spacing:.04em;
+    color:var(--txt);cursor:pointer;border-bottom:1px dotted var(--line-2);padding-bottom:1px}
+  .cv.coordm:hover{color:var(--txt);border-color:var(--txt-2)}
+  .crd1 .camfg,.crd2 .camfg{color:var(--txt-2);font-weight:700;letter-spacing:0;
+    font-family:"Helvetica Neue",Helvetica,Arial,"Segoe UI",sans-serif}
   .crd1 a{color:inherit;text-decoration:none;border-bottom:1px solid currentColor;padding-bottom:1px;opacity:.9}
   .crd1 a:hover{opacity:1}
+  /* 2026-11-07 用户「凡是年度最佳照片要注明，以来源出处的标识体现」：
+     获奖标识紧跟在「来源」这一行里，细边框小徽章，不加色块、不另起一行，
+     与 1px 细线的工业仪表排版保持同一套语言。只在图片自己的分类确有获奖记录时出现。 */
+  .cv.honor{color:var(--txt);font-size:.88em;font-weight:600;letter-spacing:.05em;
+    border:1px solid var(--line-2);border-radius:2px;padding:1px 6px;opacity:.86;white-space:nowrap}
   .imeta{margin:2px 16px 14px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card-2)}
   .imeta-h{display:flex;align-items:baseline;gap:8px;margin:0 0 7px}
   .imeta-h b{font-size:var(--fs-micro);font-weight:600;letter-spacing:.02em;color:var(--txt-2)}
@@ -140,7 +154,7 @@
   .pill{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 var(--sp-3);border-radius:var(--r-pill);
         border:1px solid var(--line);font-size:var(--fs-micro);color:var(--txt-2);white-space:nowrap;background:var(--card-2)}
   .pill i{width:6px;height:6px;border-radius:50%;background:var(--txt-3);flex:none}
-  .pill.ok i{background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
+  .pill.ok i{background:var(--ok)}
   .pill.warn i{background:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)}
   .pill.bad i{background:var(--danger);box-shadow:0 0 0 3px var(--danger-soft)}
 
@@ -168,7 +182,7 @@
         background:transparent;color:var(--txt-2);font-size:var(--fs-meta);display:inline-flex;align-items:center;gap:6px;
         transition:background .15s,border-color .15s,color .15s;white-space:nowrap;cursor:pointer}
   .chip:hover{color:var(--txt);border-color:var(--line-2)}
-  .chip.on{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent);font-weight:600}
+  .chip.on{background:var(--card-2);border-color:var(--line-2);color:var(--txt);font-weight:600}
   .chip.add{border-style:dashed;color:var(--txt-3)}
   .chiprow{display:flex;gap:6px;flex-wrap:wrap}
 
@@ -224,7 +238,7 @@
 
   /* 进度条 / 倒计时环 */
   .meter{height:6px;border-radius:var(--r-pill);background:var(--line);overflow:hidden;margin:var(--sp-3) 0 var(--sp-2)}
-  .meter i{display:block;height:100%;border-radius:var(--r-pill);background:var(--accent);width:0;
+  .meter i{display:block;height:100%;border-radius:var(--r-pill);background:var(--txt-2);opacity:.7;width:0;
            transition:width .15s linear}
   .ring{width:52px;height:52px;border-radius:50%;flex:none;display:grid;place-items:center;
         background:conic-gradient(var(--accent) calc(var(--p)*1%),var(--line) 0);position:relative;
@@ -236,8 +250,51 @@
 
   /* 当前壁纸大图 */
   .art{position:relative;aspect-ratio:16/9;background:var(--bg-1);overflow:hidden}
-  .art img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .3s ease}
+  /* 2026-11-07 用户「马赛克效果」：换图时旧图垫在下面，新图先以大块马赛克铺满，
+     再逐级变细（56→40→28→20→14→10→6→3→1 像素块），最后化成清晰图。
+     实现是一块盖在图片上的 canvas：缩小绘制 + 关闭插值放大 = 方块感；
+     全程本地、零依赖。系统开了"减少动效"就直接切，不跑动画。 */
+  .art img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;
+    transition:opacity .25s ease}
   .art img.ready{opacity:1}
+  .art img.prev{position:absolute;inset:0;opacity:0;transition:opacity .25s ease;z-index:1}
+  .art #heroImg{position:relative;z-index:2}
+  .art canvas.mosaic{position:absolute;inset:0;width:100%;height:100%;z-index:3;
+    display:none;pointer-events:none;image-rendering:pixelated}
+  /* 2026-11-07 用户「类似魔方的效果」：换图时把画面切成 34px 的小方块，每块绕 Y 轴翻 90° 露出背面
+     （背面就是新图对应那一块），按"左上→右下 + 随机抖动"错峰，像一整面小魔方依次翻面。
+     纯 CSS 3D（preserve-3d + backface-visibility），翻完整个覆盖层直接移除。 */
+  #heroFlip{position:absolute;inset:0;z-index:4;display:block;pointer-events:none;perspective:1100px}
+  #heroFlip .ft{position:absolute;transform-style:preserve-3d;
+    transition:transform .62s cubic-bezier(.35,.1,.25,1);transition-delay:var(--d,0s)}
+  #heroFlip .ft.on{transform:rotateY(180deg)}
+  #heroFlip .fc{position:absolute;inset:0;backface-visibility:hidden;background-repeat:no-repeat}
+  #heroFlip .fb{transform:rotateY(180deg)}
+  /* 2026-11-07 用户「类似魔方的效果」「不行就参考 github 的项目」：
+     照 Swiper 的 cube effect 那套做法（perspective + preserve-3d + rotateY 90°）做成
+     **整幅立方体翻转**：旧图是正面、新图是右侧面，绕 Y 轴转 90° 把新图转到面前。
+     每块面板贴的是同一张壁纸（background-size:cover），所以翻过来就是新的整幅画面。 */
+  #heroCube{position:absolute;inset:0;z-index:5;perspective:1300px;perspective-origin:50% 50%;pointer-events:none}
+  #heroCube .cb3{position:absolute;inset:0;transform-style:preserve-3d;
+    transition:transform .85s cubic-bezier(.35,.05,.2,1)}
+  #heroCube .face{position:absolute;inset:0;background-size:cover;background-position:center;
+    backface-visibility:hidden;box-shadow:0 0 60px rgba(0,0,0,.45)}
+  #heroCube .face::after{content:"";position:absolute;inset:0;
+    background:linear-gradient(90deg,rgba(0,0,0,.28),rgba(0,0,0,0) 45%)}
+  #heroCube .f-new::after{background:linear-gradient(270deg,rgba(0,0,0,.28),rgba(0,0,0,0) 45%)}
+  /* 2026-11-07 用户「看的晕车，还是采用第一种百叶窗」：回到最初那版 ——
+     旧图垫在下面，新图用 12 条横向叶片"拉开"盖上去。可动画的自定义属性 --bo 驱动蒙版，
+     Chromium 逐帧插值；不支持 @property 的浏览器退化成淡入，不影响使用。 */
+  @property --bo{ syntax:'<percentage>'; inherits:false; initial-value:0% }
+  .art img.blinds{
+    -webkit-mask-image:repeating-linear-gradient(to bottom,#000 0 var(--bo),transparent var(--bo) 8.3333%);
+    mask-image:repeating-linear-gradient(to bottom,#000 0 var(--bo),transparent var(--bo) 8.3333%);
+    animation:bwOpen .95s cubic-bezier(.25,.8,.25,1) both}
+  @keyframes bwOpen{ from{--bo:0%} to{--bo:8.3333%} }
+  @media (prefers-reduced-motion: reduce){
+    .art img{transition:none}
+    .art img.blinds{animation:none;-webkit-mask-image:none;mask-image:none}
+  }
   .art img:not([src]){visibility:hidden}
   .art::after{content:"";position:absolute;inset:0;pointer-events:none;
     background:linear-gradient(to top,var(--scrim),var(--scrim-2) 56%,transparent 82%)}
@@ -245,8 +302,8 @@
   .art .cap .badge{display:inline-block;font-size:var(--fs-micro);letter-spacing:.05em;color:var(--on-art);
     background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.22);border-radius:var(--r-pill);
     padding:3px var(--sp-2);margin-top:var(--sp-2)}
-  .art .cap h3{color:var(--on-art);font-size:var(--fs-title);font-weight:650;margin-top:0;
-    text-shadow:0 2px 12px rgba(0,0,0,.45);word-break:break-all}
+  .art .cap #heroTitle{color:var(--on-art);font-size:var(--fs-title);font-weight:650;margin-top:0;
+    text-shadow:0 2px 12px rgba(0,0,0,.45);white-space:normal;word-break:normal;overflow-wrap:anywhere}
   .art .cap p{color:var(--on-art-2);font-size:var(--fs-meta);margin-top:2px}
   /* 2026-11-06 机型小字：按品牌做排版性格近似（见 camSpan 注释），不引字体文件、不用商标字形。 */
   .cam{font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -474,7 +531,9 @@
         <div class="col">
           <div class="card pad0">
             <div class="art" id="hero">
+              <img id="heroPrev" class="prev" alt="">
               <img id="heroImg" alt="">
+              <canvas id="heroMosaic" class="mosaic" aria-hidden="true"></canvas>
               <div class="empty" id="heroEmpty">正在读取本机状态…</div>
               <div class="cap">
                 <!-- 2026-11-06 用户「这个标题移到图片的名字下方」：模式徽标放到标题下面。 -->
@@ -488,8 +547,8 @@
               <button class="btn" id="btnFav">收藏 <kbd>F</kbd></button>
               <button class="btn" id="btnOpenImg">看原图</button>
             </div>
-            <!-- 2026-11-06 尊重作者: 万象/随拍的一行小字署名(完整作者名 + 拍摄日 + 许可 + 来源)。
-                 只在当前壁纸属于这两个模式时出现, 低对比小字, 不抢画面也不动中文短句命名。 -->
+            <!-- 2026-11-06 尊重作者 + 工业风：万象/随拍的三舱遥测条（CAMERA / RIGHTS / POSITION）。
+                 只在当前壁纸属于这两个模式、且拿得到作者时出现；整块由 render() 生成。 -->
             <div class="muted xs" id="heroCredit" style="display:none;padding:0 16px 12px;line-height:1.6;white-space:normal;overflow-wrap:anywhere"></div>
             <!-- 2026-11-06 用户「留着吧，有些介绍的蛮详细的」：保留页面介绍（中文译文）这一块，
                  只在有译文时出现；没有译文整块隐藏，不留空位。 -->
@@ -544,20 +603,7 @@
         </div>
       </div>
 
-      <!-- 2026-11-06 用户「所有图片的出处，都集中在主页上反映」:
-           当前模式图库里每一张的作者 / 拍摄日 / 许可 / 来源，一处列全。默认收起，
-           展开才向本机服务要数据（只读文件头，不把整张 4K 图读进内存）。 -->
-      <div class="card" id="creditCard">
-        <div class="card-h">
-          <h2>图片出处</h2>
-          <span class="muted xs" id="creditHint">当前库里每一张的作者 · 拍摄日 · 许可 · 来源</span>
-          <div class="right"><button class="btn ghost sm" id="creditToggle">展开 ›</button></div>
-        </div>
-        <div id="creditBody" style="display:none">
-          <div class="muted xs" id="creditStat" style="padding:0 0 8px">正在读取…</div>
-          <div class="credit-list" id="creditList"></div>
-        </div>
-      </div>
+
     </section>
 
     <!-- ============ 2. 图库 ============ -->
@@ -876,6 +922,31 @@ function toast(msg, bad){
   toast._t = setTimeout(function(){ t.className = "toast"; }, 2800);
 }
 
+/* 2026-11-06 用户「地图打不开，是外网」：坐标舱不再往 OpenStreetMap 跳（国内打不开，
+   而且 WGS-84 直接扔给高德/腾讯会偏移几百米，等于给错位置）。改成点一下复制坐标，
+   纯本地、不联网，粘到任何本地地图工具里都能用。 */
+function copyText(t){
+  var txt = String(t || "");
+  if (!txt) return;
+  function ok(){ toast("坐标已复制：" + txt); }
+  function fallback(){
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = txt; ta.style.position = "fixed"; ta.style.left = "-9999px"; ta.style.top = "0";
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      var done = document.execCommand("copy");
+      document.body.removeChild(ta);
+      if (done) { ok(); } else { toast("复制失败：请手动选中这段坐标", true); }
+    } catch (e) { toast("复制失败：请手动选中这段坐标", true); }
+  }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(ok, fallback);
+      return;
+    }
+  } catch (e) {}
+  fallback();
+}
 /* 本机接口: 只有 /api/do 与 /api/state, 都带一次性令牌 */
 function api(doName, extra){
   var q = "/api/do?t=" + encodeURIComponent(TOKEN) + "&do=" + encodeURIComponent(doName);
@@ -898,21 +969,31 @@ function api(doName, extra){
 function wallUrl(p){
   return p ? ("/api/wall?t=" + encodeURIComponent(TOKEN) + "&p=" + encodeURIComponent(p)) : "";
 }
-/* 2026-11-05 硬规矩: 面板上任何来源的图片名都必须是中文。
-   优先用后端给的 display; 没有就从文件名里提中文主题; 再没有就按文件名哈希
-   给一个稳定的中文场景名 —— 绝不让英文原名 / 哈希 / 随机串露出来。 */
+/* 面板图片名优先用后端的中文 display，整串校验后保留标点、数字与括注，
+   不剥括注或拼接碎片；缺少有效中文 metadata 时才走原有文件名兼容逻辑。 */
 var CN_FALLBACK = ["山野晨光","湖畔暮色","林间薄雾","海岸云影","雪原晴光",
   "田野夕照","城郭夜色","溪谷清影","花间微风","远山层云","云海初晴","松林雪霁"];
+function safeDisplay(value){
+  if (typeof value !== "string") return "";
+  var text = value.trim();
+  if (!/[\u3400-\u9fff\uf900-\ufaff]/.test(text) ||
+      !/^[\u3400-\u9fff\uf900-\ufaff0-9０-９ \t\r\n\u3000-\u303f，．！？；：“”‘’（）［］｛｝…—–·・‧～.,!?;:'"()\[\]\-]+$/.test(text)) return "";
+  return text;
+}
 function displayName(it){
-  if (it && it.display) return it.display;
+  var display = safeDisplay(it && it.display);
+  if (display) return display;
   var raw = (it && (it.name || it.path)) || (typeof it === "string" ? it : "");
   var t = "";
   try { t = parseName(baseName(raw)).title || ""; } catch (e) { t = ""; }
   /* 2026-11-06: 名字改成「一句通顺中文短句」后, 可能含阿拉伯数字(如阿波罗9号、
      2025 冬日), 旧正则只留汉字会把数字吞掉。日期与去重键在 parseName 里已被剥离,
-     所以这里放行 0-9 不会把哈希/日期带进来。 */
+     所以这里放行 0-9 不会把哈希/日期带进来。
+     2026-11-06 用户报「名字只剩 2024」: 英文原名 BrooklynDinerNewYorkCity2024
+     剥掉字母后就是纯数字 —— 那不是名字。至少两个汉字才算, 否则走下面稳定的中文场景名。 */
   var cn = (String(t).match(/[\u4e00-\u9fa5·0-9]+/g) || []).join("");
-  if (cn.length >= 2) return cn;
+  var cnZh = (String(t).match(/[\u4e00-\u9fa5]/g) || []).length;
+  if (cnZh >= 2 && cn.length >= 2) return cn;
   var h = 0;
   for (var i = 0; i < raw.length; i++){ h = (h * 31 + raw.charCodeAt(i)) >>> 0; }
   return CN_FALLBACK[h % CN_FALLBACK.length];
@@ -926,6 +1007,219 @@ function baseName(p){
    厂家字标是注册商标 + 定制字形，商用授权不开放，不能拿来用。
    这里只用系统自带字体做**排版性格近似**（大写/字距/粗细），不嵌任何字体文件，
    也不冒充商标 —— NIKON/SONY 字标是大写宽字距，Canon 偏正体，机型数字用等宽。 */
+/* 2026-11-07 用户「类似魔方的效果」：换图时把画面切成 34px 的小方块，每块绕 Y 轴翻 90°，
+   背面就是新图对应那一块 —— 一整面小魔方依次翻面，翻完覆盖层整个移除。
+   纯 CSS 3D（preserve-3d + backface-visibility），错峰靠每块的 transition-delay；
+   系统开「减少动效」就跳过，直接显示新图。 */
+/* 2026-11-07 用户「类似魔方的效果」「不行就参考 github 的项目」：
+   改用 WebGL 做真正的翻面 —— 思路取自 gl-transitions 那类片元着色器过渡：
+   每格算自己的进度，用 cos(t*PI) 当"绕 Y 轴转过来的角度"，把采样点按 |cos| 横向压缩，
+   cos>0 采旧图、cos<0 采新图，再按 |cos| 加明暗 —— 看起来就是一块块真在翻，而不是平面缩放。
+   画面 34px 一格（uGrid 按实际尺寸算），错峰 = 左上→右下波浪 + 每格伪随机。
+   WebGL 不可用/图像跨域就拿不到纹理 → 自动退回 DOM 版 playCubeFlip，不会白屏。 */
+var BW_CUBE_GL = {
+  vs: "attribute vec2 aPos; varying vec2 vUv; void main(){ vUv = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }",
+  fs: [
+    "precision mediump float;",
+    "varying vec2 vUv;",
+    "uniform sampler2D uOld; uniform sampler2D uNew;",
+    "uniform float uP; uniform vec2 uGrid; uniform float uStagger;",
+    "void main(){",
+    "  vec2 uv = vec2(vUv.x, 1.0 - vUv.y);",
+    "  vec2 cell = floor(uv * uGrid);",
+    "  vec2 cuv = fract(uv * uGrid);",
+    "  float rnd = fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453);",
+    "  float delay = (cell.x / uGrid.x * 0.45 + cell.y / uGrid.y * 0.2 + rnd * 0.35) * uStagger;",
+    "  float span = max(0.001, 1.0 - uStagger);",
+    "  float t = clamp((uP - delay) / span, 0.0, 1.0);",
+    "  float ang = t * 3.14159265;",
+    "  float c = cos(ang);",
+    "  float sx = (cuv.x - 0.5) / max(abs(c), 0.03) + 0.5;",
+    "  bool inside = sx >= 0.0 && sx <= 1.0;",
+    "  vec2 suv = (cell + vec2(clamp(sx,0.0,1.0), cuv.y)) / uGrid;",
+    "  vec3 o = texture2D(uOld, suv).rgb;",
+    "  vec3 n = texture2D(uNew, suv).rgb;",
+    "  vec3 col = (c >= 0.0) ? o : n;",
+    "  col *= 0.35 + 0.65 * abs(c);",
+    "  if (!inside) { col = texture2D(uNew, uv).rgb * 0.9; }",
+    "  gl_FragColor = vec4(col, 1.0);",
+    "}"
+  ].join("\n")
+};
+/* 2026-11-07 用户「类似魔方的效果」「不行就参考 github 的项目」：
+   整幅立方体翻转（照 Swiper cube effect 的做法）：旧图当正面、新图当右侧面，
+   容器绕 Y 轴转 90° 把新图转到面前，带透视和两侧暗角，翻完移除覆盖层。 */
+function playCubeRotate(imgEl) {
+  try {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
+    var box = $("hero"), oldImg = $("heroPrev");
+    if (!box || !oldImg || !oldImg.getAttribute("src")) return false;
+    if (!oldImg.complete || !imgEl.complete) return false;
+    if ($("heroCube")) return true;
+    var w = box.clientWidth, h = box.clientHeight;
+    if (!w || !h) return false;
+    var oUrl = oldImg.getAttribute("src"), nUrl = imgEl.getAttribute("src");
+    var ov = document.createElement("div"); ov.id = "heroCube";
+    var cube = document.createElement("div"); cube.className = "cb3";
+    var fOld = document.createElement("div"); fOld.className = "face f-old";
+    fOld.style.backgroundImage = "url(" + oUrl + ")";
+    fOld.style.transform = "translateZ(" + (w / 2) + "px)";
+    var fNew = document.createElement("div"); fNew.className = "face f-new";
+    fNew.style.backgroundImage = "url(" + nUrl + ")";
+    fNew.style.transform = "rotateY(90deg) translateZ(" + (w / 2) + "px)";
+    cube.appendChild(fOld); cube.appendChild(fNew);
+    ov.appendChild(cube); box.appendChild(ov);
+    void ov.offsetWidth;
+    cube.style.transform = "rotateY(-90deg)";
+    setTimeout(function () {
+      if (ov.parentNode) { ov.parentNode.removeChild(ov); }
+      if (oldImg) { oldImg.style.opacity = "0"; }
+    }, 950);
+    return true;
+  } catch (e) { return false; }
+}
+/* 统一入口：想换风格改这一行即可 —— cube(整幅立方体) / tiles(小方块翻面) / ""(纯淡入) */
+var BW_HERO_FX = "blinds";
+/* 2026-11-07 用户「还是采用第一种百叶窗」：旧图垫在下面，新图加 .blinds 用 12 条横叶片拉开。
+   动画本身在 CSS 里（--bo 0%→8.3333%），这里只负责挂类名和收尾。 */
+function playBlinds(imgEl) {
+  try {
+    var oldImg = $("heroPrev");
+    if (!oldImg || !oldImg.getAttribute("src") || !oldImg.complete) return false;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
+    imgEl.classList.add("blinds");
+    setTimeout(function () {
+      imgEl.classList.remove("blinds");
+      if (oldImg) { oldImg.style.opacity = "0"; }
+    }, 1000);
+    return true;
+  } catch (e) { return false; }
+}
+function playHeroFx(imgEl) {
+  try {
+    if (BW_HERO_FX === "blinds") { playBlinds(imgEl); return; }
+    if (BW_HERO_FX === "cube" && playCubeRotate(imgEl)) return;
+    if (BW_HERO_FX === "tiles") {
+      if (playCubeFlipGL(imgEl)) return;
+      playCubeFlip(imgEl); return;
+    }
+  } catch (e) {}
+}
+function playCubeFlipGL(imgEl) {
+  var box = $("hero"), oldImg = $("heroPrev");
+  if (!box || !oldImg) return false;
+  if (!oldImg.getAttribute("src") || !oldImg.complete || !imgEl.complete) return false;
+  var w = box.clientWidth, h = box.clientHeight;
+  if (!w || !h) return false;
+  var cv = document.createElement("canvas");
+  cv.width = w; cv.height = h;
+  cv.style.cssText = "position:absolute;inset:0;width:100%;height:100%;z-index:4;pointer-events:none";
+  box.appendChild(cv);
+  var gl = null;
+  try { gl = cv.getContext("webgl") || cv.getContext("experimental-webgl"); } catch (e) { gl = null; }
+  if (!gl) { box.removeChild(cv); return false; }
+  function sh(type, src) {
+    var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) return null;
+    return s;
+  }
+  var vs = sh(gl.VERTEX_SHADER, BW_CUBE_GL.vs), fs = sh(gl.FRAGMENT_SHADER, BW_CUBE_GL.fs);
+  if (!vs || !fs) { box.removeChild(cv); return false; }
+  var pr = gl.createProgram();
+  gl.attachShader(pr, vs); gl.attachShader(pr, fs); gl.linkProgram(pr);
+  if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) { box.removeChild(cv); return false; }
+  gl.useProgram(pr);
+  var buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+  var aPos = gl.getAttribLocation(pr, "aPos");
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+  function tex(im, unit) {
+    var tx = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, tx);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, im); } catch (e) { return null; }
+    return tx;
+  }
+  var t0 = tex(oldImg, 0), t1 = tex(imgEl, 1);
+  if (!t0 || !t1) { box.removeChild(cv); return false; }
+  gl.uniform1i(gl.getUniformLocation(pr, "uOld"), 0);
+  gl.uniform1i(gl.getUniformLocation(pr, "uNew"), 1);
+  var cell = 34;
+  gl.uniform2f(gl.getUniformLocation(pr, "uGrid"), Math.ceil(w / cell), Math.ceil(h / cell));
+  gl.uniform1f(gl.getUniformLocation(pr, "uStagger"), 0.55);
+  var uP = gl.getUniformLocation(pr, "uP");
+  var t0clock = performance.now(), DUR = 900;
+  function frame(now) {
+    var p = Math.min(1, (now - t0clock) / DUR);
+    gl.uniform1f(uP, p);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    if (p < 1) { requestAnimationFrame(frame); return; }
+    setTimeout(function () {
+      if (cv.parentNode) { cv.parentNode.removeChild(cv); }
+      if (oldImg) { oldImg.style.opacity = "0"; }
+    }, 120);
+  }
+  requestAnimationFrame(frame);
+  return true;
+}
+function playCubeFlip(imgEl) {
+  try {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    var box = $("hero"), oldImg = $("heroPrev");
+    if (!box || !oldImg) return;
+    if (!oldImg.getAttribute("src") || !oldImg.complete || !imgEl.complete) return;
+    if ($("heroFlip")) return;
+    var w = box.clientWidth, h = box.clientHeight;
+    if (!w || !h) return;
+    var oUrl = oldImg.getAttribute("src");
+    var nUrl = imgEl.getAttribute("src");
+    var cell = 34;
+    var cols = Math.ceil(w / cell), rows = Math.ceil(h / cell);
+    var ov = document.createElement("div");
+    ov.id = "heroFlip";
+    for (var y = 0; y < rows; y++) {
+      for (var x = 0; x < cols; x++) {
+        var px = x * cell, py = y * cell;
+        var cw = Math.min(cell, w - px), ch = Math.min(cell, h - py);
+        if (cw <= 0 || ch <= 0) continue;
+        var d = ((x / cols) * 0.5 + (y / rows) * 0.15 + Math.random() * 0.35) * 0.85;
+        var t = document.createElement("div");
+        t.className = "ft";
+        t.style.left = px + "px"; t.style.top = py + "px";
+        t.style.width = cw + "px"; t.style.height = ch + "px";
+        t.style.setProperty("--d", d.toFixed(3) + "s");
+        var f = document.createElement("div");
+        f.className = "fc ff";
+        f.style.backgroundImage = "url(" + oUrl + ")";
+        f.style.backgroundSize = w + "px " + h + "px";
+        f.style.backgroundPosition = (-px) + "px " + (-py) + "px";
+        var b = document.createElement("div");
+        b.className = "fc fb";
+        b.style.backgroundImage = "url(" + nUrl + ")";
+        b.style.backgroundSize = w + "px " + h + "px";
+        b.style.backgroundPosition = (-px) + "px " + (-py) + "px";
+        t.appendChild(f); t.appendChild(b);
+        ov.appendChild(t);
+      }
+    }
+    box.appendChild(ov);
+    void ov.offsetWidth;
+    var tiles = ov.querySelectorAll(".ft");
+    for (var i = 0; i < tiles.length; i++) { tiles[i].classList.add("on"); }
+    setTimeout(function () {
+      if (ov.parentNode) { ov.parentNode.removeChild(ov); }
+      if (oldImg) { oldImg.style.opacity = "0"; }
+    }, 1800);
+  } catch (e) {}
+}
 function camBrand(t){
   var s = String(t || "").toLowerCase();
   if (/nikon/.test(s)) return "nikon";
@@ -936,6 +1230,25 @@ function camBrand(t){
   if (/fujifilm|finepix|x-t\d|x100|x-pro/.test(s)) return "fuji";
   if (/olympus|om-d|e-pl\d|e-m\d/.test(s)) return "olympus";
   return "";
+}
+/* 2026-11-06 用户「摄影器材没有按照品牌字体优化」：真机身上品牌字标与型号是两段排法
+   （NIKON 宽字距 + D750 紧排）。这里把 "NIKON D750" / "OLYMPUS E-M1" 拆成两段；
+   拆不出来（只有型号的 "ILCE-7M3"、"E-M1"）就整串当型号，不硬套品牌字距。 */
+var CAM_CANON = { nikon:"Nikon", canon:"Canon", sony:"SONY", leica:"LEICA", olympus:"OLYMPUS",
+  "om-d":"OM-D", panasonic:"Panasonic", lumix:"LUMIX", fujifilm:"FUJIFILM", fuji:"FUJIFILM",
+  ricoh:"RICOH", pentax:"PENTAX", hasselblad:"HASSELBLAD", dji:"DJI", gopro:"GoPro",
+  sigma:"SIGMA", samsung:"SAMSUNG", apple:"Apple", iphone:"iPhone", google:"Google",
+  pixel:"Pixel", xiaomi:"Xiaomi", huawei:"HUAWEI", honor:"HONOR", oneplus:"OnePlus",
+  oppo:"OPPO", vivo:"vivo", realme:"realme", motorola:"motorola", nokia:"Nokia" };
+var CAM_BRAND_RE = /^(nikon|canon|sony|leica|olympus|om-d|panasonic|lumix|fujifilm|fuji|ricoh|pentax|hasselblad|dji|gopro|sigma|samsung|apple|iphone|google|pixel|xiaomi|huawei|honor|oneplus|oppo|vivo|realme|motorola|nokia)\b[\s\-–—·]*/i;
+function splitCamName(txt){
+  var t = String(txt || "").trim();
+  var m = t.match(CAM_BRAND_RE);
+  if (!m) { return { brand: "", model: t }; }
+  var model = t.slice(m[0].length).trim();
+  if (!model) { return { brand: "", model: t }; }
+  var key = m[1].toLowerCase();
+  return { brand: (CAM_CANON[key] || m[1]), model: model };
 }
 function camSpan(txt){
   var s = document.createElement("span");
@@ -1141,11 +1454,21 @@ function render(s){
   var p = st.lastWall || "";
   var bn = parseName(baseName(p));
   var img = $("heroImg");
+  var prevImg = $("heroPrev");
   if (p){
     var src = wallUrl(p);
     if (img.getAttribute("src") !== src){
+      /* 2026-11-07 百叶窗换图：旧图先垫在下面，新图加载好后按 12 条横百叶拉开。
+      /* 2026-11-07 用户「马赛克效果」：旧图垫在下面，新图从大块马赛克逐级变细、最后落到清晰图。
+         首次进入（还没有旧图）不播，避免开场闪一下。 */
+      var oldSrc = img.getAttribute("src") || "";
       img.classList.remove("ready");
-      img.onload = function(){ img.classList.add("ready"); $("heroEmpty").style.display = "none"; };
+      if (prevImg && oldSrc) { prevImg.src = oldSrc; prevImg.style.opacity = "1"; }
+      img.onload = function(){
+        img.classList.add("ready");
+        $("heroEmpty").style.display = "none";
+        if (prevImg && prevImg.getAttribute("src")) { playHeroFx(img); }
+      };
       img.onerror = function(){
         img.classList.remove("ready");
         $("heroEmpty").style.display = "grid";
@@ -1153,10 +1476,11 @@ function render(s){
       };
       img.src = src;
     }
-    /* 2026-11-05 用户「要显示图片的名字」: 主标题用文件名里的中文图片名,
-       悬停再给完整文件名(含日期与去重键), 方便和资源管理器里的那张图对上。 */
-    var _fname = baseName(p);
-    setText("heroTitle", displayName({ name: _fname }));
+    /* 主标题优先用当前图 display；仅新版 metadata 的 zhname 可作次选。
+       悬停仍给完整文件名，便于和资源管理器里的图片对照。 */
+    var _fname = baseName(p), _cr = s.credit || {};
+    var _display = safeDisplay(st.lastDisplay) || (_cr.caption_version >= 2 ? _cr.zhname : "");
+    setText("heroTitle", displayName({ name: _fname, display: _display }));
     var _ht = $("heroTitle");
     if (_ht) { _ht.title = "图片名字：" + _fname; }
     /* 2026-10-24 用户要求：这张卡要能看出「这是哪一天的哪张图」。
@@ -1170,7 +1494,6 @@ function render(s){
     /* 2026-11-06 用户「底部署名行就写日期」：日期只在底部署名行出现一次，
        标题下副行不再重复。署名行取不到作者/拍摄日时，日期仍留在副行兜底；
        必应/聚焦没有署名行，继续写「YYYY-MM-DD 的图」不变。 */
-    var _cr = s.credit || {};
     var _credHasDate = !!(_shotMode && _cr.author && _cr.shot);
     var _imgDay = bn.date ? (_shotMode ? (_credHasDate ? "" : ("摄于 " + bn.date)) : (bn.date + " 的图")) : "";
     /* 2026-11-06 用户「把图片上时间安排在更换节奏卡」：换上时间归「更换节奏」卡,
@@ -1181,71 +1504,83 @@ function render(s){
     /* 2026-11-06 用户「尊重作者」: 完整作者名 + 拍摄日 + 许可 + 来源链接, 一行小字。
        不用首字母缩写 —— CC BY / CC BY-SA 要求完整署名标识; 来源只认 Commons 官方域名。
        作者名来自 Commons 元数据, 用 textContent 写入, 不拼 HTML。 */
-    var _cel = $("heroCredit");
-    if (_cel) {
-      if (_shotMode && _cr.author) {
-        /* 2026-11-06 用户「好好规整一下…没有那种工业感觉」：
-           改成「标签 + 值」两行仪表排版。标签统一低对比小字，值用等宽数字，
-           项目之间由 CSS 的 1px 竖线分隔（.ci+.ci::before），不再手工拼全角空格。 */
-        function _ci(label, val, cls) {
-          var s = document.createElement("span");
-          s.className = "ci";
-          if (label) {
-            var l = document.createElement("span");
-            l.className = "cl"; l.textContent = label;
-            s.appendChild(l);
-          }
-          var v = document.createElement("span");
-          v.className = "cv" + (cls ? " " + cls : "");
-          v.textContent = val;
-          s.appendChild(v);
-          return s;
+  var _cel = $("heroCredit");
+  if (_cel) {
+    if (_shotMode && _cr.author) {
+      /* 2026-11-06 用户「还是按照没有改之前的样子排版」：恢复成最初的两行「标签 + 值」——
+         第一行 摄影 / 摄于 / 机型 / 许可 / 来源，第二行 参数 / 位置；
+         不再分舱、不加外壳边框。机型保留用户选定的粗 grotesque（Helvetica/Arial），
+         品牌大小写按官方写法（Nikon 不变 NIKON），型号原样照抄。 */
+      function _ci(label, val, cls) {
+        var s = document.createElement("span");
+        s.className = "ci";
+        if (label) {
+          var l = document.createElement("span");
+          l.className = "cl"; l.textContent = label;
+          s.appendChild(l);
         }
-        function _sep() {
-          var i = document.createElement("i");
-          i.className = "cs";
-          return i;
-        }
-        function _row(cls) { var d = document.createElement("div"); d.className = cls; return d; }
-        function _add(row, item) {
-          if (row.childNodes.length) { row.appendChild(_sep()); }
-          row.appendChild(item);
-        }
-        _cel.textContent = "";
-        _cel.removeAttribute("title");
-        var _r1 = document.createElement("div");
-        _r1.className = "crd1";
-        _add(_r1, _ci("摄影", _cr.author));
-        if (_cr.shot) { _add(_r1, _ci("摄于", _cr.shot)); }
-        /* 机型来自 Commons 完整 EXIF，取不到就不写（不编设备）；品牌近似字体见 camSpan。 */
-        if (_cr.cam) {
-          var _ciCam = document.createElement("span");
-          _ciCam.className = "ci"; _ciCam.appendChild(camSpan(_cr.cam));
-          _add(_r1, _ciCam);
-        }
-        if (_cr.lic) { _add(_r1, _ci("", _cr.lic)); }
-        if (_cr.link && /^https:\/\/commons\.wikimedia\.org\//i.test(_cr.link)) {
-          var _lk = document.createElement("a");
-          _lk.href = _cr.link; _lk.target = "_blank"; _lk.rel = "noopener noreferrer";
-          _lk.textContent = "来源";
-          var _ciLk = document.createElement("span");
-          _ciLk.className = "ci"; _ciLk.appendChild(_lk);
-          _add(_r1, _ciLk);
-        }
-        _cel.appendChild(_r1);
-        /* 第二行同样是「标签 + 值」，暴露参数与坐标用等宽字体，读起来像仪表读数。 */
-        if (_cr.expo || _cr.gps) {
-          var _r2 = document.createElement("div");
-          _r2.className = "crd2";
-          if (_cr.expo) { _add(_r2, _ci("参数", _cr.expo, "tec")); }
-          if (_cr.gps) { _add(_r2, _ci("位置", _cr.gps, "tec")); }
-          _cel.appendChild(_r2);
-        }
-        _cel.style.display = "";
-      } else {
-        _cel.textContent = ""; _cel.title = ""; _cel.style.display = "none";
+        var v = document.createElement("span");
+        v.className = "cv" + (cls ? " " + cls : "");
+        v.textContent = val;
+        s.appendChild(v);
+        return s;
       }
+      function _sep() {
+        var i = document.createElement("i");
+        i.className = "cs";
+        return i;
+      }
+      function _add(row, item) {
+        if (row.childNodes.length) { row.appendChild(_sep()); }
+        row.appendChild(item);
+      }
+      _cel.textContent = "";
+      _cel.removeAttribute("title");
+      var _r1 = document.createElement("div");
+      _r1.className = "crd1";
+      _add(_r1, _ci("摄影", _cr.author));
+      if (_cr.shot) { _add(_r1, _ci("摄于", _cr.shot)); }
+      if (_cr.cam) {
+        var _cn = splitCamName(_cr.cam);
+        _add(_r1, _ci("", (_cn.brand ? (_cn.brand + " ") : "") + (_cn.model || _cr.cam), "camfg"));
+      }
+      if (_cr.lic) { _add(_r1, _ci("", _cr.lic)); }
+      /* 获奖 / 年度图片标识：值来自图片自己 Categories 里的真实分类名，
+         POTY 冠军写「年度最佳」、finalist 如实写「决赛入围」，没有就不占位。 */
+      if (_cr.honor) { _add(_r1, _ci("", _cr.honor, "honor")); }
+      if (_cr.link && /^https:\/\/commons\.wikimedia\.org\//i.test(_cr.link)) {
+        var _lk = document.createElement("a");
+        _lk.href = _cr.link; _lk.target = "_blank"; _lk.rel = "noopener noreferrer";
+        _lk.textContent = "来源";
+        var _ciLk = document.createElement("span");
+        _ciLk.className = "ci"; _ciLk.appendChild(_lk);
+        _add(_r1, _ciLk);
+      }
+      _cel.appendChild(_r1);
+      if (_cr.expo || _cr.gps || _cr.place) {
+        var _r2 = document.createElement("div");
+        _r2.className = "crd2";
+        if (_cr.expo) { _add(_r2, _ci("参数", _cr.expo, "tec")); }
+        /* 2026-11-06 用户「位置的经纬度还是加入你的元素，可以复制的那种样式」：
+           坐标走 DIN 读数、带虚线可点、点一下复制到剪贴板（纯本地，不联网、不跳地图）。
+           大部分照片没有 GPS（库里 47/72），这时退回页面原文里的「国家·城市」，
+           别让这一项凭空消失；两样都没有才不显示。 */
+        if (_cr.gps) {
+          var _ciG = document.createElement("span"); _ciG.className = "ci";
+          var _gl = document.createElement("span"); _gl.className = "cl"; _gl.textContent = "位置";
+          var _gv = document.createElement("span"); _gv.className = "cv coordm"; _gv.textContent = _cr.gps;
+          _gv.title = "点击复制坐标：" + _cr.gps;
+          _gv.addEventListener("click", function(){ copyText(String(_cr.gps).replace(/^\s*≈\s*/, "")); });
+          _ciG.appendChild(_gl); _ciG.appendChild(_gv);
+          _add(_r2, _ciG);
+        } else if (_cr.place) { _add(_r2, _ci("位置", _cr.place)); }
+        _cel.appendChild(_r2);
+      }
+      _cel.style.display = "";
+    } else {
+      _cel.textContent = ""; _cel.title = ""; _cel.style.display = "none";
     }
+  }
     /* 2026-11-06 用户「这些不要」：原始作品名/原始介绍/分类/上传时间一律去掉，
        悬停只保留拍摄地点、设备、参数。 */
     var _tip = [];
@@ -1358,7 +1693,7 @@ function render(s){
              : (mode === "bing") ? (cnt.bing || 0)
              : (cnt.spotlight || 0);
   var LIB_NAME = { focus:"聚焦库", bing:"必应库", commons:"万象库", picsum:"随拍库" };
-  setText("nextSub", "每 " + fmtCycle(cycMin) + " · 图库 " + libNum + " 张 · 收藏 "
+  setText("nextSub", "每 " + fmtCycle(cycMin) + " · 图库 " + libNum + " 张 · 收藏"
     + (s.favCount || 0) + " 张" + (s.local && s.local.count ? (" · 本地 " + s.local.count + " 张") : ""));
 
   /* 开关类 */
@@ -1480,7 +1815,6 @@ function render(s){
   renderLog(s.log || []);
 
   /* 出处清单展开着、模式却切了: 自动换成新库那一批, 不留着上一个库的清单 */
-  if (typeof CREDIT !== "undefined" && CREDIT.open && CREDIT.mode !== mode) { loadCredits(); }
 
   tick();
 }
@@ -1685,7 +2019,7 @@ function renderHistory(list, curName){
     var k = String((it && it.name) || "").replace(/\.[a-z0-9]+$/i, "").toLowerCase();
     if (!k || seen[k] || rows.length >= 4) return;
     seen[k] = 1;
-    rows.push({ name: it.name, path: it.path || "", thumb: it.thumb || "", src: it.src || "", at: at || "" });
+    rows.push({ name: it.name, display: it.display, path: it.path || "", thumb: it.thumb || "", src: it.src || "", at: at || "" });
   }
   var atMap = {};
   for (var i = 0; i < list.length; i++){
@@ -1726,7 +2060,7 @@ function renderHistory(list, curName){
   rows.forEach(function(it){
     // 有"换上时间"就角标写换上的时刻/月日；没有(图库里最近但本机没换过)就退回图片日期。
     // src 带上这张图真正的归属库, 后端 use/fav/del 才能"指哪打哪"; 不能再写死成 hist。
-    var f = tileFor({ name: it.name, path: it.path || "", thumb: it.thumb || "",
+    var f = tileFor({ name: it.name, display: it.display, path: it.path || "", thumb: it.thumb || "",
                       fav: false, src: it.src || "", at: it.at || "" },
                     { currentName: curName });
     box.appendChild(f);
@@ -1899,60 +2233,6 @@ function loadGallery(reset){
       $("libMoreWrap").style.display = "none";
     });
 }
-/* ── 主页「图片出处」清单 ──
-   2026-11-06 用户「所有图片的出处，都集中在主页上反映」: 一个地方列全当前库里每一张,
-   不用给图库每张缩略图塞第五个按钮。默认收起、展开才按需请求, 小字低对比。 */
-var CREDIT = { open:false, mode:"", loading:false };
-var CREDIT_SRC = { focus:"spotlight", bing:"bing", commons:"commons", picsum:"picsum" };
-function creditSrc(){ return CREDIT_SRC[curMode()] || "spotlight"; }
-function loadCredits(){
-  var box = $("creditList");
-  if (!box || CREDIT.loading) return;
-  CREDIT.loading = true;
-  CREDIT.mode = curMode();
-  box.innerHTML = "";
-  setText("creditStat", "正在读取…");
-  fetch("/?panel=credits&t=" + encodeURIComponent(TOKEN) + "&src=" + encodeURIComponent(creditSrc()), { cache:"no-store" })
-    .then(function(r){ if(!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-    .then(function(arr){
-      CREDIT.loading = false;
-      if(!arr || !arr.length){ setText("creditStat", "这个库还没有图片"); return; }
-      var nAuthor = 0, nLink = 0, shotMode = (creditSrc() === "commons" || creditSrc() === "picsum");
-      arr.forEach(function(it){
-        if(it.author) nAuthor++;
-        if(it.link) nLink++;
-        var full = displayName({ name: it.name });
-        var row = document.createElement("div");
-        row.className = "cr-row muted xs";
-        var nm = document.createElement("span");
-        nm.className = "cr-name";
-        nm.textContent = full;
-        nm.title = full;
-        row.appendChild(nm);
-        function bit(txt){ var s = document.createElement("span"); s.textContent = txt; row.appendChild(s); }
-        if(it.date) bit((shotMode ? "摄于 " : "") + it.date);
-        if(it.author) bit((it.author.charAt(0) === "©" ? "" : "摄影：") + it.author);
-        if(it.cam) row.appendChild(camSpan(it.cam));
-        if(it.lic) bit(it.lic);
-        if(it.note) bit(it.note);
-        if(it.link && /^https:\/\/(commons\.wikimedia\.org|www\.bing\.com)\//i.test(it.link)){
-          var a = document.createElement("a");
-          a.href = it.link; a.target = "_blank"; a.rel = "noopener noreferrer";
-          a.textContent = "来源 ↗";
-          row.appendChild(a);
-        }
-        box.appendChild(row);
-      });
-      setText("creditStat", "共 " + arr.length + " 张 · " + nAuthor + " 张有署名 · " + nLink + " 张可点开来源");
-    })
-    .catch(function(e){ CREDIT.loading = false; setText("creditStat", "出处读不出来：" + e.message); });
-}
-$("creditToggle").addEventListener("click", function(){
-  CREDIT.open = !CREDIT.open;
-  $("creditBody").style.display = CREDIT.open ? "" : "none";
-  setText("creditToggle", CREDIT.open ? "收起 ‹" : "展开 ›");
-  if (CREDIT.open) loadCredits();
-});
 Array.prototype.forEach.call(document.querySelectorAll(".lib-chip"), function(chip){
   chip.addEventListener("click", function(){
     Array.prototype.forEach.call(document.querySelectorAll(".lib-chip"), function(c){ c.classList.remove("on"); });

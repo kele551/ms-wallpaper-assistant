@@ -2333,7 +2333,14 @@ function Get-BwArtFitPlan([string]$path) {
   if (-not $path) { return $plan }
   $c = $null
   try { $c = Get-BwConfig } catch { $c = $null }
-  if (-not (Test-BwArtFitOn $c)) { $plan.Why = '不放大显示关着(按老的填充走)'; return $plan }
+  # 决定走哪条路: 显式模式(fill/fit/...) 且未开"不放大显示" -> 直接原图, 不合成。
+  # auto(智能): 按图比例自适应; 其余情况继承旧逻辑(开"不放大显示"时按宽合成)。
+  $mode = 'fill'
+  if ($c -and $c.PSObject.Properties['wallpaper_style']) { $mode = ([string]$c.wallpaper_style).ToLower() }
+  if (($mode -ne 'auto') -and -not (Test-BwArtFitOn $c)) {
+    $plan.Why = '非 auto 模式且未开不放大显示: 按原样走'
+    return $plan
+  }
   $sz = Get-BwImageSize $path
   if (-not $sz) { $plan.Why = '读不出分辨率, 按原样走'; return $plan }
   $scr = Get-BwScreenSize
@@ -2342,6 +2349,17 @@ function Get-BwArtFitPlan([string]$path) {
   $line = [Math]::Max([int](Get-BwSrcFullOfPath $c $path), [int]$scr.W)
   $plan.W = [int]$sz.W; $plan.H = [int]$sz.H
   $plan.ScreenW = [int]$scr.W; $plan.ScreenH = [int]$scr.H; $plan.Line = $line
+  # ===== auto(智能): 原汁原味, 原图直出 (2026-11-08 用户宗旨) =====
+  # 原创 / 不是镜像 / 不是拼接 / 不是合成: 原始文件一个像素都不动, 直接交给系统。
+  if ($mode -eq 'auto') {
+    $plan.Why = 'auto: 原图直出, 不镜像不拼接不合成(零新增像素)'
+    return $plan
+  }
+  # ===== 2026-11-08 用户最终定死: 只收 16:9, 撤掉模糊底 =====
+  # 不再生成任何合成图: 与屏幕同比例的原始文件直接铺满, 一个像素都不加。
+  # 4:3 按用户口径视为手机片; 3:2 / 竖幅 / 超宽同理, 全部由下面两道比例闸挡在库外与桌面外:
+  #   Save-BwFile (入库) + Get-BwNextWall (轮换)。
+  # ===== 旧逻辑: 不放大显示开 -> 只按宽 =====
   if ([int]$sz.W -ge $line) {
     $plan.Why = ('宽 ' + $sz.W + ' >= 满屏线 ' + $line + ': 铺满(只缩不放)')
     return $plan
@@ -2354,11 +2372,7 @@ function Get-BwArtFitPlan([string]$path) {
   $sc = [Math]::Min(1.0, [Math]::Min(($scr.W * 1.0) / [double]$sz.W, ($scr.H * 1.0) / [double]$sz.H))
   $plan.DrawnW = [int][Math]::Round([double]$sz.W * $sc)
   $plan.DrawnH = [int][Math]::Round([double]$sz.H * $sc)
-  $how = '原图 1:1 居中'
-  if ($sc -lt 0.999) {
-    $how = ('等比缩到 ' + $plan.DrawnW + 'x' + $plan.DrawnH + ' 居中(高 ' + $sz.H + ' 超过屏幕 ' + $scr.H + ', 缩一点才放得下; 不裁不放大)')
-  }
-  $plan.Why = ('宽 ' + $sz.W + ' < 满屏线 ' + $line + ': ' + $how + ' + 同图模糊底 (' + $scr.W + 'x' + $scr.H + ')')
+  $plan.Why = ('宽 ' + $sz.W + ' < 满屏线 ' + $line + ': 原图居中 + 同图模糊底(不放大不裁)')
   return $plan
 }
 # 决策 + 需要的话现场合成(命中缓存就直接用)。返回要设为壁纸的那个路径; 出任何问题都返回原图。
@@ -2383,6 +2397,350 @@ function Get-BwArtFitWall([string]$path) {
     return $path
   }
 }
+# 2026-11-07 用户「我要的是整个桌面，百叶窗的切换壁纸的效果」：
+# 桌面换图时给一次整屏百叶窗 —— 不用覆盖窗口（不抢焦点、不挡操作），
+# 而是现场合成 N 帧"叶片逐条拉开"的画面，逐帧交给 Windows 设成壁纸；
+# Windows 每帧立刻重绘桌面，连起来就是整屏 12 条横百叶自上而下拉开。
+# 每帧都写成不同文件名：同一路径会被系统当成"没变"而不重绘。
+# 2026-11-07 用户「要马上切换的那个动作会愣一下，没有平滑过渡」：
+# 症状根因 —— 每次换图都要临时加载 WPF 程序集 + 现场编译 BwWinFx 这个 P/Invoke 类型，
+# 加起来 1 秒多，动画还没开始就先愣一下。
+# 解决办法：把"加载程序集 + 编译类型"提前到面板服务启动时做一次；之后每次换图直接用。
+function Initialize-BwDesktopFx {
+  try {
+    foreach ($asm in @('PresentationFramework','PresentationCore','WindowsBase','System.Windows.Forms','System.Drawing')) {
+      try { Add-Type -AssemblyName $asm -ErrorAction SilentlyContinue } catch {}
+    }
+    if (-not ('BwWinFx' -as [type])) {
+      Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class BwWinFx {
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int idx);
+  [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int idx, int value);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern bool SystemParametersInfo(uint a, uint p, string v, uint f);
+  // 2026-11-07 用户「要马上切换的那个动作会愣一下」：设壁纸这条 API 本身要 ~0.5 秒，
+  // 放在动画收尾会看到"末帧定住一下再闪"。改到后台线程去设，与动画并行，关窗时桌面已经是新图。
+  static System.Threading.Thread _wallTh = null;
+  // 2026-11-07 用户「会闪到上一张」「首尾有拖延」：
+  // 后台线程设壁纸（那条 API 要 ~0.5 秒），动画一开始就并行跑；
+  // 动画结束时 Join 等它落地（通常早就完成了），再撤窗 —— 不闪、也不空等。
+  public static void SetWallAsync(string path) {
+    try {
+      _wallTh = new System.Threading.Thread(() => {
+        try { SystemParametersInfo(0x0014, 0, path, 3); } catch {}
+      });
+      _wallTh.IsBackground = true;
+      _wallTh.Start();
+    } catch {}
+  }
+  // 2026-11-07 用户「收尾必须静止」：实测 Windows 的桌面在"被盖住"时不会重绘新壁纸，
+  // 要等窗口撤掉才补画 —— 于是撤窗那一刻先露出旧图，再跳成新图（就是那下闪）。
+  // 所以撤窗前主动让桌面子窗口立刻重绘一遍（此时还盖着，看不见），撤窗时就已经是新图。
+  [DllImport("user32.dll")] static extern IntPtr GetDesktopWindow();
+  [DllImport("user32.dll")] static extern bool RedrawWindow(IntPtr hWnd, IntPtr rc, IntPtr rgn, uint flags);
+  public static void ForceDesktopRepaint() {
+    try { RedrawWindow(GetDesktopWindow(), IntPtr.Zero, IntPtr.Zero, 0x0001 | 0x0004 | 0x0080 | 0x0100); } catch {}
+  }
+  public static bool SetWallWait(int ms) {
+    try { if (_wallTh != null) { return _wallTh.Join(ms); } } catch {}
+    return true;
+  }
+}
+"@
+    }
+    # 顺手把覆盖窗也建好（不显示）：这次建窗的成本落在面板启动时，
+    # 用户第一次换图就已经是"复用窗口"的快路径。
+    try {
+      if (-not $global:BwFxHost -and (Get-Command New-BwFxHost -ErrorAction SilentlyContinue)) {
+        $scr = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+        $W = [double]$scr.Width; $H = [double]$scr.Height
+        if ($W -ge 320 -and $H -ge 240) {
+          $global:BwFxHost = New-BwFxHost $W $H
+          # 真正显示一次再藏起来：让 Windows 建好底层窗口、WPF 走完首帧渲染。
+          # 用 Opacity=0 显示，肉眼看不到，但 HWND 与渲染管线都热了。
+          try {
+            $global:BwFxHost.Win.Opacity = 0
+            $global:BwFxHost.Win.Show()
+            $global:BwFxHost.Win.Hide()
+            $global:BwFxHost.Win.Opacity = 1
+          } catch {}
+        }
+      }
+    } catch {}
+    $global:BwDesktopFxReady = $true
+    return $true
+  } catch { return $false }
+}
+function Get-BwDesktopFx {
+  try {
+    $c = Get-BwConfig
+    if ($c -and $c.PSObject.Properties['desktop_fx']) { return (([string]$c.desktop_fx).Trim().ToLower()) }
+  } catch {}
+  return 'blinds'    # 默认开；配成 off 就退回"啪一下"直接切
+}
+# 2026-11-07 用户「没有效果」：逐帧 SETDESKWALLPAPER 这条路走不通 ——
+# 实测每帧系统重绘约 200-500ms，而且会被合并，桌面上只看到"旧图→新图"两帧。
+# 改成 WPF 覆盖窗：整屏一块无边框置顶窗，旧图当底，新图用 12 条矩形裁切做"叶片"
+# 向上展开（Storyboard 动画，60fps 平滑）；放完再换壁纸、再关窗，用户看不到闪。
+# 窗口不抢焦点、不接收鼠标；异常一律兜底（失败就退回直接换图）。
+# 覆盖窗只建一次：面板进程里留着，之后每次换图直接复用。
+# 2026-11-07 用户「要马上切换的那个动作会愣一下」——实测一次建窗 + 首帧渲染要 ~0.8 秒，
+# 复用之�后每次只剩"换两张图 + 跑动画"，第一帧能立刻出来。
+$global:BwFxHost = $null
+# 2026-11-07 (装箱修复): 换图可能被并发触发(守护轮换 + 面板手动设图撞在同一进程里),
+# 而 WPF 覆盖窗是单实例复用的 —— 重入会在动画属性半更新状态下再次赋值, 触发
+# "只能取消从对象或接口类型到值类型的装箱"(InvalidCastException, 日志 09:08~09:09 一分钟 5 次)。
+# 加一个进程内忙标记: 已经在放百叶窗就跳过本次, 让调用方退回"直接换图", 不抢同一个窗口。
+$global:BwFxBusy = $false
+# 按屏宽解码（解码阶段就缩），4K 原图整张解要 ~190ms/张。
+function Get-BwFxBitmap([string]$path, [int]$decW) {
+  $bi = New-Object Windows.Media.Imaging.BitmapImage
+  $bi.BeginInit()
+  $bi.UriSource = New-Object Uri($path, [UriKind]::Absolute)
+  $bi.CacheOption = [Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+  if ($decW -gt 0) {
+    # 2026-11-07 (抖动修复): 按屏宽解码。以前 DecW 恒为 0, 4K 原图整张解码后每帧都要
+    # 重绘 3840x2560 的大位图 —— 动画期间 GPU 填充率被压垮, 帧间隔不匀, 看起来就是抖。
+    # 解到屏幕宽度就够(全屏铺满), 像素量降到约 1/3, 动画帧率就稳了。
+    $bi.DecodePixelWidth = $decW
+  }
+  $bi.EndInit()
+  $bi.Freeze()
+  return $bi
+}
+# 2026-11-07 (式样一致): 百叶窗过渡里的旧/新图铺放方式跟 wallpaper_style 保持一致, 否则
+# 过渡预览(以前固定 UniformToFill)会和桌面真实显示对不上(fill/fit/stretch/center/tile/span)。
+function Get-BwFxStretchMode {
+  $c = Get-BwConfig
+  $k = 'fill'
+  if ($c -and $c.PSObject.Properties['wallpaper_style']) { $k = ([string]$c.wallpaper_style).ToLower() }
+  # keep = 跟随系统: 程序不写注册表, 系统是什么就是什么, 直接读当前值判断。
+  if ($k -eq 'keep') {
+    try {
+      $d = Get-ItemProperty 'HKCU:\Control Panel\Desktop' -ErrorAction SilentlyContinue
+      if ([string]$d.TileWallpaper -eq '1') { return @{ Stretch = [Windows.Media.Stretch]::None; Center = $true } }
+      switch ([string]$d.WallpaperStyle) {
+        '2'  { return @{ Stretch = [Windows.Media.Stretch]::Fill;        Center = $false } }
+        '6'  { return @{ Stretch = [Windows.Media.Stretch]::Uniform;     Center = $false } }
+        '0'  { return @{ Stretch = [Windows.Media.Stretch]::None;        Center = $true } }
+        default { return @{ Stretch = [Windows.Media.Stretch]::UniformToFill; Center = $false } }
+      }
+    } catch { return @{ Stretch = [Windows.Media.Stretch]::UniformToFill; Center = $false } }
+  }
+  switch ($k) {
+    'fit'     { return @{ Stretch = [Windows.Media.Stretch]::Uniform;     Center = $false } }
+    'stretch' { return @{ Stretch = [Windows.Media.Stretch]::Fill;        Center = $false } }
+    'center'  { return @{ Stretch = [Windows.Media.Stretch]::None;        Center = $true } }
+    'tile'    { return @{ Stretch = [Windows.Media.Stretch]::None;        Center = $true } }  # 平铺在过渡里按 1:1 近似
+    default   { return @{ Stretch = [Windows.Media.Stretch]::UniformToFill; Center = $false } }  # fill/auto/span/未知
+  }
+}
+function Set-BwFxImageStyle($im) {
+  $m = Get-BwFxStretchMode
+  $im.Stretch = $m.Stretch
+  if ($m.Center) {
+    $im.HorizontalAlignment = [Windows.HorizontalAlignment]::Center
+    $im.VerticalAlignment = [Windows.VerticalAlignment]::Center
+  } else {
+    $im.HorizontalAlignment = [Windows.HorizontalAlignment]::Stretch
+    $im.VerticalAlignment = [Windows.VerticalAlignment]::Stretch
+  }
+}
+function New-BwFxHost([double]$W, [double]$H) {
+  $win = New-Object Windows.Window
+  $win.WindowStyle = [Windows.WindowStyle]::None
+  $win.ResizeMode = [Windows.ResizeMode]::NoResize
+  $win.Topmost = $false
+  $win.ShowInTaskbar = $false
+  $win.ShowActivated = $false
+  $win.WindowStartupLocation = [Windows.WindowStartupLocation]::Manual
+  $win.Left = 0; $win.Top = 0; $win.Width = $W; $win.Height = $H
+  $win.Background = [Windows.Media.Brushes]::Black
+  $win.IsHitTestVisible = $false
+  $imgOld = New-Object Windows.Controls.Image
+  Set-BwFxImageStyle $imgOld
+  $imgNew = New-Object Windows.Controls.Image
+  Set-BwFxImageStyle $imgNew
+  $bands = 12
+  $bh = $H / $bands
+  $gg = New-Object Windows.Media.GeometryGroup
+  $rects = New-Object System.Collections.ArrayList
+  for ($i = 0; $i -lt $bands; $i++) {
+    $rg = New-Object Windows.Media.RectangleGeometry
+    $rg.Rect = [Windows.Rect]::new([double]0, [double]($i * $bh), [double]$W, [double]0)
+    [void]$gg.Children.Add($rg)
+    [void]$rects.Add($rg)
+  }
+  $imgNew.Clip = $gg
+  $grid = New-Object Windows.Controls.Grid
+  [void]$grid.Children.Add($imgOld)
+  [void]$grid.Children.Add($imgNew)
+  $win.Content = $grid
+  $fxHost = [pscustomobject]@{ Win = $win; Old = $imgOld; New = $imgNew; Rects = $rects;
+                             W = $W; H = $H; Bands = $bands; BandH = $bh;
+                             DecW = 0; Shown = $false }
+  return $fxHost
+}
+function Invoke-BwDesktopBlindsWin([string]$oldPath, [string]$newPath) {
+  # 2026-11-07 (装箱修复): 换图可能在守护轮换与面板手动设图撞车时被并发重入, 而 WPF 覆盖窗
+  # 是单实例复用的 —— 重入会在动画半更新状态下再次赋值, 触发"只能取消从对象或接口类型到
+  # 值类型的装箱"。已经在放百叶窗就跳过本次, 让调用方退回"直接换图", 不抢同一个窗口。
+  if ($global:BwFxBusy) { return $false }
+  $global:BwFxBusy = $true
+  try {
+    if (-not $oldPath -or -not $newPath -or $oldPath -eq $newPath) { return $false }
+    if (-not (Test-Path -LiteralPath $oldPath)) { return $false }
+    if (-not (Test-Path -LiteralPath $newPath)) { return $false }
+    [void](Initialize-BwDesktopFx)
+    $scr = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $W = [double]$scr.Width; $H = [double]$scr.Height
+    if ($W -lt 320 -or $H -lt 240) { return $false }
+    $fh = $global:BwFxHost
+    if (-not $fh -or $fh.W -ne $W -or $fh.H -ne $H) {
+      $fh = New-BwFxHost $W $H
+      $global:BwFxHost = $fh
+    }
+    # 2026-11-07 (抖动修复): 解码宽度按屏幕实际像素宽(含 DPI 缩放)。原来 DecW 恒为 0,
+    # 4K 原图整张解码 -> 动画每帧重绘超大位图, 帧率被压垮。铺满全屏只需要屏幕宽度。
+    if (-not $fh.DecW -or $fh.DecW -lt 640) {
+      # 按物理像素宽解码(W 是屏幕像素宽); 下限 1920 保清晰度, 上限 3840 防超大屏吃显存。
+      $dw = [int][Math]::Ceiling([double]$W)
+      if ($dw -lt 1920) { $dw = 1920 }
+      if ($dw -gt 3840) { $dw = 3840 }
+      $fh.DecW = $dw
+    }
+    # 2026-11-07 (式样一致): 复用窗口时也按当前 wallpaper_style 刷新铺放(配置可能在面板改过)。
+    Set-BwFxImageStyle $fh.Old
+    Set-BwFxImageStyle $fh.New
+    # 2026-11-07 (抖动修复): 两张大图缓存成位图。动画期间每帧都要合成 12 条叶片的裁剪结果,
+    # 不缓存就得每帧从解码后的原图重新采样缩放 —— 那一步很贵, 帧率一掉就是不匀(抖)。
+    # BitmapCache 建一次, 之后每帧只是贴图。
+    try {
+      $bcOld = New-Object Windows.Media.Imaging.BitmapCache
+      $bcOld.RenderAtScale = [double]1
+      $fh.Old.CacheMode = $bcOld
+      $bcNew = New-Object Windows.Media.Imaging.BitmapCache
+      $bcNew.RenderAtScale = [double]1
+      $fh.New.CacheMode = $bcNew
+    } catch {}
+    $fh.Old.Source = (Get-BwFxBitmap $oldPath $fh.DecW)
+    $fh.New.Source = (Get-BwFxBitmap $newPath $fh.DecW)
+    $fh.Old.Visibility = [Windows.Visibility]::Visible
+    for ($i = 0; $i -lt $fh.Bands; $i++) {
+      $rg = $fh.Rects[$i]
+      $rg.BeginAnimation([Windows.Media.RectangleGeometry]::RectProperty, $null)
+      $rg.Rect = [Windows.Rect]::new([double]0, [double]($i * $fh.BandH), [double]$W, [double]0)
+    }
+    $fh.Win.Show()
+    # 沉到 Z 序最底：只盖桌面，不压任务栏和普通窗口（用户要"像桌面切换"）。
+    if (-not $fh.Shown) {
+      try {
+        $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($fh.Win)).Handle
+        $GWL_EXSTYLE = -20
+        $ex = [BwWinFx]::GetWindowLong($hwnd, $GWL_EXSTYLE)
+        [void][BwWinFx]::SetWindowLong($hwnd, $GWL_EXSTYLE, ($ex -bor 0x20 -bor 0x08000000))
+        $fh.Shown = $true
+      } catch {}
+    }
+    try {
+      $hwnd2 = (New-Object System.Windows.Interop.WindowInteropHelper($fh.Win)).Handle
+      [void][BwWinFx]::SetWindowPos($hwnd2, [IntPtr]1, 0, 0, 0, 0, 0x0013)
+    } catch {}
+    # 壁纸设置与动画并行：动画一开始就发出去（后台线程），结尾只需要 Join。
+    try { [BwWinFx]::SetWallAsync($newPath) } catch {}
+    # 2026-11-07 (抖动修复): 交给 WPF 自己的动画引擎驱动 12 条叶片。
+    # 关键点: RectAnimation.From/To 是 Nullable<Rect>, PowerShell 5.1 给它赋值必抛
+    # "只能取消从对象或接口类型到值类型的装箱" —— 所以动画在 C# 里构造(BwWinFx.SetupBlinds),
+    # PowerShell 只负责发指令。WPF 在渲染线程合成, 跟屏幕刷新同步(60fps+),
+    # 不再有 PowerShell 逐帧脚本块那种帧间隔不匀导致的抖动。
+    $animMs    = 640      # 单条叶片展开时长
+    $staggerMs = 22       # 相邻叶片错开
+    $totalMs   = $animMs + ($staggerMs * ($fh.Bands - 1))
+    # 先把所有叶片收敛到高度 0(旧图可见), 再挂动画
+    for ($i = 0; $i -lt $fh.Bands; $i++) {
+      $fh.Rects[$i].BeginAnimation([Windows.Media.RectangleGeometry]::RectProperty, $null)
+      $fh.Rects[$i].Rect = [Windows.Rect]::new([double]0, [double]($i * $fh.BandH), [double]$W, [double]0)
+    }
+    # 2026-11-07 (抖动修复): 用 RectAnimation 的三参构造 —— 参数直接是 Rect 值类型,
+    # 完全不碰 From/To 这两个 Nullable<Rect> 属性(PS 5.1 给它们赋 boxed 值必抛"拆箱"异常)。
+    # 动画本体交给 WPF 渲染线程合成(60fps+), 不再是 PowerShell 逐帧脚本块, 帧间隔均匀不抖。
+    $durAnim = New-Object Windows.Duration([TimeSpan]::FromMilliseconds($animMs))
+    $easeAnim = New-Object Windows.Media.Animation.QuarticEase
+    $easeAnim.EasingMode = [Windows.Media.Animation.EasingMode]::EaseInOut
+    for ($i = 0; $i -lt $fh.Bands; $i++) {
+      $bandsRect = $fh.Rects[$i]
+      $by = [double]($i * $fh.BandH)
+      $rFrom = [Windows.Rect]::new([double]0, $by, [double]$W, [double]0)
+      $rTo   = [Windows.Rect]::new([double]0, $by, [double]$W, [double]$fh.BandH)
+      $animBand = New-Object Windows.Media.Animation.RectAnimation($rFrom, $rTo, $durAnim)
+      $animBand.EasingFunction = $easeAnim
+      $animBand.BeginTime = [TimeSpan]::FromMilliseconds([int]($i * $staggerMs))
+      $animBand.FillBehavior = [Windows.Media.Animation.FillBehavior]::HoldEnd
+      $bandsRect.BeginAnimation([Windows.Media.RectangleGeometry]::RectProperty, $animBand)
+    }
+    # 等动画播完(用一次性的 DispatcherFrame, 到点就退出; 不做逐帧插值)
+    $frame = New-Object Windows.Threading.DispatcherFrame
+    $timer = New-Object Windows.Threading.DispatcherTimer
+    $timer.Interval = [TimeSpan]::FromMilliseconds($totalMs + 60)
+    $timer.Add_Tick({ $frame.Continue = $false })
+    $timer.Start()
+    [Windows.Threading.Dispatcher]::PushFrame($frame)
+    $timer.Stop()
+    # 结束时冻结最终态：撤窗前不让 12 条叶片的动画时钟继续参与合成。
+    # 直接让新图覆盖整个窗口，避免最后一条叶片/桌面重绘在撤窗瞬间交错。
+    for ($i = 0; $i -lt $fh.Bands; $i++) {
+      $rg = $fh.Rects[$i]
+      $rg.BeginAnimation([Windows.Media.RectangleGeometry]::RectProperty, $null)
+      $rg.Rect = [Windows.Rect]::new([double]0, [double]($i * $fh.BandH), [double]$W, [double]$fh.BandH)
+    }
+    # 保留原图层以便下次复用，但当前帧只显示已完整展开的新图。
+    $fh.Old.Visibility = [Windows.Visibility]::Hidden
+    $settleFrame = New-Object Windows.Threading.DispatcherFrame
+    $settleTimer = New-Object Windows.Threading.DispatcherTimer
+    $settleTimer.Interval = [TimeSpan]::FromMilliseconds(34)
+    $settleTimer.Add_Tick({ $settleFrame.Continue = $false })
+    $settleTimer.Start()
+    [Windows.Threading.Dispatcher]::PushFrame($settleFrame)
+    $settleTimer.Stop()
+    # 壁纸后台线程去设（那条 API ~0.5 秒），与动画并行；关窗时桌面已是新图。
+    # 动画播完时壁纸通常已经设好（Join 立刻返回）；没设好就最多再等 1 秒。
+    # 等壁纸真正落地后再撤窗；收尾保持完整不透明的新图，不让旧桌面在淡出期间透出。
+    $waitOk = $true
+    try { $waitOk = [BwWinFx]::SetWallWait(1000) } catch { $waitOk = $false }
+    # 后台线程退出并不保证 SPI 成功；只有注册表已指向目标才允许撤窗。
+    $wallNow = ''
+    try { $wallNow = [string](Get-ItemProperty 'HKCU:\Control Panel\Desktop' -ErrorAction Stop).Wallpaper } catch {}
+    if (-not $waitOk -or -not [string]::Equals($wallNow, $newPath, [StringComparison]::OrdinalIgnoreCase)) {
+      if (-not (Set-BwDesktopWallpaper $newPath)) { throw '系统壁纸未确认设成目标图，暂不按成功记录百叶窗' }
+      try { $wallNow = [string](Get-ItemProperty 'HKCU:\Control Panel\Desktop' -ErrorAction Stop).Wallpaper } catch {}
+      if (-not [string]::Equals($wallNow, $newPath, [StringComparison]::OrdinalIgnoreCase)) {
+        throw '壁纸接口返回成功，但注册表尚未指向目标图'
+      }
+    }
+    # 注册表是设置成功的证据，不是 Explorer 绘制完成信号。保持静止新图覆盖，
+    # 促发重绘后给一个有界缓冲；不再做透明淡出或重置透明度。
+    try { [BwWinFx]::ForceDesktopRepaint() } catch {}
+    Start-Sleep -Milliseconds 500
+    $fh.Win.Hide()
+    Log ('桌面百叶窗(WPF): 12 条叶片已展开 -> ' + (Split-Path $newPath -Leaf))
+    return $true
+  } catch {
+    try { if ($global:BwFxHost -and $global:BwFxHost.Win) { $global:BwFxHost.Win.Hide() } } catch {}
+    # 2026-11-07 诊断: 记录异常类型与出错位置, 便于定位装箱异常的真实来源。
+    try {
+      $exT = $_.Exception.GetType().FullName
+      $pos  = [string]$_.InvocationInfo.PositionMessage
+      Log ('桌面百叶窗(WPF)失败[' + $exT + ']: ' + $_.Exception.Message + ' @@ ' + ($pos -replace "`r?`n", ' | ')) 'WARN'
+    } catch {
+      Log ('桌面百叶窗(WPF)失败: ' + $_.Exception.Message) 'WARN'
+    }
+    return $false
+  } finally {
+    $global:BwFxBusy = $false
+  }
+}
 function Set-BwWall([string]$path) {
   # 已经是这张就不重复调 API, 少一次桌面重绘
   if (-not (Test-Path -LiteralPath $path)) { return $false }
@@ -2404,6 +2762,13 @@ function Set-BwWall([string]$path) {
   $target = Get-BwArtFitWall $path
   if (-not $target) { $target = $path }
   $cur = (Get-ItemProperty 'HKCU:\Control Panel\Desktop' -ErrorAction SilentlyContinue).Wallpaper
+  # 2026-11-07 用户「我要的是整个桌面」：换图前先放一遍整屏百叶窗（桌面真的在动，不是面板）。
+  if (($cur -ne $target) -and ((Get-BwDesktopFx) -eq 'blinds')) {
+    try { [void](Invoke-BwDesktopBlindsWin $cur $target) } catch {}
+    # 2026-11-07 用户「首尾有拖延」：动画结束时壁纸已经设好了，
+    # 这里再读一次注册表确认；已经是目标就跳过下面那次重复的 SPI（它要 ~0.5 秒）。
+    try { $cur = (Get-ItemProperty 'HKCU:\Control Panel\Desktop' -ErrorAction SilentlyContinue).Wallpaper } catch {}
+  }
   if ($cur -and ($cur -eq $target)) {
     # 2026-10-17: 图没变, 但“填充方式”可能在开机/重启后被系统重置成居中 ——
     # 必须顺手校对一遍, 否则开机第一张壁纸会一直显示成居中(桌面没铺满)。
@@ -2778,7 +3143,7 @@ function Reset-BwSourceRecords {
 $global:BWSources     = Join-Path $global:BWRoot 'sources.json'
 $global:BWSrcSeenMax  = 50000    # 用户要求"下过/用过"永久去重, 不再按时刻淘汰
 $global:BWSrcRotMax   = 50000
-$global:BWSrcMaxBytes = 12MB     # 单张图大小上限: 超过就跳过(有的源条目挂着几十 MB 的原图)
+$global:BWSrcMaxBytes = 40MB   # 2026-11-08 原图直出: 原图常 15~30 MB, 12 MB 会把好图全挡掉     # 单张图大小上限: 超过就跳过(有的源条目挂着几十 MB 的原图)
 # 图源下载用的 UA。必须带版本 + 可公开联系的仓库地址: Wikimedia 等图床对"无标识/伪装成浏览器的 UA"
 # 直接返回 429(图床反爬)。早期写的伪 Chrome UA 让万象图片下载 100% 被限流; 改成下面这个合规 UA
 # 之后才正常。不含任何私人邮箱/令牌(仓库红线)。
@@ -2809,9 +3174,12 @@ function Get-BwSourceDefs {
       DirKey       = 'src_commons_dir'
       CapKey       = 'src_commons_cap'
       KwKey        = 'src_commons_kw'
-      DefaultKw    = '雪豹,冰岛瀑布,撒哈拉沙漠,极光,喜马拉雅,雾林,峡谷,野生动物,山景,大堡礁,银河,火山'
+      DefaultKw    = '雪豹,冰岛瀑布,撒哈拉沙漠,极光,喜马拉雅,雾林,峡谷,野生动物,山景,大堡礁,银河,火山,星空,冰川'
       MinKey       = 'src_commons_min_w'
-      MinDef       = 1920
+      # 2026-11-07 用户拍板 2.5K 档: 裁成 16:9 后有效宽 >= 2560(与满屏线一致)。
+      # 实测 POTY 995 张里 2.5K 694 张 / 4K 508 张, 多 186 张。
+      # 2026-11-07 晚: 用户「两个图源就按照…2.5K裁剪」-> 随拍同步抬到 2560, 两源同口径。
+      MinDef       = 3840
       FullKey      = 'src_commons_full_w'
       FullDef      = 2560
       LandscapeOnly = $false
@@ -2823,9 +3191,12 @@ function Get-BwSourceDefs {
       DirKey       = 'src_picsum_dir'
       CapKey       = 'src_picsum_cap'
       KwKey        = 'src_picsum_kw'
-      DefaultKw    = '城市夜景,城市日落,老街,街景,建筑,桥梁,港口,市集,咖啡,自行车,霓虹夜色,广场'
+      DefaultKw    = '城市夜景,城市日落,老街,街景,建筑,桥梁,港口,市集,咖啡,自行车,霓虹夜色,广场,夜市,菜市场,电车,码头'
       MinKey       = 'src_picsum_min_w'
-      MinDef       = 1920
+      # 2026-11-07 晚: 随拍废止「精确 16:9」硬标准, 与万象统一按裁成 16:9 后的
+      # 有效宽 >= 2560 判。实测荣誉池 359 张里精确 16:9 只过 12 张(3.3%),
+      # 改裁后口径能过 285 张(79.4%); 3:2 / 4:3 高分获奖图不再被整批错杀。
+      MinDef       = 3840
       FullKey      = 'src_picsum_full_w'
       FullDef      = 2560
       LandscapeOnly = $false
@@ -2933,6 +3304,22 @@ function Get-BwSrcTimeoutSec([psobject]$c) {
   if ($v -lt 5) { $v = 5 }
   return $v
 }
+# 2026-11-07: 桌面壁纸是「填充铺屏」, 原图比例不必正好 16:9。
+# 真正该卡的是**裁成 16:9 之后还剩多少有效像素**:
+#   * 比 16:9 高/方的图(ar < 1.7778) -> 上下裁, 全宽保留, 有效宽 = W
+#   * 比 16:9 宽的图  (ar > 1.7778) -> 左右裁, 全高保留, 有效宽 = H * 16/9
+# 所以有效宽 = min(W, H*16/9)。这一条同时替掉原来的「比例窗口 1.4~1.9」:
+# 旧的写法把 6000x4000 的 3:2 风光、5125x5125 的方图、5760x8640 的竖幅野生动物
+# 一律错杀, 而它们裁完仍有 4000~5760 宽的可用画面; 反过来 10000x1000 的长卷
+# 裁完只剩 1778 宽, 新口径照样挡掉。实测 POTY 995 张里因此救回 194 张高分图。
+# 2026-11-07 晚: 用户「两个图源就按照…2.5K裁剪」-> 万象 / 随拍两个 Commons 源
+# 统一走这一口径, 随拍原来的「精确 16:9(1.70~1.85)」硬标准废止。
+function Get-BwCrop169Width([int]$w, [int]$h) {
+  if (($w -le 0) -or ($h -le 0)) { return 0 }
+  $byH = [int][math]::Floor([double]$h * 16.0 / 9.0)
+  if ($w -lt $byH) { return $w }
+  return $byH
+}
 # 一个源的"画质门槛"打包成一次调用要用的几个数(抓取处只取一次, 循环里直接用)。
 # 宽高比窗口: @{Min=下限; Max=上限}, 0 = 那一边不限。
 # [暂未启用 —— 等合适的图源] 这里是"接近 16:9 的横构图"这一口径的默认窗口;
@@ -2954,7 +3341,12 @@ function Get-BwSrcGate([psobject]$c, [string]$key) {
   # 和比上限宽的(长卷)都不要。
   $w = Get-BwSrcAspectWindow $c
   if ($w.Min -gt $ar) { $ar = $w.Min }
-  return @{ MinWidth = $minW; MinAspect = $ar; MaxAspect = $w.Max; FullWidth = (Get-BwSrcFullWidth $c $key) }
+  # 2026-11-07 晚: 两个 Commons 源统一按「裁成 16:9 后的有效宽」判。
+  # Crop169MinWidth > 0 时 Save-BwFile 会跳过原图比例窗口(1.5~2.1), 不再二次拒图 ——
+  # 这一项必须和候选预筛、Get-BwSourceDefs 的 MinDef 三处一致, 缺一处就等于白接。
+  $cropW = 0
+  if (@('commons','picsum') -contains [string]$key) { $cropW = [int]$minW }
+  return @{ MinWidth = $minW; MinAspect = $ar; MaxAspect = $w.Max; FullWidth = (Get-BwSrcFullWidth $c $key); Crop169MinWidth = $cropW }
 }
 # 源开着没有。2026-10-09 用户要求**默认关**(保持必应+聚焦的原始体验), 字段不存在 = 关;
 # 想开就在菜单里对应的那一项打开。
@@ -3039,7 +3431,106 @@ function Get-BwSrcKeywords([psobject]$c, [string]$key) {
   $txt = Format-BwSrcKeywords $raw
   if (-not $txt) { $txt = Format-BwSrcKeywords ([string]$def.DefaultKw) }
   if (-not $txt) { return @() }
-  return @($txt -split ',')
+  # 2026-11-07 晚「加上荣誉池进行筛图」: 短别名排在队伍最前, 抓图时再展开成完整
+  # 检索式; 荣誉池是静态精选池, 翻到头靠关键词池兜底, 两个池不会互相饿死。
+  $base = @($txt -split ',')
+  $all = @()
+  foreach ($x in (@(Get-BwHonorAliases $c $key) + $base)) {
+    $s = ([string]$x).Trim()
+    if ($s -and -not ($all -contains $s)) { $all += $s }
+    if ($all.Count -ge 24) { break }
+  }
+  return @($all)
+}
+
+# ---- 荣誉池(获奖 / 年度图片) ---- 2026-11-07 晚
+# 关键词框里只放**短中文别名**(<=40 字, 面板可读、配置可手改); 抓图前在这里展开成
+# 完整 Commons 检索式, 绕过 Format-BwSrcKeywords 的 40 字截断(实测一条可用检索式 68 字)。
+# 检索式全部联网实测过命中量(都带 filew:>2560), 绝不凭分类名猜:
+#   deepcategory:"Pictures of the Year"                              -> 2135
+#   deepcategory:"Winners of Wiki Loves Earth"                        -> 1461
+#   deepcategory:"Winners of Wiki Loves Monuments in Germany by year" -> 1344
+#   deepcategory:"Winners of Wiki Loves Earth in Germany by year"     ->  671
+#   WLM 2013/2014/2015/2016 by country                                -> 423/374/325/328
+# 实测反证: `deepcategory:"Winners of Wiki Loves Monuments"` 返回 0(这个根分类不存在);
+# `incategory:A OR incategory:B` 三种写法全部 0 —— 所以不做 OR, 靠多条别名轮转。
+function Get-BwHonorQueries {
+  return @{
+    '年度图片'      = 'deepcategory:"Pictures of the Year"'
+    'WLE获奖'       = 'deepcategory:"Winners of Wiki Loves Earth"'
+    'WLE德国获奖'   = 'deepcategory:"Winners of Wiki Loves Earth in Germany by year"'
+    'WLM德国获奖'   = 'deepcategory:"Winners of Wiki Loves Monuments in Germany by year"'
+    'WLM2013获奖'   = 'deepcategory:"Winners of Wiki Loves Monuments 2013 by country"'
+    'WLM2014获奖'   = 'deepcategory:"Winners of Wiki Loves Monuments 2014 by country"'
+    'WLM2015获奖'   = 'deepcategory:"Winners of Wiki Loves Monuments 2015 by country"'
+    'WLM2016获奖'   = 'deepcategory:"Winners of Wiki Loves Monuments 2016 by country"'
+    'WLM俄罗斯获奖' = 'deepcategory:"Winners of Wiki Loves Monuments in Russia by year"'
+    'WLM西班牙获奖' = 'deepcategory:"Winners of Wiki Loves Monuments in Spain by year"'
+    'WLE决赛'       = 'incategory:"Finalists of Wiki Loves Earth in Spain 2015"'
+  }
+}
+function Get-BwHonorQuery([string]$kw) {
+  $k = ([string]$kw).Trim()
+  $m = Get-BwHonorQueries
+  if ($m.ContainsKey($k)) { return [string]$m[$k] }
+  return ''
+}
+# 题材分工(实测抽样 359 张: WLE 42/85 判为自然, WLM 54/66 判为人文):
+# 万象吃自然/地理, 随拍吃城市/人文; POTY 混合, 两源共享。
+# config 里写 src_honor_on=false 可整池关掉, 回到纯关键词检索。
+function Get-BwHonorAliases([psobject]$c, [string]$key) {
+  if ($c -and $c.PSObject.Properties['src_honor_on']) {
+    $v = $c.PSObject.Properties['src_honor_on'].Value
+    if (($v -is [bool]) -and (-not $v)) { return @() }
+    $s = ([string]$v).Trim().ToLower()
+    if (@('off','false','0','no','关') -contains $s) { return @() }
+  }
+  if ([string]$key -eq 'commons') { return @('WLE获奖','年度图片','WLE德国获奖','WLE决赛') }
+  if ([string]$key -eq 'picsum')  { return @('WLM德国获奖','年度图片','WLM2013获奖','WLM2014获奖','WLM2015获奖','WLM2016获奖','WLM俄罗斯获奖') }
+  return @()
+}
+# 荣誉标识只认**图片自己 Categories 里的真实分类名**, 绝不因为"这次是从荣誉检索式
+# 抓到的"就盖章 —— 同一个 deepcategory 池里也会混进参赛图(实测 359 张抽样里
+# 132 张分类带获奖/决赛字样)。认不出的国名就不写, 绝不编一个。
+# 用户「凡是年度最佳照片要注明, 以来源出处的标识体现」: POTY 冠军写「年度最佳」,
+# 决赛入围如实写「决赛入围」, 不把 finalist 抬成冠军。
+function Get-BwHonorLabel([string]$cats) {
+  $t = [string]$cats
+  if (-not $t) { return '' }
+  $cc = @{
+    'Germany'='德国'; 'France'='法国'; 'Poland'='波兰'; 'Ukraine'='乌克兰';
+    'Italy'='意大利'; 'Spain'='西班牙'; 'Russia'='俄罗斯'; 'Portugal'='葡萄牙';
+    'Austria'='奥地利'; 'Switzerland'='瑞士'; 'Netherlands'='荷兰'; 'Sweden'='瑞典';
+    'Norway'='挪威'; 'Finland'='芬兰'; 'Czech Republic'='捷克'; 'Romania'='罗马尼亚';
+    'Hungary'='匈牙利'; 'Greece'='希腊'; 'Serbia'='塞尔维亚'; 'Croatia'='克罗地亚';
+    'Belgium'='比利时'; 'Denmark'='丹麦'; 'Ireland'='爱尔兰'; 'Slovakia'='斯洛伐克';
+    'Latvia'='拉脱维亚'; 'Estonia'='爱沙尼亚'; 'Lithuania'='立陶宛'; 'Bulgaria'='保加利亚';
+    'United Kingdom'='英国'; 'United States'='美国'; 'India'='印度'; 'Nepal'='尼泊尔';
+    'Iceland'='冰岛'; 'Japan'='日本'; 'China'='中国'; 'Brazil'='巴西'; 'Mexico'='墨西哥'
+  }
+  # ① 年度图片: Pictures of the Year/2024 (finalist) / (winner)
+  $m = [regex]::Match($t, '(?i)Pictures?\s+of\s+the\s+Year\s*/\s*(\d{4})\s*\((finalist|winner)\)')
+  if ($m.Success) {
+    $y = [string]$m.Groups[1].Value
+    if ([string]$m.Groups[2].Value -match '(?i)winner') { return ('POTY ' + $y + ' 年度最佳') }
+    return ('POTY ' + $y + ' 决赛入围')
+  }
+  if ($t -match '(?i)Picture of the Year.{0,40}finalist') { return 'POTY 决赛入围' }
+  # ② 各赛事获奖分类, 按「Winners of Wiki Loves X <年> in <国>」取年份与国名
+  $m = [regex]::Match($t, '(?i)Winners of Wiki Loves (Earth|Monuments|Africa|Folklore|Folk)\s+(\d{4})(?:\s+in\s+([^/]{2,32}))?')
+  if ($m.Success) {
+    $code = @{ 'Earth'='WLE'; 'Monuments'='WLM'; 'Africa'='WLA'; 'Folklore'='WLF'; 'Folk'='WLF' }[[string]$m.Groups[1].Value]
+    $y = [string]$m.Groups[2].Value
+    $where = ([string]$m.Groups[3].Value).Trim()
+    $zh = ''
+    foreach ($en in $cc.Keys) {
+      if ($where -match ('(?i)\b' + [regex]::Escape($en) + '\b')) { $zh = [string]$cc[$en]; break }
+    }
+    return ($code + ' ' + $y + ' ' + $(if ($zh) { $zh } else { '' }) + '获奖').Replace('  ', ' ')
+  }
+  # ③ 其它决赛入围(写法不统一, 只给不带年份的诚实标识)
+  if ($t -match '(?i)Finalists? (?:of|from) (?:Wiki|Kulturarv)') { return '赛事决赛入围' }
+  return ''
 }
 function Get-BwSrcFiles([string]$dir) {
   if (-not $dir) { return @() }
@@ -3188,6 +3679,31 @@ function Get-BwCameraModel($md) {
   }
   return ''
 }
+# 2026-11-08 用户「凡是摄影器材是手机品牌的照片不能入池」+「严格按照荣誉池的规定选图片」。
+# 只认两处硬证据: ① EXIF 的相机型号(camera 字段); ② Commons 页面里 "Taken with ..." 分类。
+# 绝不拿整段 Categories 直接匹配 —— 实测 "User:Poco a poco" / "Milky Way Galaxy" /
+# "Apple" 这类词会把 Canon EOS 5DS R、NIKON D610 的好图误杀成手机图。
+# 型号码也认: M2102J20SG(小米/POCO)、SM-A556B(三星 Galaxy)、CPH/ROG 等。
+function Test-BwPhoneGear([string]$camera, [string]$cats) {
+  # 2026-11-08: Lumia / Moto / XT#### / Mi A# / LG-H### / Sony Xperia L##h-t-u-w / Elephone P8_Mini 均为手机。
+  # 只扩手机线与型号码, 不碰 E-M1MarkII / ILCE-7M2 / DMC-G7 / Canon EOS 等专业机型。
+  $brand = '(?i)\b(xiaomi|redmi|poco|iphone|apple|samsung|galaxy|huawei|honor|oneplus|oppo|vivo|pixel|motorola|moto|nokia|lumia|realme|htc|meizu|blackberry|xperia|elephone|mi\s*a\d+|lg-?h\d{3}[a-z]?|rog\s*phone)\b'
+  $code  = '(?i)(\bM\d{4}J\d+[A-Z]*\b|\bSM-[A-Z]\d{2,4}[A-Z]*\b|\bCPH\d{4}\b|\bRMX\d{4}\b|\bXT\d{4}[A-Z]*\b|\bLumia\s*\d+\b|\bMoto\s*G\d+\b|\bL\d{2}[htuw]\b|\bP8[_-]?Mini\b)'
+  $cam = [string]$camera
+  if ($cam) {
+    if (($cam -match $brand) -or ($cam -match $code)) { return $true }
+  }
+  $t = [string]$cats
+  if ($t) {
+    foreach ($seg in ($t -split '[/|]')) {
+      if ($seg -match '(?i)taken\s+with|photographs\s+taken\s+with|smartphone|mobile\s+phone') {
+        # "Taken with Xiaomi Poco X3 Pro" 才算; "Taken with Canon EOS 400D" 不算。
+        if ($seg -match $brand) { return $true }
+      }
+    }
+  }
+  return $false
+}
 function Get-BwExifValue($md, [string]$name) {
   if (-not $md) { return '' }
   foreach ($it in @($md)) {
@@ -3228,15 +3744,21 @@ function Get-BwMetaExtra($ii, $em) {
       $pr = $em.PSObject.Properties['ImageDescription']
       if ($pr -and $pr.Value) {
         $t = (([string]$pr.Value.value) -replace '<[^>]+>', ' ').Trim()
-        if ($t.Length -gt 220) { $t = $t.Substring(0, 220) + '…' }
-        $o.desc = $t
+        # 保留完整句子；原先220字截断会把句尾国家/地名截掉。
+        if ($t.Length -gt 6000) {
+          $sentences = [regex]::Matches($t, '[^。!?]+[。!?]|[^.]+\.(?=\s|$)')
+          $kept = ''
+          foreach ($sentence in $sentences) { if (($kept.Length + $sentence.Value.Length) -gt 6000) { break }; $kept += $sentence.Value }
+          $t = $kept.Trim()
+        }
+        $o.desc = [System.Net.WebUtility]::HtmlDecode($t)
       }
       $pr = $em.PSObject.Properties['Categories']
       if ($pr -and $pr.Value) {
-        $arr = @((([string]$pr.Value.value) -split '\|') | Where-Object { $_ -and ($_ -notmatch '^Files with|^Self-published') } | Select-Object -First 3)
-        $t = ($arr -join ' / ')
-        if ($t.Length -gt 160) { $t = $t.Substring(0, 160) + '…' }
-        $o.cats = $t
+        $arr = @((([string]$pr.Value.value) -split '\|') | Where-Object { $_ -and ($_ -notmatch '^Files with|^Self-published|^Taken with|^CC-|^GFDL|^License migration|^Uploads by|^Uploaded with|^Flickr images') })
+        $kept = @(); $size = 0
+        foreach ($cat in $arr) { if (($size + $cat.Length + 3) -gt 6000) { continue }; $kept += $cat; $size += $cat.Length + 3 }
+        $o.cats = [System.Net.WebUtility]::HtmlDecode(($kept -join ' / '))
       }
       $la = $em.PSObject.Properties['GPSLatitude']; $lo = $em.PSObject.Properties['GPSLongitude']
       if ($la -and $lo -and $la.Value -and $lo.Value) {
@@ -3332,12 +3854,15 @@ function Get-BwZhYoudao([string]$text) {
 # 打分只做粗排：中文越多信息越全；"在"和"的"堆太多、连环状语、残留外文，都要扣分。
 function Get-BwZhScore([string]$s) {
   if (-not $s) { return -999.0 }
-  $p = [double]([regex]::Matches($s, '[\u4e00-\u9fa5]')).Count
+  $p = 100.0 * (Get-BwZhRatio $s)
   $zai = ([regex]::Matches($s, '在')).Count
   if ($zai -gt 2) { $p = $p - (($zai - 2) * 6) }
   $de = ([regex]::Matches($s, '的')).Count
   if ($de -gt 3) { $p = $p - (($de - 3) * 3) }
   if ($s -match '[\u4e00-\u9fa5]{1,6}在[^，。]{0,10}在') { $p = $p - 8 }
+  # 英文的 "…at the park" 直译成中文会把地点甩到句尾（"…在林姆尼港野生动物园。"）。
+  # 中文习惯先说地方，所以句尾悬着一个「在+地名」的译文要扣分。
+  if ($s -match '[^在]在[^，。]{2,}[。.]?$') { $p = $p - 4 }
   if ($s -match '(的[^，。的]{0,4}){3,}') { $p = $p - 6 }
   $p = $p - (([regex]::Matches($s, '[A-Za-z]')).Count * 0.8)
   if ($s -match '，.{0,6}。$') { $p = $p - 2 }
@@ -3352,6 +3877,9 @@ function Format-BwZhOrder([string]$s) {
   $t = $t.Replace(';', '；')
   $t = [regex]::Replace($t, '在([^在，。]{1,20})在([^在，。]{1,20})', '在$1，$2')
   $t = [regex]::Replace($t, '位于([^，。]{2,50})的[。]?$', '$1')
+  # 2026-11-08 修复回归：机翻把 "in the Presidio" 直译成「位于旧金山要塞的…」，
+  # 「位于」是机器判断句残留，不是地名的一部分，整词摘掉，名字才是一句通顺的话。
+  $t = $t.Replace('位于', '')
   $t = [regex]::Replace($t, '的的+', '的')
   $t = [regex]::Replace($t, '^(一个|一张|一幅|一座|一处)(?=[\u4e00-\u9fa5])', '')
   $t = [regex]::Replace($t, '^这(是|为)(一张|一幅|一个|座)?', '')
@@ -3367,91 +3895,862 @@ function Get-BwZhRatio([string]$s) {
   return ([double]$cn / [double]$all)
 }
 # 整句里剩下的英文专名（Abisko / Torneträsk 之类）逐个转写；转不出中文就保留原文，不删信息。
-function Format-BwZhLatin([string]$s) {
-  if (-not $s) { return $s }
-  $eval = {
-    param($m)
-    $tok = $m.Value
-    if ($tok.Length -lt 2) { return $tok }
-    $k = 'tok|' + $tok
-    if ($global:BwZhCache.ContainsKey($k)) { $v = [string]$global:BwZhCache[$k]; if ($v) { return $v }; return $tok }
-    $t = Get-BwZhTencent $tok
-    if ((Get-BwZhRatio $t) -lt 0.6) { $t = Get-BwZhYoudao $tok }
-    if ((Get-BwZhRatio $t) -lt 0.6) { $t = '' }
-    $global:BwZhCache[$k] = $t
-    if ($t) { return $t }
-    return $tok
-  }
-  return [regex]::Replace($s, "[A-Za-zÀ-ÿĀ-žƏə'’\-]{2,}", $eval)
-}
-function Get-BwZhText([string]$text) {
+function Get-BwZhText([string]$text, [string]$startZh) {
   # 翻译一段英文（结果带缓存；同一句不会重复联网）。空串 = 翻不出来。
   # 2026-11-06 用户「给翻译加一道语序整理」：腾讯直译常把状语甩在句尾，
-  # 有道语序更接近中文但会把地名留在外文。两个都翻、专名都转写，再按通顺度取优。
+  # 有道语序更接近中文但会把地名留在外文。两个都翻，再按通顺度取优。
+  # $startZh：已知国家时优先选「国家开头」的那份，正好是用户要的语序，
+  # 不靠拆句子硬拼。留空则纯比分数。
   $t = ([string]$text).Trim()
   if (-not $t) { return '' }
-  if ($global:BwZhCache.ContainsKey($t)) { return [string]$global:BwZhCache[$t] }
+  $pref = ''
+  if ($startZh) { $pref = ([string]$startZh).Trim() }
+  $cacheKey = 'caption2|' + $pref + '|' + $t
+  if ($global:BwZhCache.ContainsKey($cacheKey)) { return [string]$global:BwZhCache[$cacheKey] }
+  if ($t -notmatch '[A-Za-z]' -and (Get-BwZhRatio $t) -ge 0.6) { return $t }
   $a = Get-BwZhTencent $t
   $b = Get-BwZhYoudao $t
-  if ($a) { $a = Format-BwZhLatin $a }
-  if ($b) { $b = Format-BwZhLatin $b }
+  # 不再逐词硬译拉丁字母：学名、缩写、地名离开上下文会变成别的事物。
+  # 不完整的标题由名称校验退回，原文仍保存在出处里。
+  $sa = Get-BwZhScore $a
+  $sb = Get-BwZhScore $b
+  if ($pref) {
+    if ($a -and $a.StartsWith($pref)) { $sa = $sa + 6 }
+    if ($b -and $b.StartsWith($pref)) { $sb = $sb + 6 }
+  }
   if (-not $a -and -not $b) { $out = '' }
   elseif (-not $b) { $out = $a }
   elseif (-not $a) { $out = $b }
-  elseif ((Get-BwZhScore $a) -ge (Get-BwZhScore $b)) { $out = $a }
+  elseif ($sa -ge $sb) { $out = $a }
   else { $out = $b }
   if ($out) { $out = Format-BwZhOrder $out }
-  $global:BwZhCache[$t] = $out
+  if ($out) { $global:BwZhCache[$cacheKey] = $out }
   return $out
 }
-# 译文整理成文件名能用的短名：去纯外文括注、去编号/年份、去句号、限长。
+# 翻译前整理原文，地理事实只取照片自己的作品名、描述和分类。
+# 拉丁学名的括注只有在别的原始字段里也出现时才从短标题里移走（信息不丢，原名仍完整保存）；
+# 孤零零出现的括注一律保留，宁可不入库也不删掉可能带意义的字。
+function Get-BwCaptionSource([string]$text, [string]$corpus) {
+  $t = [System.Net.WebUtility]::HtmlDecode(($text -replace '<[^>]+>', ' '))
+  $t = $t -replace '^File:', '' -replace '\.(jpe?g|png)$', ''
+  $t = [regex]::Replace($t, '[（(]\s*([A-Z][a-z]+\s+[a-z]{3,}(?:\s+(?:subsp\.|var\.)\s+[a-z]+)?)\s*[）)]', {
+    param($m)
+    $taxon = ($m.Groups[1].Value -replace '\s+', ' ').Trim()
+    if ($corpus -and ($corpus -match ('(?i)(?:^|[|/()\s]|[a-z]\s)' + [regex]::Escape($taxon) + '(?:$|[)|.,\s/])'))) { return ' ' }
+    return $m.Value
+  })
+  $t = $t -replace '(?i)\s*-\s*geograph\.org\.uk\s*-\s*\d+\s*$', ''
+  $t = $t -replace '\s*\(\d{6,}\)\s*$', ''
+  # 文件名尾巴上的连拍编号不是画面内容：单个 1~3 位、以及 "20240716 0832 1077"
+  # 这种连续两三串纯数字(日期/时刻/序号)都去掉；单独一个 4 位年份留着。
+  $t = $t -replace '\s+\d{1,3}$', ''
+  $t = $t -replace '(?:\s+\d{2,8}){2,}\s*[.,]?\s*$', ''
+  $t = $t -replace '[\s,;:]+$', ''
+  return (($t -replace '\s+', ' ').Trim())
+}
+# 逗号地址里的地名段：每个词都大写开头、不超过 4 个词、不带数字。
+# 这样 "Finikas" / "Crete" / "Bryce Canyon National Park" 收进来，
+# "Trees are Pseudotsuga menziesii and Pinus ponderosa" 这种句子被挡在外面。
+function Get-BwCaptionPlaces([string]$text) {
+  $out = @()
+  if (-not $text) { return $out }
+  $segs = @([string]$text -split ',')
+  for ($i = 1; $i -lt $segs.Count; $i++) {
+    $s = ($segs[$i] -replace '^[\s\.]+', '' -replace '[\s\.]+$', '')
+    if (-not $s) { continue }
+    if ($s -match '\d') { continue }
+    if ($s -notmatch '^[A-Z][A-Za-zÀ-ž]*(?:\s+[A-Z][A-Za-zÀ-ž]*){0,3}$') { continue }
+    $out += $s
+  }
+  return $out
+}
+function Get-BwCaptionCountry([string]$title, [string]$desc, [string]$cats) {
+  # 系统的国家名称表仅用于确认原文中显式出现的国家，不从城市名/物种名推断国家。
+  if (-not $script:BwCountryNames) {
+    $script:BwCountryNames = @{}
+    foreach ($culture in [Globalization.CultureInfo]::GetCultures([Globalization.CultureTypes]::SpecificCultures)) {
+      try { $r = [Globalization.RegionInfo]::new($culture.Name); $script:BwCountryNames[$r.EnglishName] = $r.EnglishName } catch {}
+    }
+    foreach ($pair in @(@('USA','United States'), @('U.S.A.','United States'), @('UK','United Kingdom'))) {
+      $script:BwCountryNames[$pair[0]] = $pair[1]
+    }
+    # 2026-11-06: 英国的照片页上常只写 England / Scotland / Wales，系统表里没有这几个词，
+    # 认不出国家 → 名字就缺国家。这里并到 United Kingdom（英国的一部分，事实成立）。
+    foreach ($uk in @('England','Scotland','Wales','Northern Ireland')) {
+      $script:BwCountryNames[$uk] = 'United Kingdom'
+    }
+    # 形容词形 -> 系统里的国家名；只配上面那张表里有的写法，认不出的国家词直接跳过。
+    $script:BwDemonyms = @(
+      @('moroccan','Morocco'), @('algerian','Algeria'), @('tunisian','Tunisia'),
+      @('libyan','Libya'), @('egyptian','Egypt'), @('kenyan','Kenya'),
+      @('ethiopian','Ethiopia'), @('nigerian','Nigeria'), @('ghanaian','Ghana'),
+      @('senegalese','Senegal'), @('south african','South Africa'), @('namibian','Namibia'),
+      @('tanzanian','Tanzania'), @('mauritanian','Mauritania'), @('madagascan','Madagascar'),
+      @('spanish','Spain'), @('portuguese','Portugal'), @('italian','Italy'),
+      @('french','France'), @('german','Germany'), @('dutch','Netherlands'),
+      @('belgian','Belgium'), @('swiss','Switzerland'), @('austrian','Austria'),
+      @('czech','Czech Republic'), @('polish','Poland'), @('hungarian','Hungary'),
+      @('greek','Greece'), @('turkish','Turkey'), @('russian','Russia'),
+      @('ukrainian','Ukraine'), @('norwegian','Norway'), @('swedish','Sweden'),
+      @('finnish','Finland'), @('danish','Denmark'), @('icelandic','Iceland'),
+      @('irish','Ireland'), @('british','United Kingdom'), @('english','United Kingdom'),
+      @('scottish','Scotland'), @('american','United States'), @('canadian','Canada'),
+      @('mexican','Mexico'), @('brazilian','Brazil'), @('argentine','Argentina'),
+      @('chilean','Chile'), @('peruvian','Peru'), @('colombian','Colombia'),
+      @('japanese','Japan'), @('chinese','China'), @('korean','South Korea'),
+      @('indian','India'), @('pakistani','Pakistan'), @('thai','Thailand'),
+      @('vietnamese','Vietnam'), @('indonesian','Indonesia'), @('malaysian','Malaysia'),
+      @('filipino','Philippines'), @('singaporean','Singapore'), @('australian','Australia'),
+      @('new zealand','New Zealand'), @('israeli','Israel'), @('iranian','Iran'),
+      @('iraqi','Iraq'), @('saudi','Saudi Arabia'), @('emirati','United Arab Emirates'),
+      @('nepali','Nepal'), @('mongolian','Mongolia'), @('georgian','Georgia'),
+      @('armenian','Armenia'), @('azerbaijani','Azerbaijan'), @('kazakh','Kazakhstan'),
+      @('uzbek','Uzbekistan')
+    )
+    # 特别行政区 / 知名城市 -> 国家：页面常只写城市（香港、长岛市）不写国名，
+    # 但国家是确定的。用户定死「命名全部以页面内容为准」，国家也应从页面地点推断，
+    # 不能因认不出国名就退化成泛泛的「城市天际线」。只收地点无歧义的大城市/地区。
+    $script:BwRegionCountry = @(
+      @(@('hong kong','hongkong','香港','荃灣','荃湾','澳門','澳门','macau','taiwan','台湾','臺灣'), 'China'),
+      @(@('new york','nyc','纽约','曼哈頓','曼哈顿','布鲁克林','布鲁克林','皇后区','bronx','staten island','长岛市','long island city','queens'), 'United States'),
+      @(@('los angeles','洛杉矶','san francisco','旧金山','chicago','芝加哥','seattle','西雅图','boston','波士顿','washington','华盛顿','miami','迈阿密','las vegas','拉斯维加斯','houston','休斯顿'), 'United States'),
+      @(@('london','伦敦'), 'United Kingdom'),
+      @(@('paris','巴黎'), 'France'),
+      @(@('tokyo','東京','东京','osaka','大阪','kyoto','京都'), 'Japan'),
+      @(@('berlin','柏林','munich','慕尼黑','münchen','hamburg','汉堡','frankfurt','法兰克福','cologne','科隆','stuttgart','斯图加特'), 'Germany'),
+      @(@('moscow','莫斯科'), 'Russia'),
+      @(@('singapore','新加坡'), 'Singapore'),
+      @(@('sydney','悉尼','melbourne','墨尔本','brisbane','布里斯班'), 'Australia'),
+      @(@('toronto','多伦多','vancouver','温哥华','montreal','蒙特利尔'), 'Canada'),
+      @(@('dubai','迪拜','abu dhabi','阿布扎比'), 'United Arab Emirates'),
+      @(@('istanbul','伊斯坦布尔'), 'Turkey'),
+      @(@('bangkok','曼谷'), 'Thailand'),
+      @(@('seoul','首尔','서울','busan','釜山'), 'South Korea'),
+      @(@('mumbai','孟买','delhi','德里','new delhi','新德里','bangalore','班加罗尔'), 'India'),
+      @(@('cairo','开罗'), 'Egypt'),
+      @(@('rome','罗马','milan','米兰','florence','佛罗伦萨'), 'Italy'),
+      @(@('madrid','马德里','barcelona','巴塞罗那'), 'Spain'),
+      @(@('amsterdam','阿姆斯特丹'), 'Netherlands'),
+      @(@('vienna','维也纳'), 'Austria'),
+      @(@('lisbon','里斯本'), 'Portugal'),
+      @(@('athens','雅典'), 'Greece'),
+      @(@('dublin','都柏林'), 'Ireland'),
+      @(@('stockholm','斯德哥尔摩'), 'Sweden'),
+      @(@('oslo','奥斯陆'), 'Norway'),
+      @(@('copenhagen','哥本哈根'), 'Denmark'),
+      @(@('helsinki','赫尔辛基'), 'Finland'),
+      @(@('zurich','苏黎世','geneva','日内瓦','bern','伯尔尼'), 'Switzerland'),
+      @(@('brussels','布鲁塞尔'), 'Belgium'),
+      @(@('kuala lumpur','吉隆坡'), 'Malaysia'),
+      @(@('jakarta','雅加达'), 'Indonesia'),
+      @(@('manila','马尼拉'), 'Philippines'),
+      @(@('auckland','奥克兰'), 'New Zealand')
+    )
+  }
+  $found = @{}
+  foreach ($name in $script:BwCountryNames.Keys) {
+    $n = [regex]::Escape($name)
+    # 逗号地址、独立地理句，以及 in/of 分类；不能把 Guinea baboon 判为摄于几内亚。
+    # 尾巴上允许破折号："Kisumu City, Kenya - Night Skyline" 这类写法国家后面接的是分隔线。
+    $pat = '(?i)(?:^|[,;.!?]\s*|\bin\s+)' + $n + '(?=\s*(?:[,;.!?]|[-–—]|\s*$))'
+    $catPat = '(?i)(?:^|[|/]\s*|\b(?:in|of)\s+)' + $n + '(?=\s*(?:[|/]|[-–—]|\s+photographs\b)|\s*$)'
+    if ($title -match $pat -or $desc -match $pat -or $cats -match $catPat) { $found[$script:BwCountryNames[$name]] = $true }
+  }
+  if ($found.Count -eq 1) { return [string]@($found.Keys)[0] }
+  if ($found.Count -eq 0) {
+    # 介绍里常写形容词形而不是国名："Picture taken near the Moroccan city of Merzouga"。
+    # 这种句子原来认不出国家，闸门就没法要求名字里带「摩洛哥」，于是把西班牙语作品名
+    # Desierto 译成「撒哈拉沙漠的欲望」也照样放行。形容词必须紧跟地理名词才算，
+    # 免得 "Spanish dance steps""Turkish delight" 这类被当成国家。
+    foreach ($pair in $script:BwDemonyms) {
+      $cn = $pair[1]
+      if (-not $script:BwCountryNames.ContainsKey($cn)) { continue }
+      $pat = '(?i)\b' + $pair[0] + '\s+(?:city|town|village|province|region|district|coast|desert|valley|island|islands|mountains|harbour|port|capital|lakes|shore)\b'
+      if ($title -match $pat -or $desc -match $pat) { $found[$cn] = $true }
+    }
+    if ($found.Count -eq 1) { return [string]@($found.Keys)[0] }
+    # 页面只写城市/地区（香港、长岛市）不写国名时，按已知大城市/地区补出国家；
+    # 国家是确定的，不补就会退化成「城市天际线」这类泛名。
+    $scan = (([string]$title) + ' ' + [string]$desc + ' ' + [string]$cats).ToLower()
+    foreach ($r in $script:BwRegionCountry) {
+      $hit = $false
+      foreach ($tok in $r[0]) { if ($scan -match [regex]::Escape($tok)) { $hit = $true; break } }
+      if ($hit) { return $r[1] }
+    }
+  }
+  return '' # 多国/跨境画面保留原句，不能擅选一个国家。
+}
+function Get-BwCaptionInput([string]$origname, [string]$desc, [string]$cats) {
+  $title  = Get-BwCaptionSource $origname ($cats + ' ' + $desc)
+  $detail = Get-BwCaptionSource $desc ($cats + ' ' + $origname)
+  # 去掉开头的目录/地点代码（如 "HK TWD " "NYC " "LA "），它们不是描述正文，
+  # 机翻会原样留下拉丁字母（"香港TWD荃湾…"），名字因含外文被闸门作废。
+  # 只剥「连续全大写 2~4 字母、空格分隔」的前缀——"HK TWD" 命中、"New York" 这类
+  # 首字母大写地名不误伤（New 含小写，不会被削成 "York"）。
+  # 用户死规矩：命名以页面内容为准；去掉的是无意义的编目号，荃湾/大河道等实质内容保留。
+  $title  = [regex]::Replace($title,  '^\s*(?:[A-Z]{2,4}\s+)+', '')
+  $detail = [regex]::Replace($detail, '^\s*(?:[A-Z]{2,4}\s+)+', '')
+  # 只展开在原作品名中能逐字核对的缩写，如原名的 National Wildlife Refuge 对应 NWR。
+  $detail = [regex]::Replace($detail, '\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+([A-Z]{2,6})\b', {
+    param($m)
+    $prefix = $m.Groups[1].Value; $abbr = $m.Groups[2].Value
+    $match = [regex]::Match($title, '\b' + [regex]::Escape($prefix) + '\s+((?:[A-Z][a-z]+\s*)+)')
+    if ($match.Success) {
+      $words = @($match.Groups[1].Value.Trim() -split '\s+')
+      if ($words.Count -ge $abbr.Length) {
+        $words = @($words | Select-Object -First $abbr.Length)
+        if (($words | ForEach-Object { $_.Substring(0,1) }) -join '' -ceq $abbr) { return ($prefix + ' ' + ($words -join ' ')) }
+      }
+    }
+    return $m.Value
+  })
+  $country = Get-BwCaptionCountry $title $detail $cats
+  # 介绍有动作/构图时优先用完整句子；只有地名或模板提示时仍用作品名。
+  $useDetail = $detail -and $detail.Length -le 800 -and $detail -notmatch '…|\.\.\.|(?i)this is a photo of|scheduled monument number|^Taken by|^Image ID:' -and
+    # 2026-11-08 修复回归：描述是「X is a … located…」「This picture was taken…」
+    # 「A wide-angle landscape photograph of…」这类套话时，作品名反而更准、更短。
+    # 套话整句机翻会变差（Gopelafoss 是位于…），这里退回用作品名。
+    $detail -notmatch '(?i)^[A-Z].{0,60}?\b(is|are|was|were|has been)\b' -and
+    $detail -notmatch '(?i)^(this|the)\s+(picture|photo|image|photograph)\b' -and
+    $detail -notmatch '(?i)^(a|an)\s+(?:[a-z0-9-]+\s+){0,4}(photograph|picture|image|photo|landscape)\s+(of|showing|depicting|taken)\b' -and
+    ($detail -match '(?i)\b(calling|singing|perched|standing|sitting|flying|swimming|walking|running|with|view|seen|sunset|sunrise|over|under|along|from)\b' -or
+     $detail -match '(?i)\b(in|near|at|of|on|by|from|over|under|along)\s+[A-Z][a-z]{2,}')
+  $text = $title
+  if ($useDetail) {
+    $text = $detail
+    # 作品名明确写了性别、介绍却只写物种时，保留这个事实，不自行判断画面。
+    if ($title -match '^(Male|Female)\s+(.+)$') {
+      $sex = $Matches[1].ToLower(); $rest = $Matches[2]
+      $m = [regex]::Match($text, '(?i)^(?:A|An)\s+(.+?)(?=\s+(?:calling|singing|perched|standing|sitting|flying|with)\b)')
+      if ($m.Success -and $rest.StartsWith($m.Groups[1].Value, [StringComparison]::OrdinalIgnoreCase)) {
+        $text = [regex]::Replace($text, '^(?i)(A|An)\s+', ('A ' + $sex + ' '))
+      }
+    }
+  }
+  # 两段原文里数出来的地名段(城市/州/公园/国家)一起并进标题，已出现的不重复；
+  # 只调顺序、不猜：原文没写的地方一个字都不加。
+  # $allPlaces 另存一份「原文里确实出现过的地名段」（含标题里已有的），
+  # 后面判断译文语序时要拿它核对：中文名字先说地方，地方必须出现在开头那一段。
+  $extra = @()
+  $allPlaces = @()
+  foreach ($seg in (@(Get-BwCaptionPlaces $title) + @(Get-BwCaptionPlaces $detail))) {
+    $s = ($seg -replace '^[\s\.]+', '' -replace '[\s\.]+$', '')
+    if (-not $s) { continue }
+    if ($allPlaces.Count -lt 6) {
+      $seen = $false
+      foreach ($p in $allPlaces) {
+        if ($p.IndexOf($s, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $s.IndexOf($p, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $seen = $true; break }
+      }
+      if (-not $seen) { $allPlaces += $s }
+    }
+    if ($text.IndexOf($s, [StringComparison]::OrdinalIgnoreCase) -ge 0) { continue }
+    $dup = $false
+    foreach ($e in $extra) {
+      if ($e.IndexOf($s, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or $s.IndexOf($e, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $dup = $true; break }
+    }
+    if ($dup) { continue }
+    $extra += $s
+    if ($extra.Count -ge 4) { break }
+  }
+  if ($extra.Count) { $text = $text.TrimEnd(' ', '.') + ', ' + ($extra -join ', ') }
+  # 国家放到句首而非句尾：机翻对句尾 ", China." 常直译成「在中国」，被通顺闸门以含「在」作废；
+  # 放句首则译作「中国，…」的干净前缀，配合 Repair 把国家挪到最前刚好对齐三要素「国家开头」。
+  if ($country -and $text -notmatch ('(?i)\b' + [regex]::Escape($country) + '\b')) { $text = $country + ', ' + $text.TrimEnd(' ', '.') }
+  $text = $text.TrimEnd(' ', '.') + '.'
+  return @{ text = $text; country = $country; detail = $detail; places = $allPlaces }
+}
+function Test-BwZhNameBody([string]$name, [string]$countryZh) {
+  # 去掉国家、日期、标点后还剩几个汉字。只剩「2014年7月，冰岛」这种
+  # 时间+地点、没有画面主体的，不算名字（词典那条线还有更完整的写法）。
+  if (-not $name) { return $false }
+  $t = [string]$name
+  if ($countryZh) { $t = $t.Replace($countryZh, '') }
+  $t = [regex]::Replace($t, '\d{4}\s*[-/年.]\s*\d{1,2}\s*[-/月.]\s*(?:\d{1,2}\s*日?)?', '')
+  $t = $t -replace '[\s，,。．、；;：:（）()\-~]', ''
+  return (([regex]::Matches($t, '[\u4e00-\u9fa5]')).Count -ge 4)
+}
+function Get-BwZhCommonRun([string]$a, [string]$b) {
+  # 两段中文里最长的公共连续片段。只用来认「是不是同一个地名」：写法差一个字
+  #（基苏穆市 / 基苏木市）不该判成两处地方，所以够 3 个字就算认出来；不足 3 个字报 0。
+  $a = [string]$a; $b = [string]$b
+  if (-not $a -or -not $b) { return 0 }
+  for ($L = $a.Length; $L -ge 3; $L--) {
+    for ($i = 0; ($i + $L) -le $a.Length; $i++) {
+      if ($b.IndexOf($a.Substring($i, $L), [StringComparison]::Ordinal) -ge 0) { return $L }
+    }
+  }
+  return 0
+}
+function Test-BwZhNameFluent([string]$name, [string]$countryZh, $placesEn) {
+  # 2026-11-06 用户「名字要通顺，包括国家、地理元素」。整句机翻最容易露出两种
+  # 英文语序：把 in/at 直译成句中一个「在」，以及用逗号把地点甩在后面。
+  # 中文的名字先说地方，所以这种译文不当名字用——词典那条线给的是
+  # 「国家+城市+地点+主体」的写法，语序本来就是对的，宁可用它。
+  if (-not $name) { return $false }
+  $t = [string]$name
+  # 2026-11-08 修复回归：名字必须「单段成句」。两处及以上逗号 = 地名标签列表
+  # （"希腊，库尔塔廖蒂科峡谷，菲尼卡斯，克里特岛"），不是一句通顺的话 —— 交给词典线兜底。
+  # 只一处逗号是「句子 + 句尾地点」（"…浓雾，布赖恩特山脉"），留给三要素/词典去判，不误杀。
+  if (([regex]::Matches($t, '[，,]')).Count -ge 2) { return $false }
+  $head = ($t -split '[，,。．；;、]')[0]
+  # "船在旧金山湾雾" / "日落在小岛" —— 主语后面紧跟「在+地点」是英语语序。
+  if ($head -match '在') { return $false }
+  # 名字里不需要判断句（"这幅插图是透镜竞赛中…的一部分"）。
+  if ($t -match '是|位于') { return $false }
+  # 逗号或破折号后面接英语连词/介词，是没整理干净的直译（"市场圣弗朗西斯科，酒店，和，沿着"、
+  # "奥奇桥-从西南"、"肯尼亚基苏木市-夜间天际线"、"…的天际线与滨海大桥和富勒顿酒店，在晚上"）。
+  # 破折号、空格这些先抹掉再判开头，否则 "-从西南" 这种正好从标点后开始的一段会漏网。
+  # 分段本身也要在破折号上切：译文里的「-从西南」前面还有名字，不按逗号那样的段首来判就躲过去了。
+  foreach ($seg in ($t -split '[，,\-–—]')) {
+    $s = ($seg -replace '^[\s\-–—、:：;；。\.]+', '')
+    if ($s -match '^(从|对|和|以及|沿着|关于|透过|在|与)') { return $false }
+  }
+  # 名字里一律不留破折号：Commons 标题常写成「Kisumu City, Kenya - Night Skyline」，
+  # 机翻照搬就是「肯尼亚基苏木市-夜间天际线」这种带横杠的半截话。中文名字不该有这种尾巴，
+  # 词典那条线会给成「肯尼亚基苏木夜色中的城市天际线」。
+  if ($t -match '[\-–—]') { return $false }
+  # 同一个地名被译了两套写法拼在一起（Commons 页上作品名写 Lake Altaussee、分类里又写
+  # Altausseer See，机翻就成了「阿尔陶塞湖阿尔陶塞塞湖上空的浓雾」）。短窗口里同一个
+  # 3~5 字片段再出现一次，就判定是这种叠字，退回词典/介绍那条线。
+  for ($L = 3; $L -le 5; $L++) {
+    for ($i = 0; ($i + $L) -le $t.Length; $i++) {
+      $seg = $t.Substring($i, $L)
+      $next = $t.IndexOf($seg, $i + $L, [StringComparison]::Ordinal)
+      if ($next -ge 0 -and ($next - $i) -le ($L + 3)) { return $false }
+    }
+  }
+  # 开头那一段必须真放地方：先认国家，认不出国家再认原文里数出来的地名段。
+  $lead = [regex]::Replace($t, '^\s*\d{4}\s*[-/年.]\s*\d{1,2}\s*[-/月.]\s*(?:\d{1,2}\s*日?)?[，,]?\s*', '')
+  $lead = ($lead -split '[，,。．；;、]')[0]
+  if ($countryZh) {
+    if ($lead.IndexOf($countryZh, [StringComparison]::Ordinal) -lt 0) { return $false }
+    return $true
+  }
+  $segs = @($placesEn)
+  if ($segs.Count -eq 0) { return $true }   # 原文压根没写地方，不拿这条尺子量
+  foreach ($p in $segs) {
+    if (-not $p) { continue }
+    $pz = Get-BwZhText ([string]$p)
+    if ($pz -and (Get-BwZhCommonRun $lead $pz) -ge 3) { return $true }
+  }
+  return $false
+}
+# 2026-11-07 用户「命名三要素：国家，地理，主题」——名字落盘前的最后一把尺。
+# 一个合格的名字 = ① 开头是中文国名（只认页面元数据或地理表核过的，绝不猜）；
+# ② 国名后面跟着具体地点（城市 / 地标 / 地貌），不许一开口就是「动物园」「码头」
+#    这类泛主体；③ 明确写出画面主体（拍的是什么），不许拿「场景 / 风景 / 景象」
+#    这类空词充数，也不许只有「国家 + 地名」没有主体。
+# 通顺是前提、不是第四要素：全中文、语序、外文、破折号照旧由
+# Test-BwZhNameFluent / Get-BwZhRatio 那几把尺把关。
+# 像素不是命名要素：分辨率只用在下载门槛（裁成 16:9 后的有效宽），不写进名字。
+# 表放在函数体内并用 script: 缓存，是为了让离线回归能整段摘走函数直接跑。
+function Test-BwNameTriad([string]$name, [string]$countryZh, [string]$geo) {
+  if (-not $name) { return $false }
+  if (-not $script:BwTriadCountries) {
+    # 只用来「认」名字开头有没有国家，不拿来补名字、更不拿来猜地点；长国名排前面。
+    $script:BwTriadCountries = @(
+      '巴布亚新几内亚','阿拉伯联合酋长国','波斯尼亚和黑塞哥维那','多米尼加共和国',
+      '布基纳法索','赤道几内亚','哥斯达黎加','沙特阿拉伯','印度尼西亚','马达加斯加',
+      '危地马拉','洪都拉斯','尼加拉瓜','巴拿马','古巴','牙买加','苏里南','圭亚那',
+      '委内瑞拉','哥伦比亚','厄瓜多尔','玻利维亚','坦桑尼亚','埃塞俄比亚','莫桑比克',
+      '纳米比亚','毛里塔尼亚','阿尔及利亚','哈萨克斯坦','乌兹别克斯坦','土库曼斯坦',
+      '吉尔吉斯斯坦','塔吉克斯坦','阿塞拜疆','斯洛文尼亚','斯洛伐克','克罗地亚',
+      '格鲁吉亚','亚美尼亚','塞尔维亚','罗马尼亚','保加利亚','匈牙利','奥地利',
+      '巴勒斯坦','以色列','黎巴嫩','叙利亚','约旦','伊拉克','伊朗','土耳其',
+      '葡萄牙','西班牙','意大利','希腊','乌克兰','俄罗斯','波兰','捷克',
+      '瑞士','瑞典','挪威','芬兰','丹麦','冰岛','爱尔兰','荷兰',
+      '比利时','卢森堡','德国','法国','英国','美国','加拿大','墨西哥',
+      '巴西','阿根廷','智利','秘鲁','乌拉圭','巴拉圭','日本','韩国',
+      '朝鲜','蒙古','印度','巴基斯坦','尼泊尔','不丹','孟加拉国','泰国',
+      '越南','老挝','柬埔寨','缅甸','马来西亚','新加坡','菲律宾','印尼',
+      '澳大利亚','新西兰','摩洛哥','突尼斯','利比亚','埃及','肯尼亚',
+      '尼日利亚','加纳','塞内加尔','南非','中国','南极',
+      '爱沙尼亚','拉脱维亚','立陶宛',
+      '苏格兰','英格兰','威尔士','北爱尔兰','阿联酋','刚果'
+    )
+    # 这些是「画面主体 / 泛地貌」，不是具体地点。国名后头直接接它们 = 缺地理。
+    $script:BwTriadGeneric = @(
+      '动物园','建筑立面','城市天际线','火山熔岩','极光全景','野生动物','国家公园',
+      '山峦','山脉','山峰','湖泊','河流','河岸','海岸','海滩','沙漠','高原',
+      '森林','草原','瀑布','冰川','火山','群岛','半岛','码头','港口','船只',
+      '建筑','老城','城区','城市','街景','街道','广场','公园','桥梁','教堂',
+      '城堡','运河','星空','银河','夜景','落日','日出','夕阳','极光','云',
+      '雾','场景','风景','航拍','全景','天际线','山','湖','河','谷','湾'
+    )
+    # ③ 主题词表：只收 2 字以上的实词。单字（山 / 桥 / 街）不放进来，
+    # 否则「英国南街的场景」会靠一个「街」蒙过主题这道关。
+    $script:BwTriadSubjects = @(
+      '雪豹','蜘蛛','渔船','船只','火山','熔岩','极光','群山','山峰','瀑布',
+      '冰川','湖泊','河流','海岸','海滩','沙漠','森林','草原','落日','日出',
+      '夕阳','星空','银河','航拍','全景','天际线','山峦','山脉','高原','群岛',
+      '半岛','码头','港口','运河','水磨坊','桥梁','塔桥','教堂','大教堂','城堡',
+      '建筑','外立面','立面','铭文','街景','街道','老城','城区','广场','公园',
+      '动物园','城市','旗帜','幕旗','佛教旗','五色幕','波浪桥','拱石','双子峰',
+      '渔夫','行人','雪花','浪花','山花','鸟群','鱼群','树林','新建筑','观音殿',
+      '云层','夜景','倒影',
+      '沼泽','湿地','荒野','丘陵','峡谷','岬','海角','林地','苔原','沙丘','绿洲',
+      '鹿','熊','鹰','狼','狐','兔','雁','鹤','鲸','海豚','企鹅','海豹','虎','狮',
+      '象','豹','雕','鸥','龟','珊瑚','红树林','梯田','樱花','枫叶','灯塔','风车',
+      '古堡','废墟','神庙','佛塔','石窟','壁画','钟楼','雪峰','云海','竹林','椰林',
+      '麦浪','流星','篝火','帐篷','大坝','吊桥','冰瀑','雾凇','枫林','火山口','盐湖',
+      '草甸','灌丛','山涧','飞瀑','急流','滩涂','礁石','海蚀','溶洞','石林','梯田',
+      '彩林','秋色','春色','雪景','雾景','霞光','彩虹','银河','极光带','海豚群','鲸群'
+    )
+    # 空词：只说「有个景」，没说拍的是什么，一律不算主题。
+    $script:BwTriadVague = @(
+      # 只收真正没信息量的词。描述性景观词（景观/城市/风景/景色/风光/景致）从页面描述里
+      # 常作为主体出现（"城市景观""海岸风光"），用户定死"命名全部以页面内容为准"，
+      # 页面这么说就该被接受，不再当空泛词杀掉——否则忠实页面的名字反被逼回词典泛名。
+      '场景','画面','景象','影像','一景','照片','图片','所见','一瞥'
+    )
+  }
+  $t = [string]$name
+  if ($t.Length -gt 48) { return $false }
+  # 数字不拦：页面真实地址「西43街」是通顺中文名的一部分。外文、破折号、空格一律不收。
+  if ($t -match '[A-Za-z<>\\]|\u2026|[\s\-–—/·、（）()]') { return $false }
+  # 通顺与全中文是前提，不是独立要素；像素一律不进名字，只卡下载门槛。
+  if ($t -match '像素|分辨率|×') { return $false }
+  if ((Get-BwZhRatio $t) -lt 0.6) { return $false }
+  $country = ''
+  if ($countryZh -and $t.StartsWith($countryZh, [StringComparison]::Ordinal)) { $country = $countryZh }
+  if (-not $country) {
+    $gc = Get-BwGeoCountry $geo
+    if ($gc -and $t.StartsWith($gc, [StringComparison]::Ordinal)) { $country = $gc }
+  }
+  if (-not $country) {
+    foreach ($c in $script:BwTriadCountries) {
+      if ($t.StartsWith($c, [StringComparison]::Ordinal) -and $c.Length -gt $country.Length) { $country = $c }
+    }
+  }
+  if (-not $country) { return $false }
+  if (-not (Test-BwZhNameBody $t $country)) { return $false }
+  if (-not (Test-BwZhNameFluent $t $country @())) { return $false }
+  # ② 地理：国名之后那一截必须是具体地点，不许一开口就是泛主体。
+  $rest = [regex]::Replace($t.Substring($country.Length), '^的', '')
+  if (-not $rest) { return $false }
+  $city = Get-BwGeoCity $geo
+  $geoOk = [bool]($city -and $city.Length -ge 2 -and
+                  ($t.IndexOf($city, [StringComparison]::Ordinal) -ge 0))
+  if (-not $geoOk) {
+    foreach ($g in $script:BwTriadGeneric) {
+      if ($rest.StartsWith($g, [StringComparison]::Ordinal)) { return $false }
+    }
+  }
+  # ③ 主题：必须写出画面里拍的是什么。空词一律不算；只有「国家 + 地名」、
+  # 没有任何主体词的也不算。词表没收的新主体，走「国家+地理+的+具体主体」兜底。
+  foreach ($v in $script:BwTriadVague) {
+    if ($t.IndexOf($v, [StringComparison]::Ordinal) -ge 0) { return $false }
+  }
+  foreach ($s in $script:BwTriadSubjects) {
+    if ($t.IndexOf($s, [StringComparison]::Ordinal) -ge 0) { return $true }
+  }
+  $di = $t.LastIndexOf('的')
+  if ($di -ge 0 -and ($t.Length - $di - 1) -ge 2) { return $true }
+  return $false
+}
+# 2026-11-08 防复发：机翻会把页面里的专有地名当普通名词意译，导致「国家+地理」不准。
+# Long Island City→「岛城」、Worms→「蠕虫」、Vänern→「维能湖」、Minato City→「美娜多市」。
+# 用户定死「国家和地理必须准确、全部以页面内容为准」：只有页面原文确实写着这个专名、
+# 译文里也确实出现对应意译错词时才还原成规范中文；绝不猜地名、绝不替换别的词。
+# 「长岛岛城」先整体替换，避免逐词替换叠成「长岛长岛市」。
+function Repair-BwGeoMistranslation([string]$zh, [string]$srcText) {
+  if (-not $zh -or -not $srcText) { return $zh }
+  $pairs = @(
+    @{ en = '(?i)Long\s+Island\s+City'; bad = '长岛岛城'; good = '长岛市' },
+    @{ en = '(?i)Long\s+Island\s+City'; bad = '岛城';     good = '长岛市' },
+    @{ en = '(?i)\bWorms\b';           bad = '蠕虫';     good = '沃尔姆斯' },
+    @{ en = '(?i)V.nern';              bad = '维能湖';   good = '维纳恩湖' },
+    @{ en = '(?i)Minato\s+City';       bad = '美娜多市'; good = '港区' },
+    # 2026-11-08 用户「表述要准确」：机翻把专名译成另一套音译时，按词典人工核过的写法还原。
+    @{ en = '(?i)Bryant';             bad = '布莱恩特'; good = '布赖恩特' },
+    @{ en = '(?i)San\s+Francisco';    bad = '旧金山弗朗西斯科'; good = '旧金山' },
+    @{ en = '(?i)Presidio';           bad = '的普雷西迪奥'; good = '要塞' }
+  )
+  foreach ($p in $pairs) {
+    if (($srcText -match $p.en) -and ($zh.IndexOf($p.bad, [StringComparison]::Ordinal) -ge 0)) {
+      $zh = $zh.Replace($p.bad, $p.good)
+    }
+  }
+  return $zh
+}
+# 2026-11-08 用户「明明页面里有内容非要杜撰名字」:
+# 机翻常把页面专名原样留下(Kiirunavaara / Luossavaara), 旧闸一见拉丁字母就把整句译文清空,
+# 页面说明因此全丢, 只剩原题的「瑞典九月」。这里把译文里残留的专名逐个音译,
+# 但只处理「这张图自己页面上确实出现过」的词, 一个字都不凭空造。
+function Convert-BwPageProperNames([string]$zh, [string]$pageText) {
+  $t = [string]$zh
+  if (-not $t) { return '' }
+  $ms = @([regex]::Matches($t, '[A-Za-z][A-Za-z0-9''\-]{2,}') | Sort-Object { $_.Length } -Descending)
+  $done = @{}
+  foreach ($m in $ms) {
+    $w = $m.Value
+    $k = $w.ToLowerInvariant()
+    if ($done.ContainsKey($k)) { continue }
+    $done[$k] = $true
+    if ($pageText.IndexOf($w, [StringComparison]::OrdinalIgnoreCase) -lt 0) { continue }
+    $z = ''
+    try { $z = [string](Get-BwZhText $w) } catch {}
+    $z = [regex]::Replace($z, '[^\u4e00-\u9fa5]', '')
+    if ($z.Length -lt 2 -or $z.Length -gt 12) { continue }
+    $t = $t.Replace($w, $z)
+  }
+  return $t
+}
+function Get-BwPageCaption([string]$origname, [string]$desc, [string]$cats) {
+  $inputText = Get-BwCaptionInput $origname $desc $cats
+  # 国家先翻：译文选优时要用它认「国家开头」的语序，也要核对译文有没有把国家丢掉。
+  $countryZh = ''
+  if ($inputText.country) { $countryZh = Get-BwZhText $inputText.country }
+  $zh = Get-BwZhText $inputText.text $countryZh
+  # 页面专名被机翻意译掉时还原（岛城→长岛市 等），先修再过闸门，保证地理准确。
+  $zh = Repair-BwGeoMistranslation $zh (($inputText.text) + ' ' + $origname + ' ' + $desc + ' ' + $cats)
+  # 页面专名音译后再过闸, 否则整句页面说明会被「含拉丁字母」误杀。
+  $zh = Convert-BwPageProperNames $zh (($inputText.text) + ' ' + $origname + ' ' + $desc + ' ' + $cats)
+  $name = Format-BwZhName $zh
+  # 国家单独核对：译文漏掉国家时不把这个译名当成功；不拿词典猜地点来补。
+  if ($inputText.country -and (-not $countryZh -or $name.IndexOf($countryZh, [StringComparison]::Ordinal) -lt 0)) { $name = '' }
+  if ($name -match '[A-Za-z<>\\]|…' -or (Get-BwZhRatio $name) -lt 0.6) { $name = '' }
+  if ($name -and -not (Test-BwZhNameBody $name $countryZh)) { $name = '' }
+  # 2026-11-06 用户「两个新图源的图片，带国家地理元素」：名字里必须有国家，且要「国家开头」。
+  # 机翻常把国家甩到逗号后（"荃湾…之夜，中国"），三要素要求国家在最前；这里先把国家挪到最前
+  # （Repair-BwNameHead 只挪一次、不重排、不臆造），再去过通顺闸门。这道必须在 Test-BwZhNameFluent
+  # 之前，否则国家在尾部时会被通顺闸门直接作废、白白丢掉一条可用的页面派生名。
+  # 国家能来自页面明写的，也能来自离线地名表（美国·纽约）。挪不出合规开头的译名直接作废，
+  # 交给词典线兜底，绝不硬凑半句地名。
+  if ($name) {
+    $geoZh = ''
+    try { $geoZh = Get-BwGeoLabel ((([string]$origname) + ' ' + ([string]$desc) + ' ' + ([string]$cats))) } catch {}
+    $need = $countryZh
+    if (-not $need) { $need = Get-BwGeoCountry $geoZh }
+    if ($need) {
+      $geoForFix = if ($geoZh) { $geoZh } else { $need }
+      $fx = Repair-BwNameHead $name $geoForFix
+      if ($fx -and $fx.StartsWith($need, [StringComparison]::Ordinal) -and (Test-BwZhNameFluent $fx $need @())) {
+        $name = $fx
+      } elseif ($name.IndexOf($need, [StringComparison]::Ordinal) -ge 0) {
+        $name = ''
+      }
+    }
+  }
+  if ($name -and -not (Test-BwZhNameFluent $name $countryZh $inputText.places)) { $name = '' }
+  # 三要素终检（2026-11-07）：译文线要先过「国家 + 地理 + 主题」才采用；不过再交给词典整句兜底。
+  # 用户定死「命名全部以页面内容为准」——译文已是页面描述，能过终检就优先用，不轻易被词典覆盖。
+  $geoAll = ''
+  try { $geoAll = Get-BwGeoLabel ((([string]$origname) + ' ' + ([string]$desc) + ' ' + ([string]$cats))) } catch {}
+  if ($name -and -not (Test-BwNameTriad $name $countryZh $geoAll)) {
+    # 译文没过终检：多半是机翻把地名译错（Goðafoss→戈阿福斯岛、Minato City→美娜多市）。
+    # 仅当作品名里本来写着这条地名、而译文跟词典三个字都对不上时，才改用词典整句（人工核过的写法）；
+    # 地名只出现在介绍里（作品名没写）时不动译文，免得把页面原名的整句描述换成笼统的词典句。
+    $allText = (([string]$desc) + ' ' + [string]$origname)
+    $labAll = Get-BwGeoLabel $allText
+    $labTtl = Get-BwGeoLabel ([string]$origname)
+    if ($labAll -and $labTtl -and ($labTtl -eq $labAll)) {
+      $tail = (@($labAll -split '·') | Where-Object { $_ })[-1]
+      # 尾缀是通名(山脉/峡谷/港…)时，重合的三个字往往是通名而不是专名：先把通名摘掉，只比专名那一截。
+      $core = [regex]::Replace([string]$tail, '(山脉|峡谷|峡湾|高原|沙漠|群岛|河谷|海滩|港口|城市)$', '')
+      if ($core.Length -lt 3) { $core = [string]$tail }
+      if ($tail -and $tail.Length -ge 3 -and (Get-BwZhCommonRun $name ([string]$core)) -lt 3) {
+        $alt = ''
+        try { $alt = Get-BwSubjectName $allText 'urban' } catch {}
+        # 词典整句也必须过三要素终检才采用，否则宁可退回空名，交给页面介绍/地理表那条线重算。
+        if ($alt -and $alt -notmatch '[A-Za-z<>\\]|…' -and (Get-BwZhRatio $alt) -ge 0.6 -and
+            (Test-BwZhNameBody $alt $countryZh) -and (Test-BwNameTriad $alt $countryZh $geoAll)) { $name = $alt }
+      }
+    }
+  }
+  # 介绍只收「基本是中文」的那份：夹一串外文标签的长句宁可空着，也不糊在界面上。
+  $detailZh = ''
+  if ($inputText.detail) {
+    if ($inputText.text -eq $inputText.detail) { $detailZh = $zh }
+    else { $detailZh = Get-BwZhText $inputText.detail $countryZh }
+    $detailZh = Repair-BwGeoMistranslation $detailZh (($inputText.detail) + ' ' + $origname + ' ' + $desc + ' ' + $cats)
+    $detailZh = Convert-BwPageProperNames $detailZh (($inputText.detail) + ' ' + $origname + ' ' + $desc + ' ' + $cats)
+    if ($detailZh -match '[A-Za-z<>\\]|…' -or (Get-BwZhRatio $detailZh) -lt 0.6 -or
+        -not (Test-BwZhNameBody $detailZh $countryZh)) { $detailZh = '' }
+  }
+  # 终检兜底：仍不过三要素就退回空名，绝不硬凑半句地名落盘。
+  if ($name -and -not (Test-BwNameTriad $name $countryZh $geoAll)) { $name = '' }
+  # 相机品牌是页面内容（Category: Taken with …）的一部分，用户要求写明：从分类里取机型，
+  # 译中文后并入描述；页面标了却没写出，正是被点名的问题之一。
+  $cam = ''
+  if ($cats) {
+    foreach ($c in @([string]$cats -split '/')) {
+      $c = $c.Trim()
+      if ($c -match '(?i)^Taken with\s+(.+?)\s+in\s') { $cam = $Matches[1].Trim(); break }
+      if ($c -match '(?i)^Photograph taken with\s+(.+?)$') { $cam = $Matches[1].Trim(); break }
+    }
+  }
+  if ($cam) {
+    # 用户点名：页面标了相机品牌就一定要写出。型号常带拉丁字母（Poco X3 Pro / EOS R5），
+    # 整句判拉丁会把整句废掉；首词即品牌，单独译出、是纯中文就写「（小米 拍摄）」，型号丢卒保车。
+    $brand = ($cam -split '\s+')[0]
+    $brandZh = Get-BwZhText $brand
+    $camZh = Get-BwZhText $cam
+    $camStr = ''
+    if ($camZh -and $camZh -notmatch '[A-Za-z<>\\]|…' -and (Get-BwZhRatio $camZh) -ge 0.6) { $camStr = $camZh }
+    elseif ($brandZh -and $brandZh -notmatch '[A-Za-z<>\\]|…' -and (Get-BwZhRatio $brandZh) -ge 0.6) { $camStr = $brandZh }
+    if ($camStr) {
+      if ($detailZh) { $detailZh = ($detailZh + '（' + $camStr + ' 拍摄）') }
+      else { $detailZh = ($camStr + ' 拍摄') }
+    }
+  }
+  return @{ zhname = $name; zhdesc = $detailZh; caption_version = '2' }
+}
+# 2026-11-08 一句话规则: 池子里的图片名字只能是中文。
+# 页面是外文的, 就忠实译成中文; 译不出中文就返回空, 由调用方判为不入池。
+# 绝不把拉丁原题塞进文件名, 也不为凑名字去编词。原名始终完整保存在图片出处里。
+function Get-BwLiteralPageName([string]$origname, [string]$desc, [string]$cats) {
+  $all = ([string]$origname) + ' ' + ([string]$desc) + ' ' + ([string]$cats)
+  # 唯一真源是这张图自己的页面说明(desc/字幕); 原题只在页面完全没有说明时才用。
+  # 原题常是「专名 + 年月 + 编目号」, 只翻它会得到「瑞典九月」这种把全页信息丢光的空壳名。
+  $src = ([string]$desc).Trim()
+  if (-not $src -or $src.Length -lt 12 -or $src -match '(?i)add a one-line|no description|^description$') {
+    $src = ([string]$origname).Trim()
+  }
+  $src = [regex]::Replace($src, '<[^>]+>', ' ')
+  $src = [regex]::Replace($src, '(?i)\([^)]*(?:geograph|\d{5,})[^)]*\)', ' ')
+  $mm = [regex]::Match($src, '^(.{10,200}?[。\.!?！？])')
+  if ($mm.Success) { $src = $mm.Groups[1].Value }
+  if ($src.Length -gt 200) { $src = $src.Substring(0, 200) }
+  $src = ([regex]::Replace($src, '\s+', ' ')).Trim()
+  if (-not $src) { return '' }
+  $zh = ''
+  try { $zh = [string](Get-BwZhText $src) } catch {}
+  if (-not $zh) { return '' }
+  $zh = Convert-BwPageProperNames $zh $all
+  # 先删带数字的完整日期从句, 再删孤立数字; 否则只剩「年月日」「年月至年」骨架。
+  $zh = [regex]::Replace($zh, '于?\s*\d{1,4}\s*年\s*\d{1,2}\s*月(?:\s*\d{1,2}\s*日?)?(?:\s*(?:至|到|-|~)\s*\d{1,4}\s*年\s*\d{1,2}\s*月)?', '')
+  $zh = [regex]::Replace($zh, '\b(?:19|20)\d{2}\b', '')
+  $zh = [regex]::Replace($zh, '\b\d{1,6}\b', '')
+  $zh = [regex]::Replace($zh, '由于\s*年\s*月(?:\s*日)?\s*(?:拍摄|摄)?', '')
+  $zh = [regex]::Replace($zh, '年\s*月\s*至\s*年', '')
+  $zh = [regex]::Replace($zh, '年\s*月(?:\s*日)?\s*(?:拍摄|摄)?', '')
+  # 机翻模板套话不是页面描述的画面内容, 不进名字。
+  $zh = [regex]::Replace($zh, '^(这张照片|本照片|该图像|此图像|照片)(是|为)?(在|于)?', '')
+  $keep = [regex]::Replace($zh, '[^\u4e00-\u9fa5]', '')
+  if ($keep.Length -lt 4) { return '' }
+  $country = ''
+  try { $country = [string](Get-BwGeoCountry (Get-BwGeoLabel $all)) } catch {}
+  if (-not $country) { return $keep }
+  $suffix = $country
+  if ($country.Length -gt 2 -and $country.StartsWith('中国', [StringComparison]::Ordinal)) { $suffix = $country.Substring(2) }
+  $name = $keep
+  if ($keep.StartsWith($country, [StringComparison]::Ordinal)) { $name = $keep }
+  elseif ($keep.EndsWith($country, [StringComparison]::Ordinal) -and $keep.Length -gt $country.Length) {
+    $name = $country + $keep.Substring(0, $keep.Length - $country.Length)
+  }
+  elseif ($suffix -and $keep.IndexOf($suffix, [StringComparison]::Ordinal) -ge 0) { $name = $keep }
+  else { $name = $country + $keep }
+  if ($name.Length -gt 48) { $name = $name.Substring(0, 48) }
+  return $name
+}
+# ===== 2026-11-08 用户定死: 名字只许来自这张图自己的页面, 且必须「国家+地理+主题」 =====
+# 唯一真源: origname / ImageDescription / 字幕 / Categories。搜索关键词、主题池、文艺词表、
+# 色调词、GPS 反查、通用地理词典一律不得进名字。三要素不齐 -> 返回空, 由调用方译成中文名,
+# 绝不编造、绝不把拉丁原题塞进池子。
+# 关键教训: 不能让多个函数各译一遍再拼(同一个 Burgkhammer 会译出 布格/伯克/布尔克 三种),
+# 必须以页面描述的译文($body)为唯一音译基准, 补国家/地理前先查重。
+function New-BwPageTriadName([string]$origname, [string]$desc, [string]$cats, [string]$body) {
+  $all = ([string]$origname) + ' ' + ([string]$desc) + ' ' + ([string]$cats)
+  $country = ''
+  try { $country = [string](Get-BwGeoCountry (Get-BwGeoLabel $all)) } catch {}
+  if (-not $country) { return '' }
+  $b = ([string]$body).Trim()
+  # 相机品牌只属于 zhdesc, 不进名字
+  $b = [regex]::Replace($b, '（[^）]*拍摄）', '')
+  if ($b.StartsWith($country, [StringComparison]::Ordinal)) {
+    $b = $b.Substring($country.Length).TrimStart(' ', '，', ',', '、')
+  }
+  if (-not $b) { return '' }
+  # 地理: 只取页面分类里真实出现的「Images of <Place> by ...」这类专名, 译不出或主体已含就不补。
+  $geo = ''
+  foreach ($seg in @([string]$cats -split '/')) {
+    $m = [regex]::Match($seg.Trim(), '(?i)^Images of ([A-Za-zÄÖÜäöüß .\-]+?)(?:\s+by\s+|$)')
+    if (-not $m.Success) { continue }
+    $zh = ''
+    try { $zh = [string](Get-BwZhText $m.Groups[1].Value.Trim()) } catch {}
+    $zh = [regex]::Replace($zh, '[^\u4e00-\u9fa5]', '')
+    if ($zh.Length -ge 2 -and $b.IndexOf($zh, [StringComparison]::Ordinal) -lt 0) { $geo = $zh; break }
+  }
+  $name = $country + $geo + $b
+  $name = [regex]::Replace($name, '[，,]\s*[，,]', '，').Trim(' ', '，', ',', '、')
+  # 三要素终检只用来判这个名字合不合格, 不合格就降级, 绝不用词典硬凑。
+  if (-not (Test-BwNameTriad $name $country $geo)) { return '' }
+  return $name
+}
+# 2026-11-08 一句话规则: 名字只能是中文, 不能夹任何拉丁字母; 译不出中文的图不进池子。
+# 判据只有这一条, 不再叠三要素词表/打分/通顺闸 —— 那些会把「冰岛的瀑布」「香港庙街夜市」
+# 这种能看懂的中文名也挡掉。名字是否忠实页面由上面的生成链负责, 这里只管能不能看懂。
+# 2026-11-08 用户「逐张核定后入池」: 自动链只产候选名, 未经逐张核定一律不落盘。
+# approved_names.tsv : <页面原题> TAB <核定中文名>  —— 人工按页面原文核定后写入
+# pending_names.tsv  : 自动链遇到的候选(原题/候选名/描述/分类/来源页/器材), 供逐张核定
+function Get-BwApprovedName([string]$origname) {
+  $root = [string]$global:BWRoot
+  if (-not $root) { return '' }
+  $p = Join-Path $root 'approved_names.tsv'
+  if (-not (Test-Path -LiteralPath $p)) { return '' }
+  $enc = New-Object System.Text.UTF8Encoding($false)
+  try {
+    foreach ($ln in [System.IO.File]::ReadAllLines($p, $enc)) {
+      if (-not $ln -or $ln.StartsWith('#')) { continue }
+      $c = $ln -split "`t"
+      if ($c.Count -ge 2 -and $c[0].Trim() -eq ([string]$origname).Trim()) { return $c[1].Trim() }
+    }
+  } catch {}
+  return ''
+}
+function Add-BwPendingName([string]$origname, [string]$cand, [string]$desc, [string]$cats, [string]$link, [string]$camera) {
+  $root = [string]$global:BWRoot
+  if (-not $root) { return }
+  $p = Join-Path $root 'pending_names.tsv'
+  $enc = New-Object System.Text.UTF8Encoding($false)
+  $clean = @()
+  foreach ($v in @($origname, $cand, $desc, $cats, $link, $camera)) {
+    $clean += (([string]$v) -replace "[\t\r\n]", ' ')
+  }
+  $line = ($clean -join "`t")
+  try {
+    # 同一候选每轮补货都会遇到, 只记一次; 否则 pending 清单会被重复行撑爆。
+    $exists = $false
+    if (Test-Path -LiteralPath $p) {
+      foreach ($ln in [System.IO.File]::ReadAllLines($p, $enc)) {
+        if (-not $ln) { continue }
+        if (($ln -split "`t")[0] -eq $clean[0]) { $exists = $true; break }
+      }
+    }
+    if (-not $exists) { [System.IO.File]::AppendAllText($p, ($line + "`r`n"), $enc) }
+  } catch {}
+}
+function Test-BwPoolChineseName([string]$name, [string]$origname, [string]$desc, [string]$cats) {
+  if (-not $name) { return $false }
+  if ($name -match '[A-Za-z]') { return $false }
+  $cn = ([regex]::Matches($name, '[\u4e00-\u9fa5]')).Count
+  return ($cn -ge 2)
+}
+# 名称是完整中文短句，不按字符硬截；文件名和显示名均保留完整地名与数字。
 function Format-BwZhName([string]$s) {
   if (-not $s) { return '' }
   $t = [string]$s
   # 翻译引擎偶尔吐出 ⟨z\<e:1\>⟩ 这类占位符/控制符，一律剔除，别让它进文件名
   $t = [regex]::Replace($t, '</?[a-z][^>]*>|\\<[^>]*\\>', '')
   $t = [regex]::Replace($t, '[\u0000-\u001f]', '')
+  # 机翻常把「中文原名 + 其英文罗马化」（如 "大河道 Tai Ho Road"）当成两处各译一次，
+  # 叠成「大河道大河道」「荃湾荃湾」这类。连续重复的 2~4 字中文片段塌缩成一份，名字才通顺；
+  # 真实地名不会紧挨着自己重复，塌缩不会误伤合法命名。
+  $t = [regex]::Replace($t, '([\u4e00-\u9fa5]{2,4})\1+', '$1')
+  # 拍摄日界面已单独显示，名字里删掉「(于)YYYY年MM月」这类日期状语（页面描述常夹一句时间，
+  # 留在名字里既冗余又挡通顺闸门）；删完顺手归一被挤出的多余逗号。
+  $t = [regex]::Replace($t, '于?\s*\d{1,4}\s*年\s*\d{1,2}\s*月(?:\s*\d{1,2}\s*日?)?', '')
+  $t = [regex]::Replace($t, '[，,]\s*[，,]', '，')
+  $t = [regex]::Replace($t, '^[，,]\s*', '')
+  $t = [regex]::Replace($t, '[，,]\s*$', '')
+  # 拍摄时刻/时段（"清晨，""日落，"）不是地名的一部分，挪国家到开头后更不能让它吊在前面；
+  # 只在句首、后接逗号/顿号时剥掉，避免误伤「日出中的山峰」这类以主体开头的名字。
+  $t = [regex]::Replace($t, '^(清晨|早晨|早上|上午|中午|下午|傍晚|夜晚|夜里|深夜|凌晨|日出|日落|正午|黄昏|子夜|拂晓|黎明|破晓)[，,、]?\s*', '')
   $t = [regex]::Replace($t, '[（(][^）)]*[）)]', {
     param($m)
+    $in = $m.Value.Substring(1, $m.Value.Length - 2)
+    # 括号里只是拍摄时间（"（2015年12月）"、"(December 2015)"）的删掉：
+    # 文件名和界面都单独显示拍摄日，名字里不该再占一段。
+    if ($in -match '^[\s\d年月日.\-/]*(?:Jan\w*|Feb\w*|Mar\w*|Apr\w*|May|Jun\w*|Jul\w*|Aug\w*|Sep\w*|Oct\w*|Nov\w*|Dec\w*)?[\s\d年月日.\-/]*$') { return '' }
     if ($m.Value -match '[\u4e00-\u9fa5]') { return $m.Value }
     return ''
   })
-  $t = [regex]::Replace($t, '\s*\b\d{2,}\b\s*', ' ')
   $t = [regex]::Replace($t, '[。．\.]+$', '')
-  $t = [regex]::Replace($t, '[\s\-_]{0,2}\b\d{1,3}$', '')
   $t = [regex]::Replace($t, '\s+', ' ')
   $t = $t.Trim(' ', '，', ',', '、', '；', ';', '：', ':')
-  if ($t.Length -gt 24) {
-    $parts = [regex]::Split($t, '(?<=[，,、；;])')
-    $acc = ''
-    foreach ($p in $parts) {
-      if (($acc.Length + $p.Length) -gt 24) { break }
-      $acc += $p
-    }
-    $acc = $acc.TrimEnd('，', ',', '、', '；', ';')
-    if ($acc) { $t = $acc } else { $t = $t.Substring(0, 24) }
+  # 2026-11-06 用户「图片名字……通顺」：页面介绍常以拍摄时间开头，机翻照抄成
+  # 「2019年4月，加拿大不列颠哥伦比亚省罗布森山谷的山景」。拍摄日在署名行已经写着，
+  # 名字开头这段日期状语去掉；剩下的必须还是个成句的名字（>=4 个汉字）才动。
+  $m = [regex]::Match($t, '^\d{4}\s*[-/年.]\s*\d{1,2}\s*[-/月.]?(?:\s*\d{1,2}\s*日?)?\s*(?:到|至|~|-)?\s*(?:\d{1,2}\s*月)?\s*[，,、]?\s*')
+  if ($m.Success) {
+    $rest = $t.Substring($m.Length).Trim(' ', '，', ',', '、', '；', ';', '：', ':')
+    if ($rest -and (([regex]::Matches($rest, '[\u4e00-\u9fa5]')).Count -ge 4)) { $t = $rest }
   }
+  # 只调整可确定主语与地点的动作句，其余译文保留原句，不靠删标点拼词。
+  $t = [regex]::Replace($t, '^(?:一只)([^，。]+?)在([^，。]+?)(鸣叫|歌唱|栖息|飞翔|游泳|行走)$', '$2$3的$1')
+  # 太长的译文留作介绍，绝不产生半个地名/半句话的标题。
+  if ($t.Length -gt 48) { return '' }
   return $t
 }
-# 从照片自己的页面原文里取名字：作品名优先，流水号/外语原文时用介绍首句。
-function Get-BwPageName([string]$origname, [string]$desc) {
-  $cands = @()
-  if ($origname) { $cands += [string]$origname }
-  if ($desc) {
-    $first = ([regex]::Split([string]$desc, '(?<=[\.。])\s'))[0]
-    if ($first -and ($first -ne $origname)) { $cands += $first }
-  }
-  foreach ($c in $cands) {
-    if ($c -match '(?i)geograph\.org\.uk|this is a photo of|scheduled monument number') { continue }
-    $zh = Format-BwZhName (Get-BwZhText $c)
-    # 合格闸门：中文够多、没有残留的天书占位符 —— 不合格宁可退回英文原名，也不把机器垃圾当名字
-    if ($zh -and (([regex]::Matches($zh, '[\u4e00-\u9fa5]')).Count -ge 3) -and (Get-BwZhRatio $zh) -ge 0.6) { return $zh }
-  }
-  if ($desc) {
-    $zh = Format-BwZhName (Get-BwZhText $desc)
-    if ($zh -and (([regex]::Matches($zh, '[\u4e00-\u9fa5]')).Count -ge 3) -and (Get-BwZhRatio $zh) -ge 0.6) { return $zh }
-  }
+# 2026-11-06 用户「两个新图源的图片，带国家地理元素，图片内容的通顺描述」：
+# 名字一律要带国家。国家只从两处来 —— Commons 元数据里写明的国家（Get-BwCaptionCountry），
+# 或离线地名表里的「国家·城市」（Get-BwGeoLabel）。两处都没有就不编国家，只留地名与内容。
+function Get-BwGeoCountry([string]$geo) {
+  if (-not $geo) { return '' }
+  $segs = @(([string]$geo -split '·') | Where-Object { $_ })
+  if ($segs.Count -ge 1) { return [string]$segs[0] }
   return ''
+}
+function Get-BwGeoCity([string]$geo) {
+  if (-not $geo) { return '' }
+  $segs = @(([string]$geo -split '·') | Where-Object { $_ })
+  if ($segs.Count -ge 2) { return [string]$segs[1] }
+  return ''
+}
+# 把「描述画面、但开头没写国家」的中文短句补成带国家的名字，只补前面、不改句子：
+#   雾中的老克里西菲尔德海岸警卫队站 -> 美国旧金山雾中的老克里西菲尔德海岸警卫队站
+#   纽约市西43街时代广场附近的布鲁克林餐厅 -> 美国纽约市西43街时代广场附近的布鲁克林餐厅
+# 带逗号的不动（"城市风景，伯明翰市中心" 是英文语序），交给 Test-BwZhNameFluent 退掉。
+function Repair-BwNameHead([string]$name, [string]$geo) {
+  if (-not $name) { return '' }
+  $country = Get-BwGeoCountry $geo
+  if (-not $country) { return $name }
+  if ($name.StartsWith($country, [StringComparison]::Ordinal)) {
+    # 2026-11-08 修复回归：国家已在前，但译文常在国名后带个逗号（"泰国，曼谷市中心的日落"）。
+    # 单段成句不许留这个逗号，剥掉它，让国名直接接正文。
+    $tail = $name.Substring($country.Length).TrimStart(' ', '，', ',', '、', '；', ';', '：', ':')
+    if ($tail) { return ($country + $tail) }
+    return $name
+  }
+  # 国家出现在中后段：挪到最前，满足三要素「国家开头」要求（"清晨，爱沙尼亚…" → "爱沙尼亚…"）。
+  # 只挪一次、仍保留原句其余内容，不重排、不臆造地点。
+  $idx = $name.IndexOf($country, [StringComparison]::Ordinal)
+  if ($idx -ge 0) {
+    $rest = ($name.Substring(0, $idx) + $name.Substring($idx + $country.Length))
+    $rest = $rest.Trim(' ', '，', ',', '、', '；', ';', '：', ':', '。', '．', '.')
+    if ($rest.Length -gt 0 -and ($country.Length + $rest.Length) -le 48) { return ($country + $rest) }
+    return $name
+  }
+  if ($name -match '[，,]') { return $name }
+  $city = Get-BwGeoCity $geo
+  # 名字自己以城市开头（"纽约市西43街…"）：只在前面补国家，别再叠一遍城市。
+  if ($city -and $city.Length -ge 2 -and $name.StartsWith($city, [StringComparison]::Ordinal)) {
+    if (($country.Length + $name.Length) -le 48) { return ($country + $name) }
+    return $name
+  }
+  # 名字里没提城市：补「国家+城市」，比只补国家更像人话（美国旧金山雾中的…站）。
+  if ($city -and $city.Length -ge 2 -and $name.IndexOf($city, [StringComparison]::Ordinal) -lt 0) {
+    $head = $country + $city
+    if (($head.Length + $name.Length) -le 48) { return ($head + $name) }
+  }
+  if (($country.Length + $name.Length) -le 48) { return ($country + $name) }
+  return $name
+}
+# 老图的内嵌介绍（zhdesc）就是页面自己那句话，比离线词典更具体。这里把它整理成名字：
+# 去掉开头/句末的日期与时刻（拍摄日已经在底部署名行写着），补上国家，过同一套闸门。
+# 整理不出通顺短句就返回空串，由词典那条线兜底 —— 宁可名字笼统，也不硬拼半句话。
+function Get-BwDescName([string]$zhdesc, [string]$geo) {
+  if (-not $zhdesc) { return '' }
+  $t = ([string]$zhdesc) -replace '\s+', ' '
+  $t = [regex]::Replace($t, '^\s*\d{4}\s*[-/年.]\s*\d{1,2}\s*[-/月.]\s*(?:\d{1,2}\s*日?)?\s*(?:的)?\s*(?:晚上|傍晚|清晨|早上|上午|中午|下午|夜里|夜晚|深夜|凌晨)?\s*[，,、;；:：]?\s*', '')
+  $t = [regex]::Replace($t, '[，,、]\s*\d{4}\s*[-/年.]\s*\d{1,2}\s*[-/月.]\s*(?:\d{1,2}\s*日?)?\s*$', '')
+  $t = $t.Trim(' ', '，', ',', '、', '；', ';', '：', ':', '。', '．', '.')
+  if (-not $t) { return '' }
+  if ($t -match '[A-Za-z<>\\]|…') { return '' }
+  if ((Get-BwZhRatio $t) -lt 0.6) { return '' }
+  $name = Format-BwZhName $t
+  if (-not $name) { return '' }
+  $name = Repair-BwNameHead $name $geo
+  if (-not $name) { return '' }
+  if (-not (Test-BwZhNameFluent $name (Get-BwGeoCountry $geo) @())) { return '' }
+  if (-not (Test-BwZhNameBody $name '')) { return '' }
+  if ($name.Length -gt 48) { return '' }
+  return $name
+}
+function Get-BwPageName([string]$origname, [string]$desc, [string]$cats) {
+  return [string](Get-BwPageCaption $origname $desc $cats).zhname
 }
 # 2026-11-06 用户「我们应该尊重作者的拍摄时间」: 文件名前缀 / 图片元数据 / 面板上的
 # 日期, 一律用 Commons 的 extmetadata.DateTimeOriginal(作者实际拍摄那天), 不再用下载当天。
@@ -3483,6 +4782,79 @@ function Get-BwShotDate([string]$raw) {
   if ($y -lt 1839 -or $y -gt ($nowY + 1) -or $mo -lt 1 -or $mo -gt 12 -or $dd -lt 1 -or $dd -gt 31) { return '' }
   try { return ([datetime]::new($y, $mo, $dd)).ToString('yyyy-MM-dd') } catch { return '' }
 }
+# 2026-11-06 用户「三件事一起做」之一：连拍 / 同场景去重。
+# 判据 = 作者拍摄日 + 地点。地点优先用离线地名表认得的「国家·城市」，认不出退到作品名前缀
+#（去掉数字与连拍编号）。同一天、同一处的图，库里有一张就不再下第二张 ——
+# 现状是冰岛 Goðafoss 同一天进了 4 张、埃及撒哈拉进了 2 张。
+function Get-BwSceneKey([string]$shot, [string]$geo, [string]$title) {
+  $day = ([string]$shot) -replace '[^\d\-]', ''
+  $g = (([string]$geo) -replace '·', '').Trim()
+  if ($g.Length -ge 2) { return ($day + '|' + $g) }
+  $t = ([string]$title) -replace '^File:', ''
+  $t = $t -replace '\.(jpe?g|png|tiff?)$', ''
+  $t = ($t -replace '[\d\s_\-–—()\[\]]+', ' ').Trim().ToLower()
+  if ($t.Length -gt 24) { $t = $t.Substring(0, 24) }
+  if ($t.Length -lt 4) { return '' }
+  return ($day + '|t:' + $t)
+}
+# 一个库里已有的「场景键」，按目录缓存；文件数量/首尾文件名变了就重扫。
+function Get-BwDirSceneKeys([string]$dir) {
+  if (-not $global:BwSceneKeys) { $global:BwSceneKeys = @{} }
+  if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { return @{} }
+  $files = @(Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue | Where-Object { Test-BwImgFile $_.Name } | Sort-Object Name)
+  $sig = ([string]$files.Count) + '|' + $(if ($files.Count) { [string]$files[0].Name + '|' + [string]$files[-1].Name } else { '' })
+  if ($global:BwSceneKeys.ContainsKey($dir) -and ([string]$global:BwSceneKeys[$dir].Sig -eq $sig)) { return $global:BwSceneKeys[$dir].Keys }
+  $keys = @{}
+  foreach ($f in $files) {
+    try {
+      $m = Read-BwImageMeta $f.FullName
+      if (-not $m) { continue }
+      $geo = ''
+      try { $geo = Get-BwGeoLabel ((([string]$m.desc) + ' ' + ([string]$m.origname))) } catch {}
+      $k = Get-BwSceneKey ([string]$m.shot_date) $geo ([string]$m.origname)
+      if ($k) { $keys[$k] = $f.Name }
+    } catch {}
+  }
+  $global:BwSceneKeys[$dir] = [PSCustomObject]@{ Sig = $sig; Keys = $keys }
+  return $keys
+}
+# 2026-11-06 用户「三件事一起做」之二：给没有 EXIF GPS 的照片补坐标。
+# Commons 的文件页多数没有 coordinates，但**页面分类**（Category:某地）往往带坐标。
+# 这里按分类查一次，取到就写成「≈37.427°N, 122.085°W」—— 带「≈」表示是地点级近似，
+# 不是相机当时的精确位置，绝不冒充精确值。查不到就返回空串，宁可不写。
+function Get-BwCatCoord([string]$cats) {
+  if (-not $cats) { return '' }
+  if (-not $global:BwCatCoordCache) { $global:BwCatCoordCache = @{} }
+  $names = @(([string]$cats) -split '\s*/\s*' | Where-Object {
+    $_ -and ($_ -notmatch '^(Taken with|Files with|CC-|Self-published|Uploads by|Uploaded with|Flickr|Images from|Pictures by|Featured pictures|Quality images|Retouched|Created with|Plot|Media contributed)') })
+  $n = 0
+  foreach ($c in $names) {
+    $n++; if ($n -gt 4) { break }
+    $k = 'cat|' + $c
+    if ($global:BwCatCoordCache.ContainsKey($k)) { $v = [string]$global:BwCatCoordCache[$k]; if ($v) { return $v }; continue }
+    $eq = [uri]::EscapeDataString('Category:' + $c)
+    $api = 'https://commons.wikimedia.org/w/api.php?action=query&titles=' + $eq + '&prop=coordinates&format=json'
+    $txt = ''
+    try { $txt = Get-BwText $api 12 } catch {}
+    $v = ''
+    if ($txt) {
+      try {
+        $j = $txt | ConvertFrom-Json
+        $pg = ($j.query.pages.PSObject.Properties | ForEach-Object { $_.Value } | Select-Object -First 1)
+        if ($pg -and $pg.PSObject.Properties['coordinates'] -and $pg.coordinates) {
+          $c0 = @($pg.coordinates)[0]
+          $lat = [double]$c0.lat; $lon = [double]$c0.lon
+          $ns = 'N'; if ($lat -lt 0) { $ns = 'S' }
+          $ew = 'E'; if ($lon -lt 0) { $ew = 'W' }
+          $v = ('≈{0}°{1}, {2}°{3}' -f [math]::Round([math]::Abs($lat), 3), $ns, [math]::Round([math]::Abs($lon), 3), $ew)
+        }
+      } catch {}
+    }
+    $global:BwCatCoordCache[$k] = $v
+    if ($v) { return $v }
+  }
+  return ''
+}
 function Get-BwSrcName([string]$key, [string]$token, [string]$title, [string]$url, [string]$subject, [string]$shot) {
   # 2026-11-05 用户要求文件名用中文: 用本轮抓取的中文主题词(关键词池里的词)当名字主体,
   # 不再直接搬 Commons 的英文/冰岛语作品名(Goðafoss 里的 ð 之类在资源管理器里很难读)。
@@ -3501,7 +4873,7 @@ function Get-BwSrcName([string]$key, [string]$token, [string]$title, [string]$ur
     }
   }
   if (-not $t) { $t = ([string]$title) -replace '[^a-zA-Z0-9]', '' }
-  if ($t.Length -gt 28) { $t = $t.Substring(0, 28) }
+  # 显示名与文件名不再硬截24/28字，完整中文地理句由上游长度校验保证。
   if (-not $t) { $t = 'wallpaper' }
   # 2026-11-06: 前缀是作者的拍摄日, 不是入库日。调用方已保证 $shot 合法;
   # 这里万一为空仍给一个可用的名字, 但下载处会先拦住, 不会真的落盘冒充。
@@ -3599,13 +4971,326 @@ function Get-BwVisualCaption([string]$path) {
     return '林野深绿'
   } catch { return '' }
 }
-function Set-BwSrcDescriptiveName([string]$path, [switch]$VisualFallback) {
+# 面板和后台共用的「词典当场成句」：整句译文要联网，面板的请求线程里不能翻，
+# 但地理词典这条线是纯本地字符串 —— 读一次文件头就能算出后台迟早要写进元数据的那一句，
+# 于是没补到的老图也不用顶着文件名里的英文残渣显示（「BrooklynDinerNewYorkCity2024」
+# 被前端剥掉字母就只剩「2024」当标题）。
+# 判据和 Set-BwSrcDescriptiveName 完全一条：老名自己通顺、不夹外文标点、且和新名指着
+# 同一处地方（最长公共片段够 3 个字）时沿用老名，两边不会给出两个名字。
+function Get-BwPendingSrcName($m) {
+  if (-not $m) { return '' }
+  $original = [string]$m.origname
+  if (-not $original) { $original = [string]$m.title }
+  $txt = ([string]$m.desc) + ' ' + $original
+  $geo = ''
+  try { $geo = Get-BwGeoLabel $txt } catch {}
+  $dict = ''
+  # Get-BwSubjectName 自己就是「地名+主体」整句，不再拿 Get-BwFlowName 套第二层
+  #（套过会写成「英国的英国伯明翰的街景」）。
+  try { $dict = Get-BwSubjectName $txt 'urban' } catch {}
+  $dictOk = [bool]($dict -and $dict -notmatch '[A-Za-z<>\\]|…' -and (Get-BwZhRatio $dict) -ge 0.6 -and
+                   (Test-BwZhNameBody $dict ''))
+  # 2026-11-06 用户「图片名字和原图介绍不贴切」「带国家地理元素」：
+  # 页面自己的那句介绍比离线词典具体得多（词典只认得出「街道/野生动物」这类大类），
+  # 所以先把介绍整理成名字；只有当词典名的主体就是个笼统大类时，才改用介绍派生出来的那句。
+  $descName = ''
+  try { $descName = Get-BwDescName ([string]$m.zhdesc) $geo } catch {}
+  $generic = @('街道','城市街景','城市景观','街景','野生动物','建筑立面','广场','窗','树木','花','船只','城市','城市天际线','老城')
+  $isGeneric = $false
+  foreach ($g in $generic) { if ($dictOk -and $dict.EndsWith($g, [StringComparison]::Ordinal)) { $isGeneric = $true; break } }
+  # 词典只走到地名就停了（「奥地利阿尔陶塞湖」，画面内容一个字没有）时，介绍派生那句更有内容。
+  $placeOnly = ([string]$geo) -replace '·', ''
+  if ($dictOk -and $placeOnly -and ($dict -eq $placeOnly)) { $isGeneric = $true }
+  $pick = ''
+  if ($descName -and (-not $dictOk -or $isGeneric)) { $pick = $descName }
+  elseif ($dictOk) { $pick = $dict }
+  elseif ($descName) { $pick = $descName }
+  $old = [string]$m.zhname
+  # 2026-11-07 三要素：老名要沿用，也得是「国家 + 地理 + 主题」的整句，
+  # 不许把「动物园」「火山熔岩」「老城」这种只有泛主体的老名继续留在界面上，
+  # 也不许「场景 / 风景」这类没写出画面主体的名字混过去。
+  $oldOk = [bool]($old -and $old -notmatch '[A-Za-z0-9<>…]' -and $old -notmatch '[\s（）()\-–—/·、]' -and
+                  (Test-BwZhNameBody $old '') -and (Test-BwZhNameFluent $old '' @()) -and
+                  (Test-BwNameTriad $old '' $geo))
+  # 用户 2026-11-06「名字要带国家」：老名里没有国家、新名有，就别沿用老名
+  #（「银河星空」换成「智利帕拉纳尔山的银河星空」）。
+  $geoCountry = Get-BwGeoCountry $geo
+  if ($oldOk -and $geoCountry -and ($old.IndexOf($geoCountry, [StringComparison]::Ordinal) -lt 0)) { $oldOk = $false }
+  if ($oldOk) {
+    # 2026-11-06: 两条线都给不出新名字（介绍里没内容、词典也认不出）时，库里原来那句
+    # 通顺的名字照样算数 —— 只要把它标成新版(caption_version 2)，面板就不会退回去看文件名。
+    if (-not $pick) { return $old }
+    # 老名更短时不再沿用（「奥地利阿尔陶塞湖」→「奥地利阿尔陶塞湖上空的雾气消退」）：
+    # 同样指着这处地方，长的那句才是「画面内容的通顺描述」。
+    if (($old.Length -ge $pick.Length) -and ((Get-BwZhCommonRun $old $pick) -ge 3)) { return $old }
+  }
+  return $pick
+}
+# 2026-11-07 用户「命名三要素：去维基页面通篇读取，替换原仅靠本地残值元数据的命名路径」。
+# 本地存的 desc 常有非英文原文(波斯/德/葡/俄)或被截断，cats 也被截断，翻译管线对之失效、
+# 名字退化成乱码；而图片自己的 Commons 详情页里有完整的英文描述与未截断的分类。
+# 这里改走「抓页面本体」：用 source_link 反查 File: 页，取 wikitext 里的英文描述 + 全量分类，
+# 再交给已有的 Get-BwPageCaption 管线（它的翻译 / 国家 / 三要素闸门都已成熟）。
+# 带进程内 + 落盘双缓存、User-Agent(复用 Get-BwText)、退避重试、限流间隔；离线 / 被限都安全退回 $null。
+function Get-BwLinkText([string]$s) {
+  $s = $s -replace '^\[\[', '' -replace '\]\]$', ''
+  if ($s -match '\|') { return ($s -split '\|', 2)[1] }
+  return $s
+}
+function Get-BwEnDescriptionFromWikitext([string]$wt) {
+  if (-not $wt) { return '' }
+  $t = [regex]::Replace($wt, '<!--.*?-->', '')
+  $t = [regex]::Replace($t, '(?is)<ref[^>]*>.*?</ref>', '')
+  $t = [regex]::Replace($t, '<[^>]+>', ' ')
+  # 页面内部分类 / 文件 / 授权链接不是"描述正文"，抓取前整段剔除，
+  # 否则会混进 "Category:October 2022 in Tsuen Wan" 这类噪声污染译名
+  # —— 这正是之前把具体地点（荃湾/大河道）冲掉、退化成泛泛"城市天际线"的根因。
+  $t = [regex]::Replace($t, '\[\[Category:[^\]]*\]\]', ' ')
+  $t = [regex]::Replace($t, '\[\[(File|Image):[^\]]*\]\]', ' ')
+  # 用户死规矩：命名一律以图片页面内容为准。描述块可能是 {{en}} / {{zh}} / {{mul}} /
+  # {{de}} 等任一词条的"语言模板"，逐个抽取、清洗后择优（英文/中文/mul 最可靠优先）。
+  # 波斯/阿拉伯等 RTL 语种机翻不可靠，直接跳过，改走结构化分类那一条线（分类也是页面内容）。
+  $langs = @('en','zh','zh-hans','zh-cn','zh-tw','zh-hant','mul','de','fr','es','it','nl','pt','ru','pl','cs','sv','ja','ko','da','no','fi','hu','ro','tr','uk','ca','gl','el','bg','hr','sk','sl','lt','lv','et','vi','id','th','hi')
+  $skip  = @('fa','ar','he','ur')
+  $best = ''; $bestScore = -1
+  $i = 0
+  while ($true) {
+    $i = $t.IndexOf('{{', $i)
+    if ($i -lt 0) { break }
+    $m = [regex]::Match($t.Substring($i + 2), '^(?<l>[a-z][a-z\-]{1,8})\b')
+    if (-not $m.Success) { $i += 2; continue }
+    $lang = $m.Groups['l'].Value
+    if (($skip -contains $lang) -or ($langs -notcontains $lang)) { $i += 2; continue }
+    $depth = 0; $j = $i; $end = -1
+    while ($j -lt ($t.Length - 1)) {
+      $two = $t.Substring($j, 2)
+      if ($two -eq '{{') { $depth++; $j += 2; continue }
+      if ($two -eq '}}') { $depth--; if ($depth -eq 0) { $end = $j + 2; break }; $j += 2; continue }
+      $j++
+    }
+    if ($end -lt 0) { break }
+    $block = $t.Substring($i, $end - $i)   # 形如 {{en|...}} / {{en|1=...}}，首尾含花括号
+    $i = $end
+    $body = $block.Substring(2, $block.Length - 4)   # 去掉外层 {{ }}
+    $body = [regex]::Replace($body, '^(?i)(en|zh|zh-hans|zh-cn|zh-tw|zh-hant|mul|de|fr|es|it|nl|pt|ru|pl|cs|sv|ja|ko|da|no|fi|hu|ro|tr|uk|ca|gl|el|bg|hr|sk|sl|lt|lv|et|vi|id|th|hi)(-[A-Za-z]+)?(\|1=|\|)?', '')
+    # Commons 的英文首句可能在嵌套的 {{Potd description|1=...|2=en}} 内。
+    # 按成对花括号取模板，再只保留第一个顶层参数；wiki 链接里的竖线不算参数边界。
+    $at = $body.IndexOf('{{Potd description', [StringComparison]::OrdinalIgnoreCase)
+    while ($at -ge 0) {
+      $depth = 0; $linkDepth = 0; $finish = -1; $paramEnd = -1; $p = $at
+      while ($p -lt ($body.Length - 1)) {
+        $pair = $body.Substring($p, 2)
+        if ($pair -eq '{{') { $depth++; $p += 2; continue }
+        if ($pair -eq '}}') { $depth--; $p += 2; if ($depth -eq 0) { $finish = $p; break }; continue }
+        if ($pair -eq '[[') { $linkDepth++; $p += 2; continue }
+        if ($pair -eq ']]') { if ($linkDepth -gt 0) { $linkDepth-- }; $p += 2; continue }
+        if ($body[$p] -eq '|' -and $depth -eq 1 -and $linkDepth -eq 0 -and $paramEnd -lt 0 -and
+            $p -gt ($at + 18) -and $body.Substring($p + 1) -match '^\d+=') { $paramEnd = $p }
+        $p++
+      }
+      if ($finish -lt 0) { break }
+      $firstBar = $body.IndexOf('|', $at)
+      $descPart = ''
+      if ($firstBar -ge 0 -and $firstBar -lt $finish) {
+        $stop = if ($paramEnd -ge 0) { $paramEnd } else { $finish - 2 }
+        $descPart = $body.Substring($firstBar + 1, $stop - $firstBar - 1) -replace '^1=', ''
+      }
+      $body = $body.Substring(0, $at) + $descPart + $body.Substring($finish)
+      $at = $body.IndexOf('{{Potd description', [StringComparison]::OrdinalIgnoreCase)
+    }
+    $body = [regex]::Replace($body, '\{\{[^}]*\}\}', ' ')
+    $body = [regex]::Replace($body, '\[\[[^\]]*\]\]', { param($mm) (Get-BwLinkText $mm.Value) })
+    $body = [regex]::Replace($body, "'''?", '')
+    $body = [regex]::Replace($body, '\[https?://\S+\s+([^\]]*)\]?', '$1')
+    # 去掉开头的目录编号/地点代码（如 "HK TWD " "NYC "），它们不是描述正文，
+    # 机翻会原样留下拉丁字母，导致名字因含外文被闸门作废。只剥「连续全大写 2~4
+    # 字母 + 空格」前缀，不误伤 "New York" 这类首字母大写地名。
+    $body = [regex]::Replace($body, '^\s*(?:[A-Z]{2,4}\s+)+', '')
+    $body = [regex]::Replace($body, '\s+', ' ').Trim()
+    if (-not $body) { continue }
+    # 评分：中文(zh*) 已是目标语言、无需二次机翻、最不易出冗余，优先 +400；mul/en +200；
+    # 越长（信息越全）越高；带地点线索再加分。双语页面（同时有 {{en}}/{{zh}}）取中文块，
+    # 避免英文机翻成"岛城"这类重复词。
+    $score = $body.Length
+    if (@('zh','zh-hans','zh-cn','zh-tw','zh-hant') -contains $lang) { $score += 400 }
+    elseif (@('en','mul') -contains $lang) { $score += 200 }
+    if ($body -match '(?i)\b(in|near|at|of|on|by|from|over|under|along|through)\s+[A-Z][a-z]{2,}') { $score += 50 }
+    if ($score -gt $bestScore) { $bestScore = $score; $best = $body }
+  }
+  if ($best) { return $best }
+  # 没有可识别的语言描述块时交回空串，由 Fetch-BwCommonsPage 改从结构化分类归纳
+  # （分类同样是页面内容，比离线词典可靠）。
+  return ''
+}
+function Get-BwDescFromCats([string]$cats) {
+  # 没有 {{en}} 英文块时，从全英文、结构化的 Commons 分类归纳一句可用的英文描述。
+  # 分类形如「主体 / 地点 / 质量标签 / 作者 / 拍摄日」，其中质量标签、作者、拍摄日
+  # 对「国家+地理+主题」三要素没有贡献，先滤掉，只留主体与地点类目。
+  if (-not $cats) { return '' }
+  $prefixNoise = @(
+    'Featured pictures', 'Quality images', 'Valued images', 'Images from',
+    'Wiki Loves Monuments', 'Wiki Loves', 'Photographs by', 'Photographs taken on',
+    'Files ', 'CC-', 'Self-published', 'Own work', 'Uploaded', 'Derived',
+    'Extracted', 'Cropped', 'Panorama', 'Validated', 'Picture of the year',
+    'Media contributed', 'Geograph', 'Flickr', 'Requested', 'Recognition',
+    'Images by', 'Diagrams', 'Maps', 'Icons', 'SVG', 'Logos', 'Symbols',
+    'Templates', 'Pages with', 'Category:', 'Winners of', 'Winners',
+    'Quality', 'Valued', 'Media', 'Files'
+  )
+  $containsNoise = @('User:', 'commons', 'SDC location', 'SDC', 'missing', 'of creation',
+    'uploaded', 'cropped', 'extracted', 'Flickr', 'Wiki Loves', 'Wikipedia', 'Commons')
+  $keep = @()
+  foreach ($c in ($cats -split '/')) {
+    $c = $c.Trim()
+    if (-not $c) { continue }
+    $drop = $false
+    foreach ($n in $prefixNoise) { if ($c.StartsWith($n, [StringComparison]::OrdinalIgnoreCase)) { $drop = $true; break } }
+    if (-not $drop) { foreach ($n in $containsNoise) { if ($c -match ([regex]::Escape($n))) { $drop = $true; break } } }
+    if ($drop) { continue }
+    $keep += $c
+    if ($keep.Count -ge 5) { break }
+  }
+  if ($keep.Count -eq 0) { return '' }
+  return ($keep -join ', ')
+}
+function Fetch-BwCommonsPage([string]$sourceLink) {
+  if (-not $sourceLink -or $sourceLink -notmatch 'commons\.wikimedia\.org/wiki/File:') { return $null }
+  if (-not ($sourceLink -match '(File:[^?#]+)')) { return $null }
+  $title = [uri]::UnescapeDataString($Matches[1])
+  if (-not $script:BwPageCache) {
+    $script:BwPageCache = @{}
+    $pcf = Join-Path $global:BWRoot 'bw_pagecache.json'
+    if (Test-Path -LiteralPath $pcf) {
+      try {
+        $obj = [IO.File]::ReadAllText($pcf, [Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+        # 缓存带版本号：解析逻辑一旦变动就整体作废、重新抓页，避免旧版毒数据
+        # （如"文件名 + Category 垃圾"）被永久复用、让命名永远偏离页面描述。
+        # 版本号不匹配直接丢弃整个缓存文件，重新抓。
+        if ($obj -and $obj.PSObject.Properties['__version'] -and [int]$obj.__version -ge 3) {
+          foreach ($pr in $obj.PSObject.Properties) {
+            if ($pr.Name -ne '__version') { $script:BwPageCache[$pr.Name] = $pr.Value }
+          }
+        }
+      } catch {}
+    }
+  }
+  # 整文件已按 __version 过滤，命中即复用（旧版毒数据在加载时已被剔除）。
+  if ($script:BwPageCache.ContainsKey($title)) {
+    $cached = $script:BwPageCache[$title]
+    if ($cached) { return $cached }
+  }
+  # 限流：两次抓页之间至少间隔 1500ms（Commons 匿名限流约 1 次/秒）。
+  if ($script:BwPageLast) {
+    $gap = ([datetime]::UtcNow - $script:BwPageLast).TotalMilliseconds
+    if ($gap -lt 1500) { Start-Sleep -Milliseconds (1500 - [int]$gap) }
+  }
+  $script:BwPageLast = [datetime]::UtcNow
+  $eq = [uri]::EscapeDataString($title)
+  $api = ('https://commons.wikimedia.org/w/api.php?action=query&titles=' + $eq +
+          '&prop=revisions%7Ccategories&rvprop=content&rvslots=main&cllimit=max&format=json')
+  $raw = ''
+  for ($try = 0; $try -lt 4; $try++) {
+    $raw = Get-BwText $api 20
+    if ($raw) { break }
+    Start-Sleep -Seconds (2 + $try * 3)
+  }
+  $res = $null
+  if ($raw) {
+    try {
+      $j = $raw | ConvertFrom-Json
+      $pg = $null
+      if ($j -and $j.query -and $j.query.pages) { $pg = @($j.query.pages.PSObject.Properties.Value)[0] }
+      if ($pg) {
+        $wt = ''
+        try { $wt = [string]$pg.revisions[0].slots.main.'*' } catch {}
+        if (-not $wt) { try { $wt = [string]$pg.revisions[0].slots.main.content } catch {} }
+        if (-not $wt) { try { $wt = [string]$pg.revisions[0].content } catch {} }
+        if (-not $wt) { try { $wt = [string]$pg.revisions[0]['*'] } catch {} }
+        $cats = @()
+        if ($pg.categories) { foreach ($c in $pg.categories) { $cn = [string]$c.title; $cn = $cn -replace '^Category:', ''; if ($cn) { $cats += $cn } } }
+        $en = Get-BwEnDescriptionFromWikitext $wt
+        if (-not $en) { $en = Get-BwDescFromCats ($cats -join ' / ') }
+        $res = [PSCustomObject]@{ desc = $en; cats = ($cats -join ' / '); ok = $true; parser_version = 2 }
+      }
+    } catch {}
+  }
+  if (-not $res) { $res = [PSCustomObject]@{ desc = ''; cats = ''; ok = $false } }
+  # 只持久化「抓到了内容」的结果；空结果(页面无英文/分类)与抓取失败都不落盘，
+  # 避免一次瞬时空响应毒化缓存、让后续命名永远拿不到数据。
+  if ($res.ok -and (($res.desc) -or ($res.cats))) {
+    $script:BwPageCache[$title] = $res
+    try {
+      $outObj = New-Object PSObject
+      $outObj | Add-Member -MemberType NoteProperty -Name '__version' -Value 3
+      foreach ($k in @($script:BwPageCache.Keys)) { $outObj | Add-Member -MemberType NoteProperty -Name $k -Value $script:BwPageCache[$k] }
+      [IO.File]::WriteAllText((Join-Path $global:BWRoot 'bw_pagecache.json'),
+        ($outObj | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
+    } catch {}
+  }
+  return $res
+}
+# 抓页面本体 -> 喂给已有管线。返回 @{ zhname, zhdesc, caption_version }（与 Get-BwPageCaption 同形）；失败返回 $null。
+function Get-BwPageCaptionFromLink([string]$sourceLink, [string]$origname) {
+  $pg = Fetch-BwCommonsPage $sourceLink
+  if (-not $pg -or $pg.ok -ne $true) { return $null }
+  if (-not $pg.desc -and -not $pg.cats) { return $null }
+  try { return Get-BwPageCaption $origname ([string]$pg.desc) ([string]$pg.cats) } catch { return $null }
+}
+function Set-BwSrcDescriptiveName([string]$path, [switch]$VisualFallback, [switch]$Force) {
   if (-not $path) { return $path }
-  # 2026-11-06 用户「你不要看词典补充名字，你要每张照片在网站上的介绍」：
-  # 以前这里会读像素判色调，给图挂「深蓝静调 / 灰调光影 / 雾白灰调」这种词 ——
-  # 用户看穿是"看图编的文字"，明确要求停掉。名字只认照片自己的作品名/描述（见
-  # Get-BwSubjectName / Get-BwGeoLabel），拼不出来的就保持原名，不再编词。
-  # 函数保留成空实现，是为了不动调用点与历史文件名兼容逻辑。
+  # 旧图只更新内嵌译名，不重命名；收藏、轮换账本和当前壁纸路径不受影响。
+  # 此函数仅在后台补货调用，面板GET只读文件头，不能在请求线程中翻译。
+  try {
+    $m = Read-BwImageMeta $path
+    # 「维基共享 / 真实摄影」是这两个图源改名前的旧标签，库里老图内嵌的还是它，
+    # 只认新词的话这 7 张永远轮不到补名，所以两个词都算。
+    if (-not $m -or $m.source_type -notin @('万象','随拍','维基共享','真实摄影')) { return $path }
+    $metaGeo = ''
+    try { $metaGeo = Get-BwGeoLabel ((([string]$m.origname) + ' ' + ([string]$m.desc) + ' ' + ([string]$m.cats))) } catch {}
+    # 已按三要素命名（cv=2 且通过终检）的图默认不改，避免回归；
+    # 用户定死「命名全部以页面内容为准」后，可用 -Force 强制按页面重算、覆盖旧名。
+    if (-not $Force -and $m.caption_version -eq '2' -and (Test-BwNameTriad ([string]$m.zhname) '' $metaGeo)) { return $path }
+    $original = [string]$m.origname
+    if (-not $original) { $original = [string]$m.title }
+    # 命名优先级：① 抓图片自己的 Commons 详情页（完整英文描述 + 未截断分类）喂给已有管线；
+    # ② 抓不到/算不出再退回本地 desc/cats；③ 都没有才走地理词典那条线。
+    # 这样凡带 Commons 链接的图都「去页面通篇读取」，不再只靠下载时残值的本地元数据。
+    $caption = $null; $name = ''
+    if ([string]$m.source_link -match 'commons\.wikimedia\.org/wiki/File:') {
+      $live = Get-BwPageCaptionFromLink ([string]$m.source_link) $original
+      if ($live -and [string]$live.zhname) { $caption = $live; $name = [string]$live.zhname }
+    }
+    if (-not $name) {
+      $caption = Get-BwPageCaption $original ([string]$m.desc) ([string]$m.cats)
+      $name = [string]$caption.zhname
+    }
+    if (-not $name) {
+      # 整句译文被闸门挡下，不等于可以继续顶着老名字：老代码把国家截掉、把学名逐字硬译，
+      # 界面上就是「银河娱乐城」「约翰海因茨国」这一类。这里改用与新图入库同一套地理词典成句
+      #（判据见 Get-BwPendingSrcName，面板当场显示走的也是它），
+      # 词典也认不出（或认出来的还夹着外文）才原样不动。
+      $name = Get-BwPendingSrcName $m
+    }
+    if ($name) {
+      $nameGeo = ''
+      try { $nameGeo = Get-BwGeoLabel ((([string]$original) + ' ' + ([string]$m.desc) + ' ' + ([string]$m.cats))) } catch {}
+      # 补名不允许绕过下载时的三要素闸门；信息不够就保持待补状态，不能标为 v2。
+      if (-not (Test-BwNameTriad $name '' $nameGeo)) {
+        Log ('补名三要素未齐，保留待补: ' + (Split-Path $path -Leaf)) 'WARN'
+        return $path
+      }
+      # 名字沿用库里原来那一句时，默认说明也配原来那一份；但若页面标了相机品牌、旧说明却没写，
+      # 仍补上品牌（用户点名「标着小米却没写出」）——不覆盖已写好的旧说明。
+      if ($name -eq [string]$m.zhname) {
+        if (([string]$m.zhdesc -match '拍摄') -or -not ($caption.zhdesc -match '拍摄')) {
+          $caption.zhdesc = [string]$m.zhdesc
+        }
+      }
+      # 只传译文三个字段；原始署名、拍摄时间、参数和未知字段原样保留。
+      $cap2 = @{ zhname = $name; zhdesc = [string]$caption.zhdesc; caption_version = '2' }
+      if (Write-BwImageMeta $path $cap2 -ReplaceCaption) { $global:BwCreditCache = @{}; $global:BwDisplayCache = @{} }
+    }
+  } catch {}
   return $path
 }
 # 2026-11-05: 已经躺在库里的"光写源名、不写画面"的旧图也自动补成中文描述名。
@@ -3617,15 +5302,23 @@ function Invoke-BwSrcGenericNameFix([string]$dir) {
   $script:BWNameFixDone[$dir] = $true
   if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { return }
   try {
-    $generic = @('随拍', '真实摄影', '维基共享', '万象')
-    foreach ($f in @(Get-BwSrcFiles $dir)) {
-      try {
-        $stem = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
-        $parts = $stem.Split('_')
-        if ($parts.Count -lt 4) { continue }
-        $subject = ($parts[1..($parts.Count - 3)] -join '_')
-        if ($generic -contains $subject) { [void](Set-BwSrcDescriptiveName $f.FullName) }
-      } catch {}
+    # 每轮后台最多修两张，游标留在应用数据目录；失败也向后走，避免卡住后面的旧图。
+    $cursor = Join-Path $global:BWRoot ('caption_cursor_' + (Get-BwHash $dir) + '.txt')
+    $after = ''
+    if (Test-Path -LiteralPath $cursor) { $after = [IO.File]::ReadAllText($cursor) }
+    $files = @(Get-BwSrcFiles $dir | Sort-Object Name)
+    $files = @($files | Where-Object { $_.Name -gt $after }) + @($files | Where-Object { $_.Name -le $after })
+    $tried = 0
+    foreach ($f in $files) {
+      $m = Get-BwFileCredit $f.FullName
+      if (-not $m -or $m.source_type -notin @('万象','随拍','维基共享','真实摄影')) { continue }
+      $metaGeo = ''
+      try { $metaGeo = Get-BwGeoLabel ((([string]$m.origname) + ' ' + ([string]$m.desc) + ' ' + ([string]$m.cats))) } catch {}
+      if ($m.caption_version -eq '2' -and (Test-BwNameTriad ([string]$m.zhname) '' $metaGeo)) { continue }
+      [void](Set-BwSrcDescriptiveName $f.FullName)
+      [IO.File]::WriteAllText($cursor, $f.Name, [Text.UTF8Encoding]::new($false))
+      $tried++
+      if ($tried -ge 2) { break }
     }
   } catch {}
 }
@@ -3649,7 +5342,7 @@ function Get-BwSrcAsset([string]$key, $item) {
     if ($item.artist) { $copy = $copy + ' · ' + $item.artist }
     $copy = $copy + ' · 万象'
     return [PSCustomObject]@{ url = [string]$item.thumb; title = [string]$item.title; link = [string]$item.link; copy = $copy; shot = [string]$item.shot; author = ([string]$item.artist).Trim(); camera = ([string]$item.camera).Trim();
-      origname = [string]$item.origname; desc = [string]$item.desc; cats = [string]$item.cats; gps = [string]$item.gps; expo = [string]$item.expo; uploaded = [string]$item.uploaded }
+      origname = [string]$item.origname; desc = [string]$item.desc; cats = [string]$item.cats; gps = [string]$item.gps; expo = [string]$item.expo; uploaded = [string]$item.uploaded; honor = [string]$item.honor }
   }
   if ($key -eq 'picsum') {
     # 2026-11-06: 随拍已换成 Commons 摄影图, 署名按合规四项写(作品名/作者/许可/来源)。
@@ -3658,13 +5351,13 @@ function Get-BwSrcAsset([string]$key, $item) {
     if ($item.artist) { $cp = $cp + ' · ' + ([string]$item.artist).Trim() }
     $cp = $cp + ' · 随拍'
     return [PSCustomObject]@{ url = [string]$item.thumb; title = [string]$item.title; link = [string]$item.link; copy = $cp; shot = [string]$item.shot; author = ([string]$item.artist).Trim(); camera = ([string]$item.camera).Trim();
-      origname = [string]$item.origname; desc = [string]$item.desc; cats = [string]$item.cats; gps = [string]$item.gps; expo = [string]$item.expo; uploaded = [string]$item.uploaded }
+      origname = [string]$item.origname; desc = [string]$item.desc; cats = [string]$item.cats; gps = [string]$item.gps; expo = [string]$item.expo; uploaded = [string]$item.uploaded; honor = [string]$item.honor }
   }
   return $null
 }
 # ---- 万象 (Wikimedia Commons) 图源 ----
 # 免 Key、国内可达、自由授权(CC0 / CC BY / CC BY-SA)。国家地理风格主题池见 Get-BwSourceDefs 的 DefaultKw。
-# 候选阶段就按"原图宽 >= 1920、比例 1.4~1.9、仅自由授权"过滤; 下载阶段再由流水线量真实像素复核。
+# 候选阶段就按"裁成 16:9 后有效宽 >= 2560(2.5K 档)、仅自由授权"过滤; 下载阶段再由流水线量真实像素复核。
 # 2026-11-05: 万象(Commons) 的 extmetadata 里本来就有作品名 / 描述 / 分类,
 # 用一张离线英中主体词典把它翻成"描述画面内容"的中文名 —— 零成本、零联网、不拖慢下载。
 # 匹配不到主体词就返回空串, 由调用方回退到中文搜索关键词, 绝不硬编一个错名字。
@@ -3673,6 +5366,14 @@ function Get-BwSrcAsset([string]$key, $item) {
 # 这类国家与地名, 旧词典只认 18 个大区词, 大部分图被压成「老城·灰调光影」这种空名。
 # 这里做一张离线「国家·城市/地标」两级表: 具体地名优先, 认不到再退到国家, 再认不到返回空,
 # 由 Get-BwSubjectName 保留原主体名 —— 绝不硬编一个错地名。全程本地, 不联网、零成本。
+# 词典键的整词匹配。2026-11-06 实测「Llyn Ogwen Milky Way」被写成「英国奥格温湖的街道」：
+# 介绍里的 valley 撞上了主体词 alley。旧写法 `$t -match $k` 是纯子串匹配，
+# 表里所有短词都有这个风险(erg 撞 organic、zoo 撞 zoology)。
+# 这里只在整条键的两端加「前后不能是字母数字」的断言，键内部该有的 .? \. \b 一律不动。
+function Get-BwWordRe([string]$k) {
+  if (-not $k) { return '(?!)' }
+  return '(?<!\w)(?:' + $k + ')(?!\w)'
+}
 function Get-BwGeoLabel([string]$text) {
   if (-not $text) { return '' }
   $t = ([string]$text).ToLower()
@@ -3691,6 +5392,14 @@ function Get-BwGeoLabel([string]$text) {
     @{ 'þingvellir|thingvellir' = '冰岛·辛格维利尔' },
     @{ 'neuenbürg|neuenburg' = '德国·诺伊恩堡' },
     @{ 'donaghadee' = '英国·多纳哈迪' },
+    # 2026-11-06 库里实测：这几张的页面原文写着地名、表里却没有，名字就缺了国家。
+    # 只收能对着页面原文核实的地方：帕拉纳尔山是 ESO 甚大望远镜所在地（智利），
+    # 林姆尼港野生动物园在英格兰肯特郡（英国）。
+    @{ 'cerro paranal|paranal' = '智利·帕拉纳尔山' },
+    @{ 'port lympne' = '英国·林姆尼港' },
+    @{ 'bangkok' = '泰国·曼谷' },
+    # Commons 原名 "Ayuntamiento, La Coruña, España"，介绍写明市政厅位于 María Pita Square。
+    @{ 'la coruña|a coruña|coru[ñn]a' = '西班牙·拉科鲁尼亚' },
     @{ 'köln|cologne' = '德国·科隆' },
     @{ 'norderney' = '德国·诺德奈岛' },
     @{ 'zürizoo|zurizoo|zoo zürich|zurich zoo' = '瑞士·苏黎世' },
@@ -3711,7 +5420,8 @@ function Get-BwGeoLabel([string]$text) {
     @{ 'milford sound|fiordland' = '新西兰·米尔福德峡湾' },
     @{ 'liverpool street|exchange square' = '英国·伦敦' },
     @{ 'lower manhattan|jersey city|little island' = '美国·纽约' },
-    @{ 'minato city|tokyo|kyoto|osaka' = '日本·东京' },
+    @{ 'minato' = '日本·东京港区' },
+    @{ 'tokyo' = '日本·东京' }, @{ 'kyoto' = '日本·京都' }, @{ 'osaka' = '日本·大阪' },
     @{ 'aarhus|århus' = '丹麦·奥胡斯' },
     @{ 'quebec city|quebec' = '加拿大·魁北克城' },
     @{ 'kraków|krakow' = '波兰·克拉科夫' },
@@ -3756,7 +5466,17 @@ function Get-BwGeoLabel([string]$text) {
     @{ 'south yuba|nevada city' = '美国·加州内华达城' },
     @{ 'måbødalen|mabodalen|eidfjord' = '挪威·埃德峡湾' },
     @{ 'altaussee' = '奥地利·阿尔陶塞湖' },
-    @{ 'boat harbour' = '澳大利亚·塔斯马尼亚' }
+    @{ 'boat harbour' = '澳大利亚·塔斯马尼亚' },
+    # 2026-11-06 66 张实测里最后几张没进表的地名。漏一个就是一张坏名字:
+    # Llyn Ogwen 认不出湖, 旧代码把它连同 Milky Way 写成「银河娱乐城」;
+    # Shoreline Park 认不出, 就退成「山峦」; Kisumu 认不出, 名字里连国家都没了。
+    @{ 'llyn ogwen|ogwen valley' = '英国·奥格温湖' },
+    @{ 'shoreline park' = '美国·加州山景市' },
+    @{ 'kisumu' = '肯尼亚·基苏木' },
+    @{ 'crissy field' = '美国·旧金山克里西菲尔德' },
+    @{ 'robson valley|mount robson' = '加拿大·罗布森山谷' },
+    @{ 'esplanade bridge|marine bay' = '新加坡·滨海湾' },
+    @{ 'flinders lane|russell street' = '澳大利亚·墨尔本' }
   )
   # 只写了国家没写城市时的兜底
   $countries = @(
@@ -3779,7 +5499,30 @@ function Get-BwGeoLabel([string]$text) {
     @{ 'mauritania' = '毛里塔尼亚' }, @{ 'mali' = '马里' }, @{ 'tunisia' = '突尼斯' },
     @{ 'tanzania' = '坦桑尼亚' }, @{ 'chile' = '智利' }, @{ 'peru' = '秘鲁' },
     @{ 'nepal' = '尼泊尔' }, @{ 'ecuador' = '厄瓜多尔' }, @{ 'south africa' = '南非' },
-    @{ 'namibia' = '纳米比亚' }, @{ 'greenland' = '格陵兰' }
+    @{ 'namibia' = '纳米比亚' }, @{ 'greenland' = '格陵兰' },
+    # 2026-11-06 66 张实测补: 这批国家页面里写得很直白, 表里却没有,
+    # 于是「Kisumu City, Kenya」只剩「城市天际线」, 国家地理整个丢了。
+    @{ 'kenya' = '肯尼亚' }, @{ 'ethiopia' = '埃塞俄比亚' }, @{ 'nigeria' = '尼日利亚' },
+    @{ 'ghana' = '加纳' }, @{ 'senegal' = '塞内加尔' }, @{ 'algeria' = '阿尔及利亚' },
+    @{ 'libya' = '利比亚' }, @{ 'sudan' = '苏丹' }, @{ 'mozambique' = '莫桑比克' },
+    @{ 'zimbabwe' = '津巴布韦' }, @{ 'zambia' = '赞比亚' }, @{ 'botswana' = '博茨瓦纳' },
+    @{ 'madagascar' = '马达加斯加' }, @{ 'uganda' = '乌干达' }, @{ 'rwanda' = '卢旺达' },
+    @{ 'pakistan' = '巴基斯坦' }, @{ 'srilanka|sri lanka' = '斯里兰卡' },
+    @{ 'myanmar' = '缅甸' }, @{ 'cambodia' = '柬埔寨' }, @{ 'malaysia' = '马来西亚' },
+    @{ 'philippines' = '菲律宾' }, @{ 'mongolia' = '蒙古' },
+    @{ 'kazakhstan' = '哈萨克斯坦' }, @{ 'uzbekistan' = '乌兹别克斯坦' },
+    @{ 'georgia' = '格鲁吉亚' }, @{ 'azerbaijan' = '阿塞拜疆' },
+    @{ 'israel' = '以色列' }, @{ 'jordan' = '约旦' }, @{ 'lebanon' = '黎巴嫩' },
+    @{ 'saudi arabia' = '沙特阿拉伯' }, @{ 'iran' = '伊朗' }, @{ 'iraq' = '伊拉克' },
+    @{ 'colombia' = '哥伦比亚' }, @{ 'venezuela' = '委内瑞拉' }, @{ 'bolivia' = '玻利维亚' },
+    @{ 'uruguay' = '乌拉圭' }, @{ 'costa rica' = '哥斯达黎加' }, @{ 'panama' = '巴拿马' },
+    @{ 'cuba' = '古巴' }, @{ 'jamaica' = '牙买加' },
+    @{ 'croatia' = '克罗地亚' }, @{ 'serbia' = '塞尔维亚' }, @{ 'bosnia' = '波黑' },
+    @{ 'albania' = '阿尔巴尼亚' }, @{ 'bulgaria' = '保加利亚' }, @{ 'romania' = '罗马尼亚' },
+    @{ 'hungary' = '匈牙利' }, @{ 'slovakia' = '斯洛伐克' }, @{ 'slovenia' = '斯洛文尼亚' },
+    @{ 'estonia' = '爱沙尼亚' }, @{ 'latvia' = '拉脱维亚' }, @{ 'lithuania' = '立陶宛' },
+    @{ 'ukraine' = '乌克兰' }, @{ 'belarus' = '白俄罗斯' }, @{ 'belgium' = '比利时' },
+    @{ 'luxembourg' = '卢森堡' }, @{ 'malta' = '马耳他' }, @{ 'cyprus' = '塞浦路斯' }
   )
   # 连国家都没写、只写了大地理区时也留一个地名, 不硬编画面内容
   $regions = @(
@@ -3788,24 +5531,44 @@ function Get-BwGeoLabel([string]$text) {
     @{ 'andes' = '安第斯' }, @{ 'gobi' = '戈壁' }, @{ 'tibet' = '青藏高原' }
   )
   foreach ($h in $places) {
-    foreach ($k in @($h.Keys)) { if ($t -match $k) { return [string]$h[$k] } }
+    foreach ($k in @($h.Keys)) { if ($t -match (Get-BwWordRe $k)) { return [string]$h[$k] } }
+  }
+  # 美国/加拿大的页面经常只写州和省、不写国家，而州名在系统的国家表里认不出来，
+  # 结果名字里一个国家地理都没有。州名一律连着国家一起写，不凭空造地名。
+  # 只收页面上出现频率高、又不会跟别的词撞车的：内华达山脉(Sierra Nevada)、
+  # 华盛顿特区(Washington, D.C.)这种歧义写法这里不认，交给上面那张具体地名表。
+  $states = @(
+    @{ 'california' = '美国·加州' }, @{ 'oregon' = '美国·俄勒冈州' },
+    @{ 'utah' = '美国·犹他州' }, @{ 'arizona' = '美国·亚利桑那州' },
+    @{ 'colorado' = '美国·科罗拉多州' }, @{ 'texas' = '美国·得克萨斯州' },
+    @{ 'florida' = '美国·佛罗里达州' }, @{ 'pennsylvania' = '美国·宾夕法尼亚州' },
+    @{ 'massachusetts' = '美国·马萨诸塞州' }, @{ 'vermont' = '美国·佛蒙特州' },
+    @{ 'minnesota' = '美国·明尼苏达州' }, @{ 'michigan' = '美国·密歇根州' },
+    @{ 'wisconsin' = '美国·威斯康星州' }, @{ 'alaska' = '美国·阿拉斯加' },
+    @{ 'hawaii' = '美国·夏威夷' }, @{ 'yosemite|sierra nevada' = '美国·加州' },
+    @{ 'british columbia' = '加拿大·不列颠哥伦比亚省' }, @{ 'alberta' = '加拿大·阿尔伯塔省' },
+    @{ 'ontario' = '加拿大·安大略省' }, @{ 'nova scotia' = '加拿大·新斯科舍省' },
+    @{ 'newfoundland' = '加拿大·纽芬兰' }
+  )
+  foreach ($h in $states) {
+    foreach ($k in @($h.Keys)) { if ($t -match (Get-BwWordRe $k)) { return [string]$h[$k] } }
   }
   foreach ($h in $countries) {
     foreach ($k in @($h.Keys)) {
-      if ($t -match $k) {
+      if ($t -match (Get-BwWordRe $k)) {
         $c = [string]$h[$k]
         # 2026-11-06: 只写国家会让「摩洛哥的沙漠」看不出是哪片沙漠。
         # 原题里同时写了大地理区(撒哈拉/喜马拉雅/阿尔卑斯…)时一起带出来,
         # 变成「摩洛哥撒哈拉」「毛里塔尼亚撒哈拉」—— 用户要的就是地理元素尽量全。
         foreach ($rh in $regions) {
-          foreach ($rk in @($rh.Keys)) { if ($t -match $rk) { return ($c + [string]$rh[$rk]) } }
+          foreach ($rk in @($rh.Keys)) { if ($t -match (Get-BwWordRe $rk)) { return ($c + [string]$rh[$rk]) } }
         }
         return $c
       }
     }
   }
   foreach ($h in $regions) {
-    foreach ($k in @($h.Keys)) { if ($t -match $k) { return [string]$h[$k] } }
+    foreach ($k in @($h.Keys)) { if ($t -match (Get-BwWordRe $k)) { return [string]$h[$k] } }
   }
   return ''
 }
@@ -3819,16 +5582,38 @@ function Get-BwGeoLabel([string]$text) {
 # 「想象力」只用于措辞与句式, 不用于编事实。
 function Get-BwFlowName([string]$geo, [string]$sub, [string]$mod) {
   $place = ([string]$geo) -replace '·', ''
+  # 2026-11-06: 地名表里「国家·城市」两截写成同一个词时(新加坡·新加坡), 去掉「·」就连着读两遍。
+  $segs = @(([string]$geo) -split '·' | Where-Object { $_ })
+  $uniq = @()
+  foreach ($s in $segs) { if (-not $uniq -or [string]$uniq[-1] -ne [string]$s) { $uniq += $s } }
+  $place = ($uniq -join '')
   # 2026-11-06 用户「你不要看词典补充名字，你要每张照片在网站上的介绍」：
   # 以前认不出主体就填一个「风景」顶上，等于凭空给照片起了个空名。
   # 现在认不出就返回空串，让上游退回照片自己的作品名 —— 宁可英文原名，也不编。
   if (-not $sub) { return '' }
   if (-not $place) { return $sub }
   # 主体里已经写了这个城市时, 别把地名重复一遍
-  $city = (([string]$geo) -split '·')[-1]
+  $city = ''
+  if ($uniq.Count -gt 0) { $city = [string]$uniq[$uniq.Count - 1] }
   if ($city -and ($sub -like ('*' + $city + '*'))) {
-    $place = ([string]$geo) -replace ('·' + [regex]::Escape($city)), ''
-    $place = $place -replace '·', ''
+    if ($uniq.Count -ge 2) { $place = (($uniq[0..($uniq.Count - 2)] -join '')) } else { $place = '' }
+  }
+  # 反方向也要挡: 地名末段自己就以主体词收尾时(美国·布莱斯峡谷 + 峡谷、
+  # 英国·苏格兰奥伊赫桥 + 桥梁), 再缀一次「的+主体」就写成「美国布莱斯峡谷的峡谷」。
+  # 地名已经把画面说完了, 名字就到地名为止。
+  # 另外认一下「通名那一个字」：词典里地标常直接把桥/湖/港写进地名(奥伊赫桥、阿尔陶塞湖)，
+  # 主体词却是双音节的「桥梁」「湖泊」，整词收尾对不上，照样会写成「奥伊赫桥的桥梁」。
+  # 中文这类词的通名不一定在末尾(桥梁=桥+梁、湖泊=湖+泊)，所以给常见的几个另列一张表。
+  $head = @{ '桥梁'='桥'; '湖泊'='湖'; '港口'='港'; '山峦'='山'; '海岛'='岛'; '海岸'='岸';
+             '峡谷'='峡'; '河流'='河'; '教堂'='堂'; '古堡'='堡'; '灯塔'='塔'; '寺庙'='寺';
+             '广场'='场'; '阶梯'='阶'; '街道'='街'; '步道'='道' }
+  if ($city -and $sub) {
+    $dup = $city.EndsWith($sub)
+    if (-not $dup) {
+      $h = [string]$head[[string]$sub]
+      if ($h) { $dup = $city.EndsWith($h) }
+    }
+    if ($dup -and $city.Length -gt 1) { return $place }
   }
   $scene = [string]$sub
   if ($mod) {
@@ -3846,13 +5631,17 @@ function Get-BwFlowName([string]$geo, [string]$sub, [string]$mod) {
   } else {
     $r = $place + '的' + $scene
   }
-  if ($r.Length -gt 28) { $r = $r.Substring(0, 28) }
+  if ($r.Length -gt 48) { return '' }   # 宁可不叫，也不砍掉半个地名（28 字硬截切坏过国家/州名）
   return $r
 }
 
 function Get-BwSubjectName([string]$text, [string]$Prefer) {
   if (-not $text) { return '' }
   $t = ([string]$text).ToLower()
+  # Geograph 那类页面的介绍是模板句：「This is a photo of scheduled monument number GD12345」
+  # 「This is a photo of a listed building」。它是遗产编号说明，不是画面主体，
+  # 留着会让「英国苏格兰奥伊赫桥」被认成「奥伊赫桥的纪念碑」。整句先洗掉。
+  $t = [regex]::Replace($t, 'this is a photo of [^.]*?(?:monument|listed building|building of?\s?\w*\s?number)[^.]*', '')
   # 2026-11-06: 随拍换到 Commons 城市人文池, 新补一组人文主体词。
   # 两路分开排: 万象走自然优先, 随拍走人文优先 —— 否则城市图里的 "street"
   # 会把自然图抢成「街道」, 自然图里的 "coast" 又会把港口抢成「海岸」。
@@ -3917,6 +5706,8 @@ function Get-BwSubjectName([string]$text, [string]$Prefer) {
   # 于是名字要么笼统要么被别的词抢走。这里单列一张「具体事物」表，排在最前面，
   # 只收页面介绍里真出现过的词，一条一条对得上中文，不猜。
   $specific = @(
+    # 页面描述明确为 A Coruña 的 city hall / Municipal Palace；具体主体优先于 facade 泛称。
+    @{ 'city hall|town hall|municipal palace|ayuntamiento' = '市政厅' },
     @{ 'wooden jetty|jetty|breakwater|groyne' = '防波堤' },
     @{ 'surf life saving|slsc' = '冲浪救生俱乐部' },
     @{ 'bicycle parking|bike parking|bicycle corral' = '自行车停放区' },
@@ -3935,6 +5726,7 @@ function Get-BwSubjectName([string]$text, [string]$Prefer) {
     @{ 'gorge|ravine' = '峡谷' },
     @{ 'canyon' = '峡谷' },
     @{ 'dune|dunes|sand desert' = '沙丘' },
+    @{ 'desert|desierto|erg\b' = '沙漠' },
     @{ 'new zealand bush|bush|rainforest|forest|woodland' = '森林' },
     @{ 'lake|loch|reservoir' = '湖泊' },
     @{ 'jetty|pier|quay|wharf' = '码头' },
@@ -3974,7 +5766,7 @@ function Get-BwSubjectName([string]$text, [string]$Prefer) {
   )
   $sub = ''
   foreach ($h in $subjects) {
-    foreach ($k in @($h.Keys)) { if ($t -match $k) { $sub = [string]$h[$k]; break } }
+    foreach ($k in @($h.Keys)) { if ($t -match (Get-BwWordRe $k)) { $sub = [string]$h[$k]; break } }
     if ($sub) { break }
   }
   if (-not $sub) { return '' }
@@ -3982,42 +5774,89 @@ function Get-BwSubjectName([string]$text, [string]$Prefer) {
   $geo = Get-BwGeoLabel $t
   if (-not $geo) {
     foreach ($h in $geos) {
-      foreach ($k in @($h.Keys)) { if ($t -match $k) { $geo = [string]$h[$k]; break } }
+      foreach ($k in @($h.Keys)) { if ($t -match (Get-BwWordRe $k)) { $geo = [string]$h[$k]; break } }
       if ($geo) { break }
     }
   }
   $mod = ''
   foreach ($h in $mods) {
-    foreach ($k in @($h.Keys)) { if ($t -match $k) { $mod = [string]$h[$k]; break } }
+    foreach ($k in @($h.Keys)) { if ($t -match (Get-BwWordRe $k)) { $mod = [string]$h[$k]; break } }
     if ($mod) { break }
   }
   # 不再用「国家·城市·主体」标签串联, 交给 Get-BwFlowName 写成一句通顺中文短句
   return (Get-BwFlowName $geo $sub $mod)
 }
+# 2026-11-07 2.5K 档: 超宽原图(W/H > 16/9)的缩略图裁成 16:9 后可能不到门槛, 白抓一张。
+# 实测教训(2026-11-07): Commons 现在只放行预设宽度档, 把 thumburl 里的宽度改成
+# 3507px 这类任意值会直接 400("Use thumbnail sizes listed on ..."); 而且请求 2560 档
+# 实际可能给 3840px 的缩略图。所以不猜、不改 URL —— 直接读 thumburl 里的真实档位,
+# 按它算出裁后有效宽: 够门槛就用这张已缓存的缩略图, 不够就走原图(12MB 上限),
+# 太大的宁可不收, 由流水线自动换下一张。落盘时还会再量一次真实像素复核。
+function Get-BwCommonsThumbUrl([psobject]$ii, [int]$iw, [int]$ih, [int]$minW) {
+  if (-not $ii -or $iw -le 0 -or $ih -le 0) { return '' }
+  if ($minW -le 0) { $minW = 2560 }
+  $tu = ''
+  if ($ii.thumburl) { $tu = [string]$ii.thumburl }
+  if (-not $tu) { if ($ii.url) { return [string]$ii.url }; return '' }
+  $tw = 0
+  $m = [regex]::Match($tu, '/(\d+)px-')
+  if ($m.Success) { $tw = [int]$m.Groups[1].Value }
+  if ($tw -le 0) { $tw = $minW }
+  $thumbH = [int][math]::Round([double]$tw * [double]$ih / [double]$iw)
+  $thumbCrop = Get-BwCrop169Width $tw $thumbH
+  if ($thumbCrop -ge $minW) { return $tu }
+  $sz = 0
+  try { $sz = [int]$ii.size } catch { $sz = 0 }
+  if ($sz -gt 0 -and $sz -le 12582912 -and $ii.url) { return [string]$ii.url }
+  return ''
+}
 function Get-BwCommonsCandidates([string]$kw) {
   $c = Get-BwConfig
+  # 2026-11-08: 候选阶段就用屏幕比例算一次, 供下面的 16:9 提前闸复用。
+  $scrSize = Get-BwScreenSize
+  $srcAr = if ([int]$scrSize.H -gt 0) { [double]$scrSize.W / [double]$scrSize.H } else { 16.0 / 9.0 }
+  $arSkip = 0
+  $minW = Get-BwSrcMinWidth $c 'commons'
   $w = Get-BwSrcTargetWidth $c 'commons'
   # 万象图床对"请求宽度接近原图"的图会直接甩未缩放原图, 对大原图请求 3840 又会触发图床即时渲染,
   # 实测 6~7 千像素的原图 3840 档经常卡到连接中断(80s+)。封顶 2560: 既能拿到稳定的缓存缩略图
-  # (2~3 MB, 20s 上下下完, 不挡后台补货), 又比 1920 更清楚。真要 4K 可在设置里把 src_commons_full_w
-  # 调高, 但要有"个别大图会慢/失败、由流水线自动跳过换下一张"的心理准备。
+  # (2~3 MB, 20s 上下下完, 不挡后台补货), 又刚好等于 2.5K 档的满屏线。
+  # 2026-11-07: 超宽原图靠下面按 1440*W/H 反推宽度另取, 不靠抬这个封顶。
+  # 真要 4K 得连这里一起改, 并接受"个别大图会慢/失败、由流水线自动跳过换下一张"。
   if ($w -gt 2560) { $w = 2560 }
   if (($w -lt 1920) -or ($w -gt 8000)) { $w = 2560 }
-  $eq = [uri]::EscapeDataString($kw)
+  # 2026-11-07 晚: 荣誉池别名展开成完整检索式 + 持久游标(原来 generator=search 固定
+  # 返回前 20 张, 配合「永不重复」账本几十轮就枯竭)。不是别名时关键词原样送检。
+  $hq = Get-BwHonorQuery $kw
+  if ($hq) {
+    $q = $hq + ' filew:>' + [int]$minW
+    $off = Get-BwSrcOffset $kw 50 'commons' 900
+  } else {
+    $q = [string]$kw
+    $off = Get-BwSrcOffset $kw 50 'commons' 4950
+  }
+  $eq = [uri]::EscapeDataString($q)
   $api = ('https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=' + $eq +
-          '&gsrnamespace=6&gsrlimit=20&prop=imageinfo&iiprop=url%7Cmime%7Csize%7Cextmetadata%7Cmetadata&iiurlwidth=' + $w + '&format=json')
+          '&gsrnamespace=6&gsrlimit=50&gsroffset=' + $off + '&prop=imageinfo&iiprop=url%7Cmime%7Csize%7Cextmetadata%7Cmetadata&iiurlwidth=' + $w + '&format=json')
   $txt = Get-BwText $api 25
   if (-not $txt) { return @() }
   try { $j = $txt | ConvertFrom-Json } catch { return @() }
   $out = @()
   if (-not ($j -and $j.query -and $j.query.pages)) { return @() }
   foreach ($p in $j.query.pages.PSObject.Properties.Value) {
+    if (-not $p.imageinfo) { continue }   # 2026-11-08 修: 搜索结果里偶有页面无 imageinfo(重定向/已删/NS6非图), 直接索引会抛"无法对 Null 数组进行索引"使整轮抓取中止
     $ii = $p.imageinfo[0]
     if (-not ($ii -and $ii.mime -match 'jpeg|png')) { continue }
     $iw = [int]$ii.width; $ih = [int]$ii.height
-    if ($iw -lt 1920 -or $ih -le 0) { continue }                    # 小图不要(不妥协)
-    $ar = [double]$iw / [double]$ih
-    if ($ar -lt 1.4 -or $ar -gt 1.9) { continue }                  # 挡掉方图/竖图/超宽全景
+    if ($iw -lt [int]$minW -or $ih -le 0) { continue }              # 小图不要(不妥协)
+    # 2026-11-07: 改成「裁成 16:9 后有效宽 >= 门槛(默认 2560)」(见 Get-BwCrop169Width)。
+    # 旧的 1.4~1.9 比例窗口把 3:2 风光 / 4:3 / 方图 / 竖构图的高分原图全错杀了, 而桌面壁纸
+    # 本来就是填充裁切; 新口径只看裁完还剩多少像素, 超长卷一类裁完不够宽的照样挡掉。
+    # 用配置里的 $minW 而不是写死 2560: 门槛、取图决策、落盘复核三处永远是同一个数。
+    if ((Get-BwCrop169Width $iw $ih) -lt [int]$minW) { continue }
+    # 2026-11-08 用户「只收 16:9」: 用 Commons 返回的真实宽高在候选阶段提前筛掉非 16:9,
+    # 不再「抓页面 + 翻译 + 下载完再拒」(一轮 3~4 分钟、新增 0 张的主因)。
+    if (([Math]::Abs(([double]$iw / [double]$ih) - $srcAr) / $srcAr) -gt 0.01) { $arSkip++; continue }
     $lic = ''
     if ($ii.extmetadata -and $ii.extmetadata.LicenseShortName) { $lic = [string]$ii.extmetadata.LicenseShortName.value }
     $lu = $lic.ToUpper()
@@ -4026,7 +5865,11 @@ function Get-BwCommonsCandidates([string]$kw) {
     $shot = ''
     if ($ii.extmetadata -and $ii.extmetadata.DateTimeOriginal) { $shot = Get-BwShotDate ([string]$ii.extmetadata.DateTimeOriginal.value) }
     if (-not $shot) { continue }
-    $thumb = if ($ii.thumburl) { [string]$ii.thumburl } else { [string]$ii.url }
+    # 标准缩略图 / 超宽图按高度反推的档位 / 超长卷走原图, 见 Get-BwCommonsThumbUrl。
+    # 2026-11-08 用户「原汁原味, 原始图片文件一个像素都不动」: 直接取 Commons 页面原图 url,
+    # 不再请求 2560/3840 缩略图。尺寸门槛按 API 返回的原始文件宽高(iw/ih)判。
+    $thumb = [string]$ii.url
+    if (-not $thumb) { $thumb = Get-BwCommonsThumbUrl $ii $iw $ih ([int]$minW) }
     if (-not $thumb) { continue }
     # 图床对"请求宽度接近/超过原图"的图会直接甩未缩放原图(upload.wikimedia.org),
     # 实测 4~5 MB 要 25~50 秒; 已经缩放缓存好的(thumb.wikimedia.org)只有 0.3~3 MB、8~20 秒。
@@ -4053,6 +5896,20 @@ function Get-BwCommonsCandidates([string]$kw) {
     # 认不出就留空，由 Get-BwSrcName 退回照片自己的作品名。
     if (-not $subj) { $subj = '' }
     $extra = Get-BwMetaExtra $ii $ii.extmetadata
+    # 2026-11-08 两道入库硬闸(用户「严格按照荣誉池的规定选图片」+「手机品牌不能入池」):
+    #   ① EXIF 器材或页面 "Taken with ..." 分类里出现手机品牌 -> 一律不入池;
+    #   ② 走的是荣誉检索式, 但页面 Categories 里没有真实获奖/决赛分类 -> 不入池
+    #      (deepcategory 池里混着参赛图, 不能因为「搜到它」就当获奖图收下)。
+    $camVal = Get-BwCameraModel $ii.metadata
+    if (Test-BwPhoneGear $camVal ([string]$extra.cats)) {
+      Log ('手机品牌器材, 不入池: ' + ([string]$p.title -replace '^File:', '') + ' [' + $camVal + ']')
+      continue
+    }
+    $honorVal = Get-BwHonorLabel ([string]$extra.cats)
+    if ($hq -and -not $honorVal) {
+      Log ('荣誉池命中但页面无真实获奖分类, 不入池: ' + ([string]$p.title -replace '^File:', ''))
+      continue
+    }
     $out += [PSCustomObject]@{
       id     = [string]$p.pageid
       title  = ([string]$p.title) -replace '^File:', ''
@@ -4063,13 +5920,14 @@ function Get-BwCommonsCandidates([string]$kw) {
       lic    = $lic
       artist = $artist.Trim()
       shot   = $shot
-      camera = (Get-BwCameraModel $ii.metadata)
+      camera = $camVal
       origname = [string]$extra.origname
       desc     = [string]$extra.desc
       cats     = [string]$extra.cats
       gps      = [string]$extra.gps
       expo     = [string]$extra.expo
       uploaded = [string]$extra.uploaded
+      honor   = $honorVal
       scaled = $scaled
     }
     if ($out.Count -ge 12) { break }
@@ -4079,6 +5937,7 @@ function Get-BwCommonsCandidates([string]$kw) {
   # scaled(已缓存缩略图) 仍是最优先级, 下载速度不让步。
   $fast = @($out | Where-Object { $_.scaled -and $_.geo }) + @($out | Where-Object { $_.scaled -and -not $_.geo })
   $slow = @($out | Where-Object { -not $_.scaled -and $_.geo }) + @($out | Where-Object { -not $_.scaled -and -not $_.geo })
+  if ($arSkip -gt 0) { Log ('候选阶段 16:9 比例闸筛掉 ' + $arSkip + ' 张(未抓页面未下载)') }
   return @($fast + $slow)
 }
 
@@ -4100,13 +5959,21 @@ function Get-BwPicsumSearch([string]$kw) {
   }
   $k = ([string]$kw).Trim()
   if ($map.ContainsKey($k)) { return [string]$map[$k] }
-  if ($k -match '^[A-Za-z0-9 :>\-]+$') { return $k }   # 用户自己填了英文检索式, 直接用
+  # 2026-11-07 晚: 放开引号/冒号/斜杠/括号, 用户直接往关键词框里贴
+  # `incategory:"..." filew:>2560` 这类检索式时不再被拼成 `city incategory:...`。
+  # 荣誉池别名另有 Get-BwHonorQuery 提前展开, 走不到这里。
+  if ($k -match '^[A-Za-z0-9 :>\-_"/()\.]+$') { return $k }
   return ('city ' + $k)
 }
 # 2026-11-06: 主题词固定时 Commons 每次返回同一批 50 张, 配合"永不重复"去重账本,
 # 几轮之后就会被全部拦掉 —— 池子照样会枯竭。实测 gsroffset 每 +50 返回几乎完全不同的
 # 50 张(相邻页重叠 0~2 张), 所以给每个主题词记一个持久游标(跨后台子进程有效)。
-function Get-BwPicsumOffset([string]$kw) {
+# 2026-11-07 晚: 荣誉池是**静态精选池**, generator=search 固定返回前 20 张,
+# 配合「永不重复」去重账本几十轮就会枯竭。把随拍那套持久游标抽成通用函数给两个源共用:
+#   $bucket 区分来源(同一别名在万象/随拍各记各的页), $step 跟随各自的 gsrlimit,
+#   $maxOff 是绕回上限 —— 荣誉 deepcategory 池实测 offset 500 还有结果、2000 已空,
+#   所以荣誉用 900; 关键词池沿用原来实测过的 4950。
+function Get-BwSrcOffset([string]$kw, [int]$step, [string]$bucket, [int]$maxOff) {
   $off = 0
   try {
     $f = Join-Path (Split-Path ([string]$global:BWSources) -Parent) 'picsum_pages.json'
@@ -4115,26 +5982,47 @@ function Get-BwPicsumOffset([string]$kw) {
       $j = Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json
       if ($j) { foreach ($pr in $j.PSObject.Properties) { $map[[string]$pr.Name] = [int]$pr.Value } }
     }
-    if ($map.ContainsKey($kw)) { $off = [int]$map[$kw] }
-    $next = $off + 50
-    if ($next -gt 4950) { $next = 0 }      # 深翻页有服务端上限, 到顶就绕回第一批
-    $map[$kw] = $next
+    $k = if ($bucket) { $bucket + '|' + $kw } else { [string]$kw }
+    if ($map.ContainsKey($k)) { $off = [int]$map[$k] }
+    if ($step -le 0) { $step = 20 }
+    if ($maxOff -le 0) { $maxOff = 900 }
+    $next = $off + $step
+    if ($next -gt $maxOff) { $next = 0 }   # 到顶绕回第一批, 由去重账本拦掉已收过的
+    $map[$k] = $next
     [System.IO.File]::WriteAllText($f, ($map | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding($false)))
   } catch {}
   return $off
 }
+# 老入口保持原签名与原来的裸 key, 存量 picsum_pages.json 里的游标不会失效。
+function Get-BwPicsumOffset([string]$kw) {
+  return (Get-BwSrcOffset $kw 50 '' 4950)
+}
 function Get-BwPicsumCandidates([string]$kw) {
   $c = Get-BwConfig
+  # 2026-11-08: 候选阶段就用屏幕比例算一次, 供下面的 16:9 提前闸复用。
+  $scrSize = Get-BwScreenSize
+  $srcAr = if ([int]$scrSize.H -gt 0) { [double]$scrSize.W / [double]$scrSize.H } else { 16.0 / 9.0 }
+  $arSkip = 0
+  $minW = Get-BwSrcMinWidth $c 'picsum'
   $w = Get-BwSrcTargetWidth $c 'picsum'
   # 与万象同一道封顶: Commons 对 6000px 原图请求 3840 会触发即时渲染, 实测 80s+ 卡断。
   # 2560 拿的是已缓存缩放图(2~3 MB), 画质门槛一点没降。
   if ($w -gt 2560) { $w = 2560 }
   if (($w -lt 1920) -or ($w -gt 8000)) { $w = 2560 }
-  $q = (Get-BwPicsumSearch $kw) + ' filew:>1920'
+  # 2026-11-07 晚: 荣誉池别名展开成完整检索式(带引号/冒号), 绕过关键词框 40 字截断。
+  # 不是别名时仍走原来的「中文主题词 -> 英文检索式」映射。
+  $hq = Get-BwHonorQuery $kw
+  if ($hq) {
+    $q = $hq + ' filew:>' + [int]$minW
+  } else {
+    $q = (Get-BwPicsumSearch $kw) + ' filew:>' + [int]$minW
+  }
   $eq = [uri]::EscapeDataString($q)
-  $off = Get-BwPicsumOffset $kw
-  # 精确 16:9 合格率实测只有 4~16%, 所以一次取 50 个候选, 不够时由 Invoke-BwSrcFetch
-  # 自动换下一个中文主题词继续凑, 不会在一个词上空转。
+  # 荣誉池用较短的绕回上限(实测 deepcategory 池 offset 2000 已空), 关键词池沿用老游标。
+  if ($hq) { $off = Get-BwSrcOffset $kw 50 'honor-picsum' 900 }
+  else { $off = Get-BwPicsumOffset $kw }
+  # 2026-11-07 晚: 废止「精确 16:9」, 改按裁成 16:9 后有效宽过滤, 合格率实测
+  # 3.3% -> 79.4%。一次取 50 个候选, 不够时由 Invoke-BwSrcFetch 自动换下一个主题词。
   $api = ('https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=' + $eq +
           '&gsrnamespace=6&gsrlimit=50&gsroffset=' + $off + '&prop=imageinfo&iiprop=url%7Cmime%7Csize%7Cextmetadata%7Cmetadata&iiurlwidth=' + $w + '&format=json')
   $txt = Get-BwText $api 25
@@ -4146,12 +6034,18 @@ function Get-BwPicsumCandidates([string]$kw) {
   # 按"作者 + 标题前缀"聚类, 一组只留一张; 同一作者整轮最多 2 张。
   $seriesSeen = @{}; $authorCount = @{}
   foreach ($p in $j.query.pages.PSObject.Properties.Value) {
+    if (-not $p.imageinfo) { continue }   # 2026-11-08 修: 搜索结果里偶有页面无 imageinfo(重定向/已删/NS6非图), 直接索引会抛"无法对 Null 数组进行索引"使整轮抓取中止
     $ii = $p.imageinfo[0]
     if (-not ($ii -and $ii.mime -match 'jpeg|png')) { continue }
     $iw = [int]$ii.width; $ih = [int]$ii.height
-    if ($iw -lt 1920 -or $ih -le 0) { continue }
-    $ar = [double]$iw / [double]$ih
-    if ($ar -lt 1.70 -or $ar -gt 1.85) { continue }      # 用户硬标准: 精确 16:9, 不要宽幅/方图
+    if ($iw -lt [int]$minW -or $ih -le 0) { continue }
+    # 2026-11-07 晚: 与万象同一把尺 —— 只看裁成 16:9 后还剩多少有效宽。
+    # 旧的 1.70~1.85 精确 16:9 窗口把 3:2 / 4:3 的高分获奖图整批错杀; 桌面铺屏本来
+    # 就是填充裁切, 裁完不够宽的(长卷)照样挡掉。落盘还有一道真实像素复核。
+    if ((Get-BwCrop169Width $iw $ih) -lt [int]$minW) { continue }
+    # 2026-11-08 用户「只收 16:9」: 用 Commons 返回的真实宽高在候选阶段提前筛掉非 16:9,
+    # 不再「抓页面 + 翻译 + 下载完再拒」(一轮 3~4 分钟、新增 0 张的主因)。
+    if (([Math]::Abs(([double]$iw / [double]$ih) - $srcAr) / $srcAr) -gt 0.01) { $arSkip++; continue }
     $lic = ''
     if ($ii.extmetadata -and $ii.extmetadata.LicenseShortName) { $lic = [string]$ii.extmetadata.LicenseShortName.value }
     $lu = $lic.ToUpper()
@@ -4160,7 +6054,12 @@ function Get-BwPicsumCandidates([string]$kw) {
     $shot = ''
     if ($ii.extmetadata -and $ii.extmetadata.DateTimeOriginal) { $shot = Get-BwShotDate ([string]$ii.extmetadata.DateTimeOriginal.value) }
     if (-not $shot) { continue }
-    $thumb = if ($ii.thumburl) { [string]$ii.thumburl } else { [string]$ii.url }
+    # 与万象同款取图决策: 读 thumburl 里的真实宽度档算裁后有效宽, 不够就走原图。
+    # 随拍放宽比例后也会遇到超宽长卷, 不能直接用 2560 宽缩略图(裁完会掉到门槛以下)。
+    # 2026-11-08 用户「原汁原味, 原始图片文件一个像素都不动」: 直接取 Commons 页面原图 url,
+    # 不再请求 2560/3840 缩略图。尺寸门槛按 API 返回的原始文件宽高(iw/ih)判。
+    $thumb = [string]$ii.url
+    if (-not $thumb) { $thumb = Get-BwCommonsThumbUrl $ii $iw $ih ([int]$minW) }
     if (-not $thumb) { continue }
     $artist = ''
     if ($ii.extmetadata -and $ii.extmetadata.Artist) { $artist = ([string]$ii.extmetadata.Artist.value -replace '<[^>]+>', '') }
@@ -4194,6 +6093,17 @@ function Get-BwPicsumCandidates([string]$kw) {
     }
     $scaled = [bool]($thumb -match 'thumb\.wikimedia\.org')
     $extra = Get-BwMetaExtra $ii $ii.extmetadata
+    # 2026-11-08 同万象: 手机品牌器材禁入 + 荣誉检索式必须有真实获奖分类(见上面那段说明)。
+    $camVal = Get-BwCameraModel $ii.metadata
+    if (Test-BwPhoneGear $camVal ([string]$extra.cats)) {
+      Log ('手机品牌器材, 不入池: ' + ([string]$p.title -replace '^File:', '') + ' [' + $camVal + ']')
+      continue
+    }
+    $honorVal = Get-BwHonorLabel ([string]$extra.cats)
+    if ($hq -and -not $honorVal) {
+      Log ('荣誉池命中但页面无真实获奖分类, 不入池: ' + ([string]$p.title -replace '^File:', ''))
+      continue
+    }
     $out += [PSCustomObject]@{
       id      = [string]$p.pageid
       title   = ([string]$p.title) -replace '^File:', ''
@@ -4204,13 +6114,14 @@ function Get-BwPicsumCandidates([string]$kw) {
       lic     = $lic
       artist  = $artist.Trim()
       shot    = $shot
-      camera  = (Get-BwCameraModel $ii.metadata)
+      camera  = $camVal
       origname = [string]$extra.origname
       desc     = [string]$extra.desc
       cats     = [string]$extra.cats
       gps      = [string]$extra.gps
       expo     = [string]$extra.expo
       uploaded = [string]$extra.uploaded
+      honor   = $honorVal
       scaled  = $scaled
     }
     if ($out.Count -ge 12) { break }
@@ -4218,6 +6129,7 @@ function Get-BwPicsumCandidates([string]$kw) {
   # 与万象同口径: 有国家/地名的城市人文图优先, 但不牺牲已缓存缩略图的下载速度
   $fast = @($out | Where-Object { $_.scaled -and $_.geo }) + @($out | Where-Object { $_.scaled -and -not $_.geo })
   $slow = @($out | Where-Object { -not $_.scaled -and $_.geo }) + @($out | Where-Object { -not $_.scaled -and -not $_.geo })
+  if ($arSkip -gt 0) { Log ('候选阶段 16:9 比例闸筛掉 ' + $arSkip + ' 张(未抓页面未下载)') }
   return @($fast + $slow)
 }
 
@@ -4292,10 +6204,14 @@ function Get-BwRotPool {
   $m = Get-BwMode
   if ($m -eq 'commons') { return @(Get-BwSrcFiles (Get-BwSrcDir $c 'commons')) }
   if ($m -eq 'picsum')  { return @(Get-BwSrcFiles (Get-BwSrcDir $c 'picsum')) }
-  # focus(默认): 聚焦 + 本地文件夹 + 必应库(Get-BwFreshQueue 里并进来)。
-  # 两个新图源各自成模式, 不再混进聚焦池 —— 用户要求"每个独立的源全部独立循环"。
-  # 老配置里若留着 src_*_on=true 也不再生效, 避免同一张图跨模式重复出现。
-  $out = @(Get-BwSpotlightAll)
+  # focus(默认): 已开启的新图源库(随拍/万象, 均已三要素命名) + 本地文件夹。
+  # 2026-11-08: 必应/聚焦是早期老库(名字是诗意标题, 不是国家+地理+主题), 按用户要求移出轮换,
+  #   不再混入严格三要素轮播; 两个老库文件原地保留, 仅不参与轮换。
+  # 两个新图源各自成模式时由上面的分支走各自的库, 这里只管 focus 混合池的组成。
+  $out = @()
+  foreach ($def in @(Get-BwSourceDefs)) {
+    if (Get-BwSrcEnabled $c $def.Key) { $out += @(Get-BwSrcFiles (Get-BwSrcDir $c $def.Key)) }
+  }
   # 2026-10-24: 本地文件夹图源也进轮换池。没设置这个图源时 Get-BwLocalFiles 返回空数组,
   # 对老用户等于没加这一行 —— 轮换顺序、队列、收藏全都不受影响。
   $out += @(Get-BwLocalFiles $c)
@@ -4362,6 +6278,8 @@ function Get-BwSrcStatusLine([string]$key) {
   if ($fullW -gt 0) { $fullTxt = ('>=' + $fullW) }
   $gateTxt = ' · 门槛 ' + $minTxt + '(进库) / ' + $fullTxt + '(铺满)'
   if (Get-BwSrcLandscapeOnly $c $key) { $gateTxt += ' · 只收横图' }
+  $g = Get-BwSrcGate $c $key
+  if ([int]$g.Crop169MinWidth -gt 0) { $gateTxt += ' · 按裁成16:9后有效宽' }
   return ([string]$def.Name + ' ' + $on + ' · 库 ' + $files.Count + ' / ' + $capTxt + $gateTxt + ' · 没轮到过 ' + $fresh + ' 张 · ' + $mode)
 }
 # ---- 单个源的抓取 ----
@@ -4388,7 +6306,7 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
     if (-not $dir) { Log ([string]$def.Name + ' 源没有配置库目录, 跳过'); return @() }
     [void](New-BwDir $dir)
     # 2026-11-05: 顺手把本库里"光写源名"的旧图补成中文描述名(每库每进程只扫一次)
-    [void](Invoke-BwSrcGenericNameFix $dir)
+    # 旧译名修正在后台补货末尾分批执行，前台缺图时不等待旧图翻译。
     $now = Get-Date
     $all = Get-BwSrcRecs
     $rec = Get-BwSrcRec $all $key
@@ -4473,6 +6391,12 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
     $ki = 0
     try { $ki = [int]$rec.kw_i } catch { $ki = 0 }
     if ($ki -lt 0) { $ki = 0 }
+    # 2026-11-08 修复: 库整个空了(被清理/重置)但 seen 账本还满 -> 去重把补货憋死(空库死锁)。
+    # 空库时本轮越过本源 seen / seenCommonsIds 去重, 先让库补起来; 账本随新图重新积累。
+    if ($have.Count -eq 0) {
+      $seenMap = @{}; $seenCommonsIds = @{}
+      Log ([string]$def.Name + ' 源库为空: 本轮越过 seen 去重补货(解除空库死锁)')
+    }
     # 一轮最多用掉"每个关键词一批候选": 候选翻完就换下一个关键词, 全翻完就收工 ——
     # 不会在一个词上空转, 也不会把同一个搜索请求打十几遍。
     $cands = @()
@@ -4514,38 +6438,90 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
       # 2026-11-06 尊重作者的拍摄时间: 拿不到 DateTimeOriginal 的候选不落盘。
       $shotDay = [string]$asset.shot
       if ($shotDay -notmatch '^\d{4}-\d{2}-\d{2}$') { $fail++; continue }
-      # 2026-11-06 用户「所有的照片都要按照页面真实描述改名字，包括以后的所有照片」：
-      # 名字只认这张照片自己的页面原文（作品名/介绍/分类 → 主体词典），
-      # **绝不**再拿本轮搜索关键词兜底 —— 「瑞典的雾林」就是关键词顶上去的产物，
-      # 而页面原文写的是「雾中的木制防波堤」。认不出主体就留空，
-      # 由 Get-BwSrcName 退回照片自己的作品名（英文原名），宁可原名也不编。
+      # 2026-11-06 用户「三件事一起做」之一：同一天、同一处的图只留一张。
+      # 判据见 Get-BwSceneKey（拍摄日 + 地点 / 作品名前缀），库里已有就跳过这一张。
+      try {
+        $geoKey = ''
+        try { $geoKey = Get-BwGeoLabel ((([string]$asset.desc) + ' ' + ([string]$asset.origname))) } catch {}
+        $sceneKey = Get-BwSceneKey $shotDay $geoKey ([string]$asset.origname)
+        if ($sceneKey) {
+          if (-not $sceneSeen) { $sceneSeen = Get-BwDirSceneKeys $dir }
+          if ($sceneSeen.ContainsKey($sceneKey)) {
+            $skip++
+            Log ('同场景已有一张, 跳过: ' + $sceneKey + ' <- ' + [string]$asset.origname)
+            Start-Sleep -Milliseconds 200
+            continue
+          }
+          $sceneSeen[$sceneKey] = 'pending'
+        }
+      } catch {}
+      # 三要素先读这张图片自己的 Commons 页面；候选接口残值不能冒充页面正文。
+      $original = [string]$asset.origname
+      if (-not $original) { $original = [string]$asset.title }
+      $page = $null
+      try { $page = Fetch-BwCommonsPage ([string]$asset.link) } catch {}
+      if (-not $page -or $page.ok -ne $true -or (-not $page.desc -and -not $page.cats)) {
+        $fail++
+        Log ('来源页未读到正文，暂缓命名/下载并留待重试: ' + $original) 'WARN'
+        if ($sceneKey -and $sceneSeen -and $sceneSeen.ContainsKey($sceneKey) -and $sceneSeen[$sceneKey] -eq 'pending') { $sceneSeen.Remove($sceneKey) }
+        continue
+      }
+      $nameText = $original + ' ' + [string]$page.desc + ' ' + [string]$page.cats
+      $caption = $null
+      try { $caption = Get-BwPageCaption $original ([string]$page.desc) ([string]$page.cats) } catch {}
+      # 2026-11-08 用户「原汁原味, 包括图片的名字」+「半天没有图片进来」:
+      # 名字只取这张图自己的 Commons 页面(译文或原题), 不拼主题词、不补地理、不看图形容、不为通顺改写。
+      # 删掉「三要素未齐就跳过候选」—— 它一轮拦掉 76 个候选, 是空库无限重试的主因。
       $subj = ''
-      # 2026-11-06 用户「直接看页面介绍最准确」：名字就是这张照片页面原文的译文，
-      # 译文取自它自己的作品名/介绍（Get-BwPageName），翻不出来就留空退回英文原名。
-      try { $subj = Get-BwPageName ([string]$asset.origname) ([string]$asset.desc) } catch {}
+      if ($caption) { $subj = [string]$caption.zhname }
+      # 页面译文被闸门清空时, 用页面字段重组三要素(每词都有页面出处); 仍不成就把原题忠实译成中文。
+      if (-not $subj) {
+        $subj = New-BwPageTriadName $original ([string]$page.desc) ([string]$page.cats) ([string]$caption.zhdesc)
+      }
+      if (-not $subj) { $subj = Get-BwLiteralPageName $original ([string]$page.desc) ([string]$page.cats) }
+      # 2026-11-08 一句话规则: 池子里的图片名字只能是中文。译不出中文的图不进池子。
+      # 闸放在抓完页面之后、下载原图之前: 不合格就不下载、不落盘, 直接换下一张候选。
+      if (-not (Test-BwPoolChineseName $subj $original ([string]$page.desc) ([string]$page.cats))) {
+        Log ('译不出中文名, 不入池: ' + $original) 'WARN'
+        if ($sceneKey -and $sceneSeen -and $sceneSeen.ContainsKey($sceneKey) -and $sceneSeen[$sceneKey] -eq 'pending') { $sceneSeen.Remove($sceneKey) }
+        continue
+      }
+      # 2026-11-08 用户「逐张核定后入池」: 名字必须先在 approved_names.tsv 里按页面原文核定过。
+      # 未核定的候选只记入 pending_names.tsv, 不下载、不落盘 —— 机翻腔名字绝不自己进池子。
+      $approved = Get-BwApprovedName $original
+      if ($approved) {
+        $subj = $approved
+      } else {
+        Add-BwPendingName $original $subj ([string]$page.desc) ([string]$page.cats) ([string]$asset.link) ([string]$asset.camera)
+        Log ('待逐张核定, 暂不入池: ' + $original)
+        if ($sceneKey -and $sceneSeen -and $sceneSeen.ContainsKey($sceneKey) -and $sceneSeen[$sceneKey] -eq 'pending') { $sceneSeen.Remove($sceneKey) }
+        continue
+      }
       $path = Join-Path $dir (Get-BwSrcName $key $token ([string]$asset.title) ([string]$asset.url) $subj $shotDay)
+      # 文件名与图片内嵌译名必须同源同句；页面词典兜底成功时也写入三要素名。
+      $capVer = '2'
       # date = 作者拍摄日(与文件名前缀一致), shot_date 再显式记一份, added_date = 本机入库日。
       # 三者不混; 元数据写在图片自己身上, 拷走也不丢拍摄时间。
+      # 2026-11-06 用户「三件事一起做」之二：EXIF 没有 GPS 时，退到页面分类的坐标（带 ≈ 标记近似）。
+      $gpsVal = [string]$asset.gps
+      if (-not $gpsVal) { try { $gpsVal = Get-BwCatCoord ([string]$asset.cats) } catch {} }
       $m = @{ date=$shotDay; shot_date=$shotDay; added_date=(Get-Date -Format 'yyyy-MM-dd');
               title=[string]$asset.title; copyright=[string]$asset.copy; author=[string]$asset.author;
               camera=[string]$asset.camera;
-              origname=[string]$asset.origname; desc=[string]$asset.desc; cats=[string]$asset.cats;
-              gps=[string]$asset.gps; expo=[string]$asset.expo; uploaded=[string]$asset.uploaded;
-              zhname=$subj; zhdesc=(Get-BwZhText ([string]$asset.desc));
+              origname=[string]$asset.origname; desc=[string]$page.desc; cats=[string]$page.cats;
+              gps=$gpsVal; expo=[string]$asset.expo; uploaded=[string]$asset.uploaded;
+              zhname=$subj; zhdesc=[string]$caption.zhdesc; caption_version=$capVer;
+              honor=[string]$asset.honor;
               source_type=[string]$def.Name; source_url=[string]$asset.url; source_link=[string]$asset.link }
       # 单张下载: 超时 $toSec 秒(默认 20, 可配), 宽度不到门槛 / 宽高比不达标的不落盘。
       # 真实分辨率由 Save-BwFile 用 System.Drawing 量, 写进日志与图片元数据。
       # -TotalDeadline: 新图源走"总时长硬期限"(慢图床到点就放弃), 必应/聚焦那条路不传这个开关。
       $got = Save-BwFile -urls @([string]$asset.url) -path $path -meta $m -MaxBytes $global:BWSrcMaxBytes `
-                          -TimeoutSec $toSec -MinWidth ([int]$gate.MinWidth) -MinAspect ([double]$gate.MinAspect) -MaxAspect ([double]$gate.MaxAspect) -TotalDeadline
+                          -TimeoutSec $toSec -MinWidth ([int]$gate.MinWidth) -MinAspect ([double]$gate.MinAspect) -MaxAspect ([double]$gate.MaxAspect) -Crop169MinWidth ([int]$gate.Crop169MinWidth) -TotalDeadline
       $dlSt = [string]$global:BWLastDlStatus
       if ($got) {
-        # 2026-11-05: 新图自动补上画面色调词, 名字纯中文、每张不重样; 失败也不影响入库
-        # 2026-11-06 例外: Commons 原始元数据里连国家/地理都没有时才走「看图编」(-VisualFallback);
-        # 有地名的一律保持原名直译, 不叠任何看图词。
-        $noGeo = $true
-        try { if ($cd.PSObject.Properties['geo'] -and ([string]$cd.geo)) { $noGeo = $false } } catch {}
-        $path = Set-BwSrcDescriptiveName $path -VisualFallback:$noGeo
+        # 新图已用自己的 Commons 页面通过三要素终检，磁盘名与内嵌译名同源；
+        # 不再调用旧图补名路径覆盖它。旧库的待补记录仍由后台扫描分批处理。
         $ok++
         $toStreak = 0
         if ($isReuse) { $reuse++ }
@@ -4558,7 +6534,7 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
           $haveCommonsIds[[string]$cid] = $true
         }
         if (-not $Quiet) { Write-Host ('    OK  [' + [string]$def.Name + '] ' + (Split-Path $path -Leaf) + '  ' + (Get-BwImageDim $path)) }
-      } elseif (($dlSt -eq 'toosmall') -or ($dlSt -eq 'aspect') -or ($dlSt -eq 'toobig')) {
+      } elseif (($dlSt -eq 'toosmall') -or ($dlSt -eq 'aspect') -or ($dlSt -eq 'toobig') -or ($dlSt -eq 'blur')) {
         # 画质门槛筛掉的: 不是网络失败, 是"这张不合用"。单独记一笔, 日志里分得清。
         $qskip++
         $skip++
@@ -4594,7 +6570,13 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
     Save-BwSrcRecs $all
     $extra = ''
     if ($reuse -gt 0) { $extra = ', 回收老图 ' + $reuse + ' 张' }
-    if ($qskip -gt 0) { $extra += ', 画质门槛筛掉 ' + $qskip + ' 张(宽<' + [int]$gate.MinWidth + ' 或比例不在 ' + [double]$gate.MinAspect + '~' + [double]$gate.MaxAspect + ' 之间)' }
+    if ($qskip -gt 0) {
+      if ([int]$gate.Crop169MinWidth -gt 0) {
+        $extra += ', 画质门槛筛掉 ' + $qskip + ' 张(裁成 16:9 后有效宽<' + [int]$gate.Crop169MinWidth + ')'
+      } else {
+        $extra += ', 画质门槛筛掉 ' + $qskip + ' 张(宽<' + [int]$gate.MinWidth + ' 或比例不在 ' + [double]$gate.MinAspect + '~' + [double]$gate.MaxAspect + ' 之间)'
+      }
+    }
     if (($ok -eq 0) -and ($skip -eq 0) -and ($tries -eq 0)) {
       Log ([string]$def.Name + ' 抓取: 一个候选都没拿到(网络或接口异常, 不影响别的源)') 'WARN'
     } elseif ([string]$rec.mode -eq 'pool_end') {
@@ -4889,13 +6871,8 @@ function Get-BwFreshQueue($s) {
       # 图池大一截、重复来得更慢; "每日一图"照旧, 不受影响。
       # 必应库并进队列只在 focus(混合)模式做; commons/picsum 是"独立模式", 池子里只有那一个源的图,
       # 绝不掺必应(用户要求"每个独立的源全部独立循环")。
+      # 2026-11-08: 必应库(老库, 诗意标题非三要素)按用户要求移出轮换, 不再并入队列。
       $bingAdd = @()
-      if ((Get-BwMode) -eq 'focus') {
-        foreach ($f in @(Get-BwBingAll)) {
-          $bn = [string]$f.Name
-          if ($bn -and ($names -notcontains $bn)) { $names += $bn; $bingAdd += $bn }
-        }
-      }
       $allNames = @($names)
       $now2 = Get-Date
       $minDays2 = Get-BwRecycleMinDays (Get-BwConfig)
@@ -5171,6 +7148,7 @@ function Invoke-BwSpotBackfill([int]$count, [switch]$Force, [string]$Mode) {
     $mk = Get-BwModeSrcKey
     if ($mk) {
       [void](Invoke-BwSrcFetch -key $mk -count $count -Quiet -Force:$Force -IgnoreCap:$Force)
+      [void](Invoke-BwSrcGenericNameFix (Get-BwSrcDir $c $mk))
       $s = Get-BwState
       if ($s) {
         $q0 = @($s.queue | Where-Object { $_ })
@@ -5285,6 +7263,14 @@ function Get-BwNextWall($s) {
         # 最后一道闸: 不管前面哪里漏了, 设上桌面之前必须再验一遍 ——
         # 截断的图进了队列/库的话, 在这里隔离掉、换下一张。
         if (-not (Test-BwImageOk $p)) { [void](Move-BwBadImage $p); continue }
+        # 2026-11-08: 轮换也只收 16:9。库里遗留的非 16:9 老图不再上桌面。
+        $gd = Get-BwImageSize $p
+        if ($gd -and ([int]$gd.H -gt 0)) {
+          $gs = Get-BwScreenSize
+          $sar = if ([int]$gs.H -gt 0) { [double]$gs.W / [double]$gs.H } else { 16.0 / 9.0 }
+          $iar = [double]$gd.W / [double]$gd.H
+          if (([Math]::Abs($iar - $sar) / $sar) -gt 0.01) { continue }
+        }
         $s.queue = $q; return (Get-Item -LiteralPath $p)
       }
       # 这张被删了, 丢掉接着取下一张
@@ -5515,6 +7501,8 @@ function Get-BwWallStyle {
     'center'  { return @{ Style = '0';  Tile = '0'; Label = '居中' } }
     'tile'    { return @{ Style = '0';  Tile = '1'; Label = '平铺' } }
     'span'    { return @{ Style = '22'; Tile = '0'; Label = '跨区' } }
+    # auto(智能): 合成链已停用, 原始文件直出。样式恢复用户原值 10/0, 不擅自替用户改填充方式。
+    'auto'    { return @{ Style = '10'; Tile = '0'; Label = '智能(按图自适应)' } }
     # keep 跟随系统: 程序**一个字节都不写**这两个注册表值(见 Set-BwDesktopWallpaper)。
     # 用来兑现"恢复我原来的填充方式"—— 还原之后再换图, 也不该又把用户的设置改回去。
     'keep'    { return @{ Style = '';   Tile = '';  Label = '跟随系统(不改)' } }
@@ -5695,9 +7683,9 @@ function Get-BwHash([string]$s) {
 function Get-BwMetaPayload($info) {
   # 2026-11-06: 两个新图源额外写 shot_date(作者拍摄日)、added_date(本机入库日)、
   # author(完整作者名)。CC BY / CC BY-SA 的署名要用完整标识, 缩写不算合规署名。
-  $o = [ordered]@{ app = '桌面壁纸'; date = ''; shot_date = ''; added_date = ''; title = ''; copyright = ''; author = ''; camera = ''; origname = ''; desc = ''; cats = ''; gps = ''; expo = ''; uploaded = ''; zhname = ''; zhdesc = ''; source_type = ''; source_url = ''; source_link = ''; width = 0; height = 0 }
+  $o = [ordered]@{ app = '桌面壁纸'; date = ''; shot_date = ''; added_date = ''; title = ''; copyright = ''; author = ''; camera = ''; origname = ''; desc = ''; cats = ''; gps = ''; expo = ''; uploaded = ''; zhname = ''; zhdesc = ''; caption_version = ''; honor = ''; source_type = ''; source_url = ''; source_link = ''; width = 0; height = 0 }
   if ($info) {
-    foreach ($k in @('date', 'shot_date', 'added_date', 'title', 'copyright', 'author', 'camera', 'origname', 'desc', 'cats', 'gps', 'expo', 'uploaded', 'zhname', 'zhdesc', 'source_type', 'source_url', 'source_link')) {
+    foreach ($k in @('date', 'shot_date', 'added_date', 'title', 'copyright', 'author', 'camera', 'origname', 'desc', 'cats', 'gps', 'expo', 'uploaded', 'zhname', 'zhdesc', 'caption_version', 'honor', 'source_type', 'source_url', 'source_link')) {
       if ($info.ContainsKey($k)) { $o[$k] = [string]$info[$k] }
     }
     # 2026-10-09: 真实分辨率也写进去(用户要求"每张图落盘时把宽度 x 高度写进元数据/日志")。
@@ -5747,6 +7735,8 @@ function Read-BwImageMeta([string]$path) {
               uploaded    = [string]$o.uploaded
               zhname      = [string]$o.zhname
               zhdesc      = [string]$o.zhdesc
+              caption_version = [string]$o.caption_version
+              honor       = [string]$o.honor
               width       = [int]$o.width
               height      = [int]$o.height
             }
@@ -5758,16 +7748,44 @@ function Read-BwImageMeta([string]$path) {
   } catch {}
   return $null
 }
-function Write-BwImageMeta([string]$path, [hashtable]$info) {
+function Write-BwImageMeta([string]$path, [hashtable]$info, [switch]$ReplaceCaption) {
   if (-not ($path -and $info)) { return $false }
   if (-not (Test-Path -LiteralPath $path)) { return $false }
-  # 已经写过的不再重复插一段 (注释段可以有多段, 重复写会越攒越多)
-  if (Read-BwImageMeta $path) { return $true }
+  # 修正旧译名只替换自己的COM段，不改文件名、像素、作者或其他EXIF。
+  $oldMeta = Read-BwImageMeta $path
+  if ($oldMeta -and -not $ReplaceCaption) { return $true }
   try {
     $pay = [System.Text.Encoding]::UTF8.GetBytes((Get-BwMetaPayload $info))
     if ($pay.Length -gt 65500) { return $false }
     $b = [System.IO.File]::ReadAllBytes($path)
     if ($b.Length -lt 4 -or $b[0] -ne 0xFF -or $b[1] -ne 0xD8) { return $false }
+    if ($oldMeta -and $ReplaceCaption) {
+      $i = 2; $removed = $false
+      while ($i -lt ($b.Length - 3)) {
+        if ($b[$i] -ne 0xFF -or $b[$i+1] -eq 0xDA) { break }
+        $len = ([int]$b[$i+2] * 256) + [int]$b[$i+3]
+        if ($len -lt 2 -or ($i + $len + 2) -gt $b.Length) { break }
+        if ($b[$i+1] -eq 0xFE) {
+          $raw = [Text.Encoding]::UTF8.GetString($b, $i+4, $len-2)
+          $json = $null
+          try { $json = $raw | ConvertFrom-Json } catch {}
+          if ($json -and $json.app -in @('桌面壁纸','微软壁纸助手')) {
+            # 保留未来版本的未知元数据字段，只替换明确传入的内容。
+            $merged = @{}
+            foreach ($pr in $json.PSObject.Properties) { $merged[$pr.Name] = $pr.Value }
+            foreach ($k in $info.Keys) { $merged[$k] = $info[$k] }
+            $pay = [Text.Encoding]::UTF8.GetBytes(($merged | ConvertTo-Json -Depth 12 -Compress))
+            if ($pay.Length -gt 65500) { return $false }
+            $without = New-Object byte[] ($b.Length - $len - 2)
+            [Array]::Copy($b, 0, $without, 0, $i)
+            [Array]::Copy($b, $i+$len+2, $without, $i, $b.Length-$i-$len-2)
+            $b = $without; $removed = $true; break
+          }
+        }
+        $i += $len + 2
+      }
+      if (-not $removed) { return $false }
+    }
     # 插入点: SOI 之后; 如果紧跟着 APP0 (JFIF), 就插在它后面, 顺序才合规
     $at = 2
     if ($b[2] -eq 0xFF -and $b[3] -eq 0xE0) { $at = 4 + ($b[4] * 256) + $b[5] }
@@ -5780,9 +7798,17 @@ function Write-BwImageMeta([string]$path, [hashtable]$info) {
     [Array]::Copy($b, 0, $out, 0, $at)
     [Array]::Copy($seg, 0, $out, $at, $seg.Length)
     [Array]::Copy($b, $at, $out, ($at + $seg.Length), ($b.Length - $at))
-    $tmp = $path + '.metatmp'
-    [System.IO.File]::WriteAllBytes($tmp, $out)
-    Move-Item -LiteralPath $tmp -Destination $path -Force
+    $tmp = $path + '.' + [guid]::NewGuid().ToString('N') + '.metatmp'
+    $stamp = [System.IO.File]::GetLastWriteTimeUtc($path)
+    try {
+      [System.IO.File]::WriteAllBytes($tmp, $out)
+      if ($ReplaceCaption) {
+        # PowerShell 会把 $null 当空字符串递给第三个参数，.NET 判「路径形式不合法」；
+        # 本仓库另两处原子替换都用 [NullString]::Value（见 677 / 1425 行），这里保持一致。
+        [System.IO.File]::Replace($tmp, $path, [NullString]::Value)
+        [System.IO.File]::SetLastWriteTimeUtc($path, $stamp)
+      } else { Move-Item -LiteralPath $tmp -Destination $path -Force }
+    } finally { if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue } }
     return $true
   } catch { return $false }
 }
@@ -5964,7 +7990,64 @@ function Save-BwUrlToFile([string]$u, [string]$tmp, [int]$TimeoutSec) {
     if ($resp) { $resp.Dispose() }
   }
 }
-function Save-BwFile([string[]]$urls, [string]$path, [hashtable]$meta = $null, [int64]$MaxBytes = 0, [int]$TimeoutSec = 300, [int]$MinWidth = 0, [double]$MinAspect = 0, [double]$MaxAspect = 0, [switch]$TotalDeadline) {
+# 2026-11-08: 清晰度(模糊)闸门 —— 技术达标(分辨率够)但糊/抖动/失焦的图挡在入库前。
+# 用拉普拉斯方差(Laplacian variance)当模糊度量: 边缘越锐、方差越大; 运动模糊/失焦的方差塌到很低。
+# 图先缩到长边 512 算, 既快又把"原图尺寸不同"带来的量纲差抹平, 阈值好定。
+$global:BWBlurMin = 100  # 清晰度闸门: 拉普拉斯方差低于此值的"糊/失焦"图不入库。标定: 池内 35 张清晰图方差最低 210,
+                          #   严重糊图(1/16 降采样级)塌到 50~120, 故 100 能拦严重糊图又不误杀清晰风景图。调参只动这一行。
+if (-not ('BwQuality' -as [type])) {
+  Add-Type -TypeDefinition @'
+using System;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
+public static class BwQuality {
+  public static double GetLaplacianVariance(string path) {
+    using (var bmp = new Bitmap(path)) {
+      int w = bmp.Width, h = bmp.Height;
+      int maxSide = 512;
+      int dw = w, dh = h;
+      if (w >= h && w > maxSide) { dw = maxSide; dh = (int)(h * (double)maxSide / w); }
+      else if (h > w && h > maxSide) { dh = maxSide; dw = (int)(w * (double)maxSide / h); }
+      using (var img = new Bitmap(bmp, new System.Drawing.Size(dw, dh))) {
+        var bd = img.LockBits(new Rectangle(0, 0, dw, dh), ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
+        int stride = bd.Stride;
+        int bytes = stride * dh;
+        byte[] data = new byte[bytes];
+        Marshal.Copy(bd.Scan0, data, 0, bytes);
+        img.UnlockBits(bd);
+        double sum = 0, sumSq = 0; long count = 0;
+        for (int y = 1; y < dh - 1; y++) {
+          for (int x = 1; x < dw - 1; x++) {
+            int i = y * stride + x * 3;
+            double p  = 0.299 * data[i + 2] + 0.587 * data[i + 1] + 0.114 * data[i];
+            double up = 0.299 * data[(y - 1) * stride + x * 3 + 2] + 0.587 * data[(y - 1) * stride + x * 3 + 1] + 0.114 * data[(y - 1) * stride + x * 3];
+            double dn = 0.299 * data[(y + 1) * stride + x * 3 + 2] + 0.587 * data[(y + 1) * stride + x * 3 + 1] + 0.114 * data[(y + 1) * stride + x * 3];
+            double lf = 0.299 * data[y * stride + (x - 1) * 3 + 2] + 0.587 * data[y * stride + (x - 1) * 3 + 1] + 0.114 * data[y * stride + (x - 1) * 3];
+            double rt = 0.299 * data[y * stride + (x + 1) * 3 + 2] + 0.587 * data[y * stride + (x + 1) * 3 + 1] + 0.114 * data[y * stride + (x + 1) * 3];
+            double lap = 4 * p - up - dn - lf - rt;
+            sum += lap; sumSq += lap * lap; count++;
+          }
+        }
+        if (count == 0) { return 0; }
+        double mean = sum / count;
+        return sumSq / count - mean * mean;
+      }
+    }
+  }
+}
+'@ -ReferencedAssemblies @('System.Drawing')
+}
+function Test-BwQualityGate([string]$path) {
+  # 返回 $false = 太糊, 不入库; $true = 通过(或无法判定时放行, 避免误杀)。
+  if (-not (Test-Path -LiteralPath $path)) { return $true }
+  try {
+    $score = [BwQuality]::GetLaplacianVariance($path)
+    if (($score -is [double]) -and ($score -lt $global:BWBlurMin)) { return $false }
+    return $true
+  } catch { return $true }
+}
+function Save-BwFile([string[]]$urls, [string]$path, [hashtable]$meta = $null, [int64]$MaxBytes = 0, [int]$TimeoutSec = 300, [int]$MinWidth = 0, [double]$MinAspect = 0, [double]$MaxAspect = 0, [int]$Crop169MinWidth = 0, [switch]$TotalDeadline) {
   # 试运行: 只说一声, 一张都不下。-DryRun 的意思就是"什么都不改",
   # 少了这道闸, 后台补漏 (Invoke-BwBackfill) 在试运行时照样会真去下载。
   if ($global:BWDry) { Log ('试运行: 本应下载 -> ' + (Split-Path $path -Leaf)); return $false }
@@ -5974,6 +8057,13 @@ function Save-BwFile([string[]]$urls, [string]$path, [hashtable]$meta = $null, [
   # 为什么必须分出来: 那种慢图床, "超时"和"图不合格"要做的事完全不同 ——
   # 前者要退避, 后者要接着翻下一张。老的两源不看这个字段, 行为一个字没变。
   $global:BWLastDlStatus = 'fail'
+  # 2026-11-08 落盘前最后一道闸(覆盖所有入库路径, 含强制落库脚本):
+  # 摄影器材是手机品牌的照片一律不落盘 —— 连 .part 都不下载, 不占库容不进队列。
+  if ($meta -and (Test-BwPhoneGear ([string]$meta.camera) ([string]$meta.cats))) {
+    Log ('手机品牌器材, 不落盘: ' + (Split-Path $path -Leaf) + ' [' + [string]$meta.camera + ']')
+    $global:BWLastDlStatus = 'phone'
+    return $false
+  }
   # 先落地成 .part, 确认是张能用的图再改名进库。
   # 以前直接写到目标名: 下载到一半被截断 / 拿到的是 HTML 错误页(同样超过 100KB),
   # 半成品会留在图库里, 被计入库容, 甚至被挑去设为壁纸 —— 桌面直接黑掉或花掉。
@@ -6007,10 +8097,26 @@ function Save-BwFile([string[]]$urls, [string]$path, [hashtable]$meta = $null, [
           $global:BWLastDlStatus = 'badimage'
           continue
         }
+        # 2026-11-08 用户定死「只收 16:9」: 与屏幕比例差 >1% 的图一律不落盘。
+        # 4:3 按用户口径视为手机片; 3:2 / 竖幅 / 超宽同理 —— 上桌面必然要裁剪或补边。
+        # 覆盖全部入库路径(必应/聚焦/commons/picsum/强制落库), 不看调用方传没传门槛参数。
+        try { if ($global:BWArtDimCache) { [void]$global:BWArtDimCache.Remove([string]$tmp) } } catch { }
+        $gateDim = Get-BwImageSize $tmp
+        if ($gateDim -and ([int]$gateDim.H -gt 0)) {
+          $gateScr = Get-BwScreenSize
+          $gateSar = if ([int]$gateScr.H -gt 0) { [double]$gateScr.W / [double]$gateScr.H } else { 16.0 / 9.0 }
+          $gateIar = [double]$gateDim.W / [double]$gateDim.H
+          if (([Math]::Abs($gateIar - $gateSar) / $gateSar) -gt 0.01) {
+            Log ('比例 ' + $gateIar.ToString('0.000') + ' != 屏幕 ' + $gateSar.ToString('0.000') + ' (只收 16:9), 跳过不落盘: ' + (Split-Path $path -Leaf))
+            Remove-BwFile $tmp
+            $global:BWLastDlStatus = 'aspect'
+            continue
+          }
+        }
         # 2026-10-09 画质门槛(用户要求"门槛 1600 / 满屏线 2560"): 拿**真实分辨率**判,
         # 不看接口自称的尺寸。不达标的图就地丢掉 —— 不落盘、不进库、不占库容。
         # 判定放在"校验过是张完整图"之后: 截断的半张图读出来的宽度是假的, 不能拿来判门槛。
-        if (($MinWidth -gt 0) -or ($MinAspect -gt 0) -or ($MaxAspect -gt 0)) {
+        if (($MinWidth -gt 0) -or ($MinAspect -gt 0) -or ($MaxAspect -gt 0) -or ($Crop169MinWidth -gt 0)) {
           # .part 是**临时文件名**: 同一个名字先后可能装过两张不同的图(前一次失败重下),
           # 分辨率缓存里那份不算数, 先把它抹掉再量 —— 不然门槛会拿上一张的尺寸做判断。
           try { if ($global:BWArtDimCache) { [void]$global:BWArtDimCache.Remove([string]$tmp) } } catch { }
@@ -6027,7 +8133,16 @@ function Save-BwFile([string[]]$urls, [string]$path, [hashtable]$meta = $null, [
             $global:BWLastDlStatus = 'toosmall'
             continue
           }
-          if (($MinAspect -gt 0) -or ($MaxAspect -gt 0)) {
+          if ($Crop169MinWidth -gt 0) {
+            # 万象: 按裁成 16:9 后的有效宽度判, 不再看原图比例(见 Get-BwCrop169Width)。
+            $ew = Get-BwCrop169Width ([int]$dim.W) ([int]$dim.H)
+            if ($ew -lt $Crop169MinWidth) {
+              Log ('裁成 16:9 后有效宽 ' + $ew + ' 不到门槛 ' + $Crop169MinWidth + ' (' + $dim.W + 'x' + $dim.H + '), 跳过不落盘: ' + (Split-Path $path -Leaf))
+              Remove-BwFile $tmp
+              $global:BWLastDlStatus = 'aspect'
+              continue
+            }
+          } elseif (($MinAspect -gt 0) -or ($MaxAspect -gt 0)) {
             $ar = 0.0
             if ([int]$dim.H -gt 0) { $ar = [double]$dim.W / [double]$dim.H }
             if (($MinAspect -gt 0) -and ($ar -lt $MinAspect)) {
@@ -6043,6 +8158,13 @@ function Save-BwFile([string[]]$urls, [string]$path, [hashtable]$meta = $null, [
               continue
             }
           }
+        }
+        # 2026-11-08: 清晰度(模糊)闸门 —— 分辨率达标还不够, 糊/抖动/失焦的图照样挡在入库前。
+        if ((Test-BwQualityGate $tmp) -eq $false) {
+          Log ('清晰度不足(模糊/失焦), 跳过不落盘: ' + (Split-Path $path -Leaf))
+          Remove-BwFile $tmp
+          $global:BWLastDlStatus = 'blur'
+          continue
         }
         # 2026-10-09 (审查 H-10): 落地这一步必须**确认真的落地了**才算成功。
         # Move-Item 在 ErrorActionPreference=Continue 下失败只是非终止错误, catch 抓不到,
@@ -6818,16 +8940,21 @@ $global:BwPanelHtml = @'
   :root{
     --font:"Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif;
     --mono:"Cascadia Mono",Consolas,"Courier New",monospace;
+    /* 2026-11-06 工业风署名条用的 DIN 系字体：Windows 10+ 自带 Bahnschrift（DIN 1451 血统），
+       没有就退到 DIN Alternate / Segoe UI。只做排版性格近似，不嵌字体文件。 */
+    --din:"Bahnschrift","DIN Alternate","Segoe UI",system-ui,sans-serif;
     /* 暗色(默认) = 石墨灰 */
-    --bg:#171a20; --bg-1:#1c2027; --card:#20252d; --card-2:#262d37;
-    --line:#303844; --line-2:#3e4856;
+    /* 2026-11-07 精修：三级灰拉开层次（底 / 卡 / 浮层）——原来卡片和背景明度差太小，看着糊在一起。 */
+    --bg:#101318; --bg-1:#151920; --card:#1a1f27; --card-2:#222831;
+    --line:#2c333d; --line-2:#3b4450;
     --txt:#e7ebf1; --txt-2:#a3aebe; --txt-3:#76818f;
     --ok:#3ecf8e; --warn:#f0b429; --danger:#f2555a; --info:#4f8cff;
     --accent:#35d07f; --accent-ink:#062016;
     --fs-title:20px; --fs-h:14px; --fs-body:13px; --fs-meta:12px; --fs-micro:11px;
     --r-card:10px; --r-btn:8px; --r-pill:999px;
     --shadow-1:0 1px 0 rgba(0,0,0,.18); --shadow-2:0 14px 40px rgba(0,0,0,.45);
-    --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:20px; --sp-6:24px;
+    /* 2026-11-07 精修：间距阶梯统一成 4/8/12/16/24/32（原来是 4/8/12/16/20/24，页面顶部和卡片节奏对不齐）。 */
+    --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px; --sp-6:32px;
     --knob:#fff; --on-art:#fff; --on-art-2:rgba(255,255,255,.78);
     --scrim:rgba(6,9,14,.66); --scrim-2:rgba(6,9,14,.12);
     --accent-soft:rgba(53,208,127,.14);
@@ -6879,7 +9006,7 @@ $global:BwPanelHtml = @'
   .seg-btn{height:28px;padding:0 var(--sp-4);border-radius:var(--r-pill);border:0;background:none;
            color:var(--txt-2);font-size:var(--fs-meta);transition:color .15s,background .15s}
   .seg-btn:hover{color:var(--txt)}
-  .seg-btn.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+  .seg-btn.on{background:var(--card-2);color:var(--txt);font-weight:600}
   .seg-info{margin-left:auto;color:var(--txt-3);font-size:var(--fs-micro);font-family:var(--mono)}
   .screen{display:none}
   .screen.on{display:block;animation:fade .15s ease}
@@ -6895,28 +9022,37 @@ $global:BwPanelHtml = @'
   .muted{color:var(--txt-3)}
   /* 2026-11-06 用户「所有图片的出处都集中在主页上反映」: 一行一条, 低对比小字,
      默认收起、展开才按需加载, 不抢当前壁纸那张卡的画面。 */
-  .credit-list{max-height:320px;overflow:auto}
-  .cr-row{display:flex;flex-wrap:wrap;gap:3px 12px;align-items:baseline;padding:6px 2px;border-top:1px solid var(--line);line-height:1.5}
-  .cr-row .cr-name{color:var(--txt);max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .cr-row a{color:inherit;text-decoration:underline;text-underline-offset:2px;opacity:.85}
+  /* 2026-11-06 用户「还是按照原来的布局」：它是一张备查清单，不是主界面 ——
+     就用普通卡片的 .card / .card-h 外壳，标题在左、右侧一个「展开 ›」小按钮，
+     收起时只占一行。不另做遥测条、不塞进两栏。 */
   .mono{font-family:var(--mono);font-size:var(--fs-meta)}
   /* 2026-11-06 用户「这个位置安排照片的曝光参数，GPS」+「照片的好多信息没有展示」：
      署名行下面再加两行 —— 第二行放曝光与拍摄地点，第三块放原图信息（页面原文+译文）。 */
-  /* 2026-11-06 用户「好好规整一下，怎么看着比较凌乱，没有那种工业感觉」：
-     署名区按仪表读数排版 —— 标签低对比、值用等宽数字、项间 1px 细线分隔，
-     不再用全角空格 + 小圆点混排（那种排法每段宽度不齐，看着散）。 */
+  /* 2026-11-06 用户「有工业风、品牌相机的字体加持」，参考 GitHub：
+  /* 2026-11-06 用户「还是按照没有改之前的样子排版」：署名行回到最初那两行 ——
+     第一行「摄影 / 摄于 / 机型 / 许可 / 来源」，第二行「参数 / 位置」，
+     标签低对比、值等宽数字、项间 1px 细线，不做分舱格子，也不加外壳边框。
+     机型保留用户选定的粗 grotesque 字体（Helvetica/Arial），大小写按品牌官方写法。 */
   .crd1,.crd2{display:flex;flex-wrap:wrap;align-items:baseline;row-gap:2px}
   .crd2{margin-top:5px}
   .ci{display:inline-flex;align-items:baseline;white-space:nowrap}
-  /* 分隔竖线用显式 <i class=cs>（跟在前项后面）而不是 ::before，
-     这样折行时竖线留在上一行行尾，新行不会以孤线开头。 */
   .cs{align-self:center;width:1px;height:9px;margin:0 11px;background:currentColor;opacity:.22;flex:none}
   .cl{color:var(--txt-3);margin-right:7px;font-size:.94em;letter-spacing:.06em}
   .cv{color:var(--txt-2);font-variant-numeric:tabular-nums}
   .cv.tec{font-family:var(--mono);font-size:.93em;letter-spacing:.01em}
-  .crd1 .cam,.crd2 .cam{color:var(--txt-2)}
+  /* 坐标：DIN 读数 + 虚线可点，点一下复制（不跳外网地图）。 */
+  .cv.coordm{font-family:var(--din);font-weight:600;font-size:.98em;letter-spacing:.04em;
+    color:var(--txt);cursor:pointer;border-bottom:1px dotted var(--line-2);padding-bottom:1px}
+  .cv.coordm:hover{color:var(--txt);border-color:var(--txt-2)}
+  .crd1 .camfg,.crd2 .camfg{color:var(--txt-2);font-weight:700;letter-spacing:0;
+    font-family:"Helvetica Neue",Helvetica,Arial,"Segoe UI",sans-serif}
   .crd1 a{color:inherit;text-decoration:none;border-bottom:1px solid currentColor;padding-bottom:1px;opacity:.9}
   .crd1 a:hover{opacity:1}
+  /* 2026-11-07 用户「凡是年度最佳照片要注明，以来源出处的标识体现」：
+     获奖标识紧跟在「来源」这一行里，细边框小徽章，不加色块、不另起一行，
+     与 1px 细线的工业仪表排版保持同一套语言。只在图片自己的分类确有获奖记录时出现。 */
+  .cv.honor{color:var(--txt);font-size:.88em;font-weight:600;letter-spacing:.05em;
+    border:1px solid var(--line-2);border-radius:2px;padding:1px 6px;opacity:.86;white-space:nowrap}
   .imeta{margin:2px 16px 14px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card-2)}
   .imeta-h{display:flex;align-items:baseline;gap:8px;margin:0 0 7px}
   .imeta-h b{font-size:var(--fs-micro);font-weight:600;letter-spacing:.02em;color:var(--txt-2)}
@@ -6940,7 +9076,7 @@ $global:BwPanelHtml = @'
   .pill{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 var(--sp-3);border-radius:var(--r-pill);
         border:1px solid var(--line);font-size:var(--fs-micro);color:var(--txt-2);white-space:nowrap;background:var(--card-2)}
   .pill i{width:6px;height:6px;border-radius:50%;background:var(--txt-3);flex:none}
-  .pill.ok i{background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
+  .pill.ok i{background:var(--ok)}
   .pill.warn i{background:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)}
   .pill.bad i{background:var(--danger);box-shadow:0 0 0 3px var(--danger-soft)}
 
@@ -6968,7 +9104,7 @@ $global:BwPanelHtml = @'
         background:transparent;color:var(--txt-2);font-size:var(--fs-meta);display:inline-flex;align-items:center;gap:6px;
         transition:background .15s,border-color .15s,color .15s;white-space:nowrap;cursor:pointer}
   .chip:hover{color:var(--txt);border-color:var(--line-2)}
-  .chip.on{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent);font-weight:600}
+  .chip.on{background:var(--card-2);border-color:var(--line-2);color:var(--txt);font-weight:600}
   .chip.add{border-style:dashed;color:var(--txt-3)}
   .chiprow{display:flex;gap:6px;flex-wrap:wrap}
 
@@ -7024,7 +9160,7 @@ $global:BwPanelHtml = @'
 
   /* 进度条 / 倒计时环 */
   .meter{height:6px;border-radius:var(--r-pill);background:var(--line);overflow:hidden;margin:var(--sp-3) 0 var(--sp-2)}
-  .meter i{display:block;height:100%;border-radius:var(--r-pill);background:var(--accent);width:0;
+  .meter i{display:block;height:100%;border-radius:var(--r-pill);background:var(--txt-2);opacity:.7;width:0;
            transition:width .15s linear}
   .ring{width:52px;height:52px;border-radius:50%;flex:none;display:grid;place-items:center;
         background:conic-gradient(var(--accent) calc(var(--p)*1%),var(--line) 0);position:relative;
@@ -7036,8 +9172,51 @@ $global:BwPanelHtml = @'
 
   /* 当前壁纸大图 */
   .art{position:relative;aspect-ratio:16/9;background:var(--bg-1);overflow:hidden}
-  .art img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .3s ease}
+  /* 2026-11-07 用户「马赛克效果」：换图时旧图垫在下面，新图先以大块马赛克铺满，
+     再逐级变细（56→40→28→20→14→10→6→3→1 像素块），最后化成清晰图。
+     实现是一块盖在图片上的 canvas：缩小绘制 + 关闭插值放大 = 方块感；
+     全程本地、零依赖。系统开了"减少动效"就直接切，不跑动画。 */
+  .art img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;
+    transition:opacity .25s ease}
   .art img.ready{opacity:1}
+  .art img.prev{position:absolute;inset:0;opacity:0;transition:opacity .25s ease;z-index:1}
+  .art #heroImg{position:relative;z-index:2}
+  .art canvas.mosaic{position:absolute;inset:0;width:100%;height:100%;z-index:3;
+    display:none;pointer-events:none;image-rendering:pixelated}
+  /* 2026-11-07 用户「类似魔方的效果」：换图时把画面切成 34px 的小方块，每块绕 Y 轴翻 90° 露出背面
+     （背面就是新图对应那一块），按"左上→右下 + 随机抖动"错峰，像一整面小魔方依次翻面。
+     纯 CSS 3D（preserve-3d + backface-visibility），翻完整个覆盖层直接移除。 */
+  #heroFlip{position:absolute;inset:0;z-index:4;display:block;pointer-events:none;perspective:1100px}
+  #heroFlip .ft{position:absolute;transform-style:preserve-3d;
+    transition:transform .62s cubic-bezier(.35,.1,.25,1);transition-delay:var(--d,0s)}
+  #heroFlip .ft.on{transform:rotateY(180deg)}
+  #heroFlip .fc{position:absolute;inset:0;backface-visibility:hidden;background-repeat:no-repeat}
+  #heroFlip .fb{transform:rotateY(180deg)}
+  /* 2026-11-07 用户「类似魔方的效果」「不行就参考 github 的项目」：
+     照 Swiper 的 cube effect 那套做法（perspective + preserve-3d + rotateY 90°）做成
+     **整幅立方体翻转**：旧图是正面、新图是右侧面，绕 Y 轴转 90° 把新图转到面前。
+     每块面板贴的是同一张壁纸（background-size:cover），所以翻过来就是新的整幅画面。 */
+  #heroCube{position:absolute;inset:0;z-index:5;perspective:1300px;perspective-origin:50% 50%;pointer-events:none}
+  #heroCube .cb3{position:absolute;inset:0;transform-style:preserve-3d;
+    transition:transform .85s cubic-bezier(.35,.05,.2,1)}
+  #heroCube .face{position:absolute;inset:0;background-size:cover;background-position:center;
+    backface-visibility:hidden;box-shadow:0 0 60px rgba(0,0,0,.45)}
+  #heroCube .face::after{content:"";position:absolute;inset:0;
+    background:linear-gradient(90deg,rgba(0,0,0,.28),rgba(0,0,0,0) 45%)}
+  #heroCube .f-new::after{background:linear-gradient(270deg,rgba(0,0,0,.28),rgba(0,0,0,0) 45%)}
+  /* 2026-11-07 用户「看的晕车，还是采用第一种百叶窗」：回到最初那版 ——
+     旧图垫在下面，新图用 12 条横向叶片"拉开"盖上去。可动画的自定义属性 --bo 驱动蒙版，
+     Chromium 逐帧插值；不支持 @property 的浏览器退化成淡入，不影响使用。 */
+  @property --bo{ syntax:'<percentage>'; inherits:false; initial-value:0% }
+  .art img.blinds{
+    -webkit-mask-image:repeating-linear-gradient(to bottom,#000 0 var(--bo),transparent var(--bo) 8.3333%);
+    mask-image:repeating-linear-gradient(to bottom,#000 0 var(--bo),transparent var(--bo) 8.3333%);
+    animation:bwOpen .95s cubic-bezier(.25,.8,.25,1) both}
+  @keyframes bwOpen{ from{--bo:0%} to{--bo:8.3333%} }
+  @media (prefers-reduced-motion: reduce){
+    .art img{transition:none}
+    .art img.blinds{animation:none;-webkit-mask-image:none;mask-image:none}
+  }
   .art img:not([src]){visibility:hidden}
   .art::after{content:"";position:absolute;inset:0;pointer-events:none;
     background:linear-gradient(to top,var(--scrim),var(--scrim-2) 56%,transparent 82%)}
@@ -7045,8 +9224,8 @@ $global:BwPanelHtml = @'
   .art .cap .badge{display:inline-block;font-size:var(--fs-micro);letter-spacing:.05em;color:var(--on-art);
     background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.22);border-radius:var(--r-pill);
     padding:3px var(--sp-2);margin-top:var(--sp-2)}
-  .art .cap h3{color:var(--on-art);font-size:var(--fs-title);font-weight:650;margin-top:0;
-    text-shadow:0 2px 12px rgba(0,0,0,.45);word-break:break-all}
+  .art .cap #heroTitle{color:var(--on-art);font-size:var(--fs-title);font-weight:650;margin-top:0;
+    text-shadow:0 2px 12px rgba(0,0,0,.45);white-space:normal;word-break:normal;overflow-wrap:anywhere}
   .art .cap p{color:var(--on-art-2);font-size:var(--fs-meta);margin-top:2px}
   /* 2026-11-06 机型小字：按品牌做排版性格近似（见 camSpan 注释），不引字体文件、不用商标字形。 */
   .cam{font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -7274,7 +9453,9 @@ $global:BwPanelHtml = @'
         <div class="col">
           <div class="card pad0">
             <div class="art" id="hero">
+              <img id="heroPrev" class="prev" alt="">
               <img id="heroImg" alt="">
+              <canvas id="heroMosaic" class="mosaic" aria-hidden="true"></canvas>
               <div class="empty" id="heroEmpty">正在读取本机状态…</div>
               <div class="cap">
                 <!-- 2026-11-06 用户「这个标题移到图片的名字下方」：模式徽标放到标题下面。 -->
@@ -7288,8 +9469,8 @@ $global:BwPanelHtml = @'
               <button class="btn" id="btnFav">收藏 <kbd>F</kbd></button>
               <button class="btn" id="btnOpenImg">看原图</button>
             </div>
-            <!-- 2026-11-06 尊重作者: 万象/随拍的一行小字署名(完整作者名 + 拍摄日 + 许可 + 来源)。
-                 只在当前壁纸属于这两个模式时出现, 低对比小字, 不抢画面也不动中文短句命名。 -->
+            <!-- 2026-11-06 尊重作者 + 工业风：万象/随拍的三舱遥测条（CAMERA / RIGHTS / POSITION）。
+                 只在当前壁纸属于这两个模式、且拿得到作者时出现；整块由 render() 生成。 -->
             <div class="muted xs" id="heroCredit" style="display:none;padding:0 16px 12px;line-height:1.6;white-space:normal;overflow-wrap:anywhere"></div>
             <!-- 2026-11-06 用户「留着吧，有些介绍的蛮详细的」：保留页面介绍（中文译文）这一块，
                  只在有译文时出现；没有译文整块隐藏，不留空位。 -->
@@ -7344,20 +9525,7 @@ $global:BwPanelHtml = @'
         </div>
       </div>
 
-      <!-- 2026-11-06 用户「所有图片的出处，都集中在主页上反映」:
-           当前模式图库里每一张的作者 / 拍摄日 / 许可 / 来源，一处列全。默认收起，
-           展开才向本机服务要数据（只读文件头，不把整张 4K 图读进内存）。 -->
-      <div class="card" id="creditCard">
-        <div class="card-h">
-          <h2>图片出处</h2>
-          <span class="muted xs" id="creditHint">当前库里每一张的作者 · 拍摄日 · 许可 · 来源</span>
-          <div class="right"><button class="btn ghost sm" id="creditToggle">展开 ›</button></div>
-        </div>
-        <div id="creditBody" style="display:none">
-          <div class="muted xs" id="creditStat" style="padding:0 0 8px">正在读取…</div>
-          <div class="credit-list" id="creditList"></div>
-        </div>
-      </div>
+
     </section>
 
     <!-- ============ 2. 图库 ============ -->
@@ -7676,6 +9844,31 @@ function toast(msg, bad){
   toast._t = setTimeout(function(){ t.className = "toast"; }, 2800);
 }
 
+/* 2026-11-06 用户「地图打不开，是外网」：坐标舱不再往 OpenStreetMap 跳（国内打不开，
+   而且 WGS-84 直接扔给高德/腾讯会偏移几百米，等于给错位置）。改成点一下复制坐标，
+   纯本地、不联网，粘到任何本地地图工具里都能用。 */
+function copyText(t){
+  var txt = String(t || "");
+  if (!txt) return;
+  function ok(){ toast("坐标已复制：" + txt); }
+  function fallback(){
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = txt; ta.style.position = "fixed"; ta.style.left = "-9999px"; ta.style.top = "0";
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      var done = document.execCommand("copy");
+      document.body.removeChild(ta);
+      if (done) { ok(); } else { toast("复制失败：请手动选中这段坐标", true); }
+    } catch (e) { toast("复制失败：请手动选中这段坐标", true); }
+  }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(ok, fallback);
+      return;
+    }
+  } catch (e) {}
+  fallback();
+}
 /* 本机接口: 只有 /api/do 与 /api/state, 都带一次性令牌 */
 function api(doName, extra){
   var q = "/api/do?t=" + encodeURIComponent(TOKEN) + "&do=" + encodeURIComponent(doName);
@@ -7698,21 +9891,31 @@ function api(doName, extra){
 function wallUrl(p){
   return p ? ("/api/wall?t=" + encodeURIComponent(TOKEN) + "&p=" + encodeURIComponent(p)) : "";
 }
-/* 2026-11-05 硬规矩: 面板上任何来源的图片名都必须是中文。
-   优先用后端给的 display; 没有就从文件名里提中文主题; 再没有就按文件名哈希
-   给一个稳定的中文场景名 —— 绝不让英文原名 / 哈希 / 随机串露出来。 */
+/* 面板图片名优先用后端的中文 display，整串校验后保留标点、数字与括注，
+   不剥括注或拼接碎片；缺少有效中文 metadata 时才走原有文件名兼容逻辑。 */
 var CN_FALLBACK = ["山野晨光","湖畔暮色","林间薄雾","海岸云影","雪原晴光",
   "田野夕照","城郭夜色","溪谷清影","花间微风","远山层云","云海初晴","松林雪霁"];
+function safeDisplay(value){
+  if (typeof value !== "string") return "";
+  var text = value.trim();
+  if (!/[\u3400-\u9fff\uf900-\ufaff]/.test(text) ||
+      !/^[\u3400-\u9fff\uf900-\ufaff0-9０-９ \t\r\n\u3000-\u303f，．！？；：“”‘’（）［］｛｝…—–·・‧～.,!?;:'"()\[\]\-]+$/.test(text)) return "";
+  return text;
+}
 function displayName(it){
-  if (it && it.display) return it.display;
+  var display = safeDisplay(it && it.display);
+  if (display) return display;
   var raw = (it && (it.name || it.path)) || (typeof it === "string" ? it : "");
   var t = "";
   try { t = parseName(baseName(raw)).title || ""; } catch (e) { t = ""; }
   /* 2026-11-06: 名字改成「一句通顺中文短句」后, 可能含阿拉伯数字(如阿波罗9号、
      2025 冬日), 旧正则只留汉字会把数字吞掉。日期与去重键在 parseName 里已被剥离,
-     所以这里放行 0-9 不会把哈希/日期带进来。 */
+     所以这里放行 0-9 不会把哈希/日期带进来。
+     2026-11-06 用户报「名字只剩 2024」: 英文原名 BrooklynDinerNewYorkCity2024
+     剥掉字母后就是纯数字 —— 那不是名字。至少两个汉字才算, 否则走下面稳定的中文场景名。 */
   var cn = (String(t).match(/[\u4e00-\u9fa5·0-9]+/g) || []).join("");
-  if (cn.length >= 2) return cn;
+  var cnZh = (String(t).match(/[\u4e00-\u9fa5]/g) || []).length;
+  if (cnZh >= 2 && cn.length >= 2) return cn;
   var h = 0;
   for (var i = 0; i < raw.length; i++){ h = (h * 31 + raw.charCodeAt(i)) >>> 0; }
   return CN_FALLBACK[h % CN_FALLBACK.length];
@@ -7726,6 +9929,219 @@ function baseName(p){
    厂家字标是注册商标 + 定制字形，商用授权不开放，不能拿来用。
    这里只用系统自带字体做**排版性格近似**（大写/字距/粗细），不嵌任何字体文件，
    也不冒充商标 —— NIKON/SONY 字标是大写宽字距，Canon 偏正体，机型数字用等宽。 */
+/* 2026-11-07 用户「类似魔方的效果」：换图时把画面切成 34px 的小方块，每块绕 Y 轴翻 90°，
+   背面就是新图对应那一块 —— 一整面小魔方依次翻面，翻完覆盖层整个移除。
+   纯 CSS 3D（preserve-3d + backface-visibility），错峰靠每块的 transition-delay；
+   系统开「减少动效」就跳过，直接显示新图。 */
+/* 2026-11-07 用户「类似魔方的效果」「不行就参考 github 的项目」：
+   改用 WebGL 做真正的翻面 —— 思路取自 gl-transitions 那类片元着色器过渡：
+   每格算自己的进度，用 cos(t*PI) 当"绕 Y 轴转过来的角度"，把采样点按 |cos| 横向压缩，
+   cos>0 采旧图、cos<0 采新图，再按 |cos| 加明暗 —— 看起来就是一块块真在翻，而不是平面缩放。
+   画面 34px 一格（uGrid 按实际尺寸算），错峰 = 左上→右下波浪 + 每格伪随机。
+   WebGL 不可用/图像跨域就拿不到纹理 → 自动退回 DOM 版 playCubeFlip，不会白屏。 */
+var BW_CUBE_GL = {
+  vs: "attribute vec2 aPos; varying vec2 vUv; void main(){ vUv = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }",
+  fs: [
+    "precision mediump float;",
+    "varying vec2 vUv;",
+    "uniform sampler2D uOld; uniform sampler2D uNew;",
+    "uniform float uP; uniform vec2 uGrid; uniform float uStagger;",
+    "void main(){",
+    "  vec2 uv = vec2(vUv.x, 1.0 - vUv.y);",
+    "  vec2 cell = floor(uv * uGrid);",
+    "  vec2 cuv = fract(uv * uGrid);",
+    "  float rnd = fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453);",
+    "  float delay = (cell.x / uGrid.x * 0.45 + cell.y / uGrid.y * 0.2 + rnd * 0.35) * uStagger;",
+    "  float span = max(0.001, 1.0 - uStagger);",
+    "  float t = clamp((uP - delay) / span, 0.0, 1.0);",
+    "  float ang = t * 3.14159265;",
+    "  float c = cos(ang);",
+    "  float sx = (cuv.x - 0.5) / max(abs(c), 0.03) + 0.5;",
+    "  bool inside = sx >= 0.0 && sx <= 1.0;",
+    "  vec2 suv = (cell + vec2(clamp(sx,0.0,1.0), cuv.y)) / uGrid;",
+    "  vec3 o = texture2D(uOld, suv).rgb;",
+    "  vec3 n = texture2D(uNew, suv).rgb;",
+    "  vec3 col = (c >= 0.0) ? o : n;",
+    "  col *= 0.35 + 0.65 * abs(c);",
+    "  if (!inside) { col = texture2D(uNew, uv).rgb * 0.9; }",
+    "  gl_FragColor = vec4(col, 1.0);",
+    "}"
+  ].join("\n")
+};
+/* 2026-11-07 用户「类似魔方的效果」「不行就参考 github 的项目」：
+   整幅立方体翻转（照 Swiper cube effect 的做法）：旧图当正面、新图当右侧面，
+   容器绕 Y 轴转 90° 把新图转到面前，带透视和两侧暗角，翻完移除覆盖层。 */
+function playCubeRotate(imgEl) {
+  try {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
+    var box = $("hero"), oldImg = $("heroPrev");
+    if (!box || !oldImg || !oldImg.getAttribute("src")) return false;
+    if (!oldImg.complete || !imgEl.complete) return false;
+    if ($("heroCube")) return true;
+    var w = box.clientWidth, h = box.clientHeight;
+    if (!w || !h) return false;
+    var oUrl = oldImg.getAttribute("src"), nUrl = imgEl.getAttribute("src");
+    var ov = document.createElement("div"); ov.id = "heroCube";
+    var cube = document.createElement("div"); cube.className = "cb3";
+    var fOld = document.createElement("div"); fOld.className = "face f-old";
+    fOld.style.backgroundImage = "url(" + oUrl + ")";
+    fOld.style.transform = "translateZ(" + (w / 2) + "px)";
+    var fNew = document.createElement("div"); fNew.className = "face f-new";
+    fNew.style.backgroundImage = "url(" + nUrl + ")";
+    fNew.style.transform = "rotateY(90deg) translateZ(" + (w / 2) + "px)";
+    cube.appendChild(fOld); cube.appendChild(fNew);
+    ov.appendChild(cube); box.appendChild(ov);
+    void ov.offsetWidth;
+    cube.style.transform = "rotateY(-90deg)";
+    setTimeout(function () {
+      if (ov.parentNode) { ov.parentNode.removeChild(ov); }
+      if (oldImg) { oldImg.style.opacity = "0"; }
+    }, 950);
+    return true;
+  } catch (e) { return false; }
+}
+/* 统一入口：想换风格改这一行即可 —— cube(整幅立方体) / tiles(小方块翻面) / ""(纯淡入) */
+var BW_HERO_FX = "blinds";
+/* 2026-11-07 用户「还是采用第一种百叶窗」：旧图垫在下面，新图加 .blinds 用 12 条横叶片拉开。
+   动画本身在 CSS 里（--bo 0%→8.3333%），这里只负责挂类名和收尾。 */
+function playBlinds(imgEl) {
+  try {
+    var oldImg = $("heroPrev");
+    if (!oldImg || !oldImg.getAttribute("src") || !oldImg.complete) return false;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
+    imgEl.classList.add("blinds");
+    setTimeout(function () {
+      imgEl.classList.remove("blinds");
+      if (oldImg) { oldImg.style.opacity = "0"; }
+    }, 1000);
+    return true;
+  } catch (e) { return false; }
+}
+function playHeroFx(imgEl) {
+  try {
+    if (BW_HERO_FX === "blinds") { playBlinds(imgEl); return; }
+    if (BW_HERO_FX === "cube" && playCubeRotate(imgEl)) return;
+    if (BW_HERO_FX === "tiles") {
+      if (playCubeFlipGL(imgEl)) return;
+      playCubeFlip(imgEl); return;
+    }
+  } catch (e) {}
+}
+function playCubeFlipGL(imgEl) {
+  var box = $("hero"), oldImg = $("heroPrev");
+  if (!box || !oldImg) return false;
+  if (!oldImg.getAttribute("src") || !oldImg.complete || !imgEl.complete) return false;
+  var w = box.clientWidth, h = box.clientHeight;
+  if (!w || !h) return false;
+  var cv = document.createElement("canvas");
+  cv.width = w; cv.height = h;
+  cv.style.cssText = "position:absolute;inset:0;width:100%;height:100%;z-index:4;pointer-events:none";
+  box.appendChild(cv);
+  var gl = null;
+  try { gl = cv.getContext("webgl") || cv.getContext("experimental-webgl"); } catch (e) { gl = null; }
+  if (!gl) { box.removeChild(cv); return false; }
+  function sh(type, src) {
+    var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) return null;
+    return s;
+  }
+  var vs = sh(gl.VERTEX_SHADER, BW_CUBE_GL.vs), fs = sh(gl.FRAGMENT_SHADER, BW_CUBE_GL.fs);
+  if (!vs || !fs) { box.removeChild(cv); return false; }
+  var pr = gl.createProgram();
+  gl.attachShader(pr, vs); gl.attachShader(pr, fs); gl.linkProgram(pr);
+  if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) { box.removeChild(cv); return false; }
+  gl.useProgram(pr);
+  var buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+  var aPos = gl.getAttribLocation(pr, "aPos");
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+  function tex(im, unit) {
+    var tx = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, tx);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, im); } catch (e) { return null; }
+    return tx;
+  }
+  var t0 = tex(oldImg, 0), t1 = tex(imgEl, 1);
+  if (!t0 || !t1) { box.removeChild(cv); return false; }
+  gl.uniform1i(gl.getUniformLocation(pr, "uOld"), 0);
+  gl.uniform1i(gl.getUniformLocation(pr, "uNew"), 1);
+  var cell = 34;
+  gl.uniform2f(gl.getUniformLocation(pr, "uGrid"), Math.ceil(w / cell), Math.ceil(h / cell));
+  gl.uniform1f(gl.getUniformLocation(pr, "uStagger"), 0.55);
+  var uP = gl.getUniformLocation(pr, "uP");
+  var t0clock = performance.now(), DUR = 900;
+  function frame(now) {
+    var p = Math.min(1, (now - t0clock) / DUR);
+    gl.uniform1f(uP, p);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    if (p < 1) { requestAnimationFrame(frame); return; }
+    setTimeout(function () {
+      if (cv.parentNode) { cv.parentNode.removeChild(cv); }
+      if (oldImg) { oldImg.style.opacity = "0"; }
+    }, 120);
+  }
+  requestAnimationFrame(frame);
+  return true;
+}
+function playCubeFlip(imgEl) {
+  try {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    var box = $("hero"), oldImg = $("heroPrev");
+    if (!box || !oldImg) return;
+    if (!oldImg.getAttribute("src") || !oldImg.complete || !imgEl.complete) return;
+    if ($("heroFlip")) return;
+    var w = box.clientWidth, h = box.clientHeight;
+    if (!w || !h) return;
+    var oUrl = oldImg.getAttribute("src");
+    var nUrl = imgEl.getAttribute("src");
+    var cell = 34;
+    var cols = Math.ceil(w / cell), rows = Math.ceil(h / cell);
+    var ov = document.createElement("div");
+    ov.id = "heroFlip";
+    for (var y = 0; y < rows; y++) {
+      for (var x = 0; x < cols; x++) {
+        var px = x * cell, py = y * cell;
+        var cw = Math.min(cell, w - px), ch = Math.min(cell, h - py);
+        if (cw <= 0 || ch <= 0) continue;
+        var d = ((x / cols) * 0.5 + (y / rows) * 0.15 + Math.random() * 0.35) * 0.85;
+        var t = document.createElement("div");
+        t.className = "ft";
+        t.style.left = px + "px"; t.style.top = py + "px";
+        t.style.width = cw + "px"; t.style.height = ch + "px";
+        t.style.setProperty("--d", d.toFixed(3) + "s");
+        var f = document.createElement("div");
+        f.className = "fc ff";
+        f.style.backgroundImage = "url(" + oUrl + ")";
+        f.style.backgroundSize = w + "px " + h + "px";
+        f.style.backgroundPosition = (-px) + "px " + (-py) + "px";
+        var b = document.createElement("div");
+        b.className = "fc fb";
+        b.style.backgroundImage = "url(" + nUrl + ")";
+        b.style.backgroundSize = w + "px " + h + "px";
+        b.style.backgroundPosition = (-px) + "px " + (-py) + "px";
+        t.appendChild(f); t.appendChild(b);
+        ov.appendChild(t);
+      }
+    }
+    box.appendChild(ov);
+    void ov.offsetWidth;
+    var tiles = ov.querySelectorAll(".ft");
+    for (var i = 0; i < tiles.length; i++) { tiles[i].classList.add("on"); }
+    setTimeout(function () {
+      if (ov.parentNode) { ov.parentNode.removeChild(ov); }
+      if (oldImg) { oldImg.style.opacity = "0"; }
+    }, 1800);
+  } catch (e) {}
+}
 function camBrand(t){
   var s = String(t || "").toLowerCase();
   if (/nikon/.test(s)) return "nikon";
@@ -7736,6 +10152,25 @@ function camBrand(t){
   if (/fujifilm|finepix|x-t\d|x100|x-pro/.test(s)) return "fuji";
   if (/olympus|om-d|e-pl\d|e-m\d/.test(s)) return "olympus";
   return "";
+}
+/* 2026-11-06 用户「摄影器材没有按照品牌字体优化」：真机身上品牌字标与型号是两段排法
+   （NIKON 宽字距 + D750 紧排）。这里把 "NIKON D750" / "OLYMPUS E-M1" 拆成两段；
+   拆不出来（只有型号的 "ILCE-7M3"、"E-M1"）就整串当型号，不硬套品牌字距。 */
+var CAM_CANON = { nikon:"Nikon", canon:"Canon", sony:"SONY", leica:"LEICA", olympus:"OLYMPUS",
+  "om-d":"OM-D", panasonic:"Panasonic", lumix:"LUMIX", fujifilm:"FUJIFILM", fuji:"FUJIFILM",
+  ricoh:"RICOH", pentax:"PENTAX", hasselblad:"HASSELBLAD", dji:"DJI", gopro:"GoPro",
+  sigma:"SIGMA", samsung:"SAMSUNG", apple:"Apple", iphone:"iPhone", google:"Google",
+  pixel:"Pixel", xiaomi:"Xiaomi", huawei:"HUAWEI", honor:"HONOR", oneplus:"OnePlus",
+  oppo:"OPPO", vivo:"vivo", realme:"realme", motorola:"motorola", nokia:"Nokia" };
+var CAM_BRAND_RE = /^(nikon|canon|sony|leica|olympus|om-d|panasonic|lumix|fujifilm|fuji|ricoh|pentax|hasselblad|dji|gopro|sigma|samsung|apple|iphone|google|pixel|xiaomi|huawei|honor|oneplus|oppo|vivo|realme|motorola|nokia)\b[\s\-–—·]*/i;
+function splitCamName(txt){
+  var t = String(txt || "").trim();
+  var m = t.match(CAM_BRAND_RE);
+  if (!m) { return { brand: "", model: t }; }
+  var model = t.slice(m[0].length).trim();
+  if (!model) { return { brand: "", model: t }; }
+  var key = m[1].toLowerCase();
+  return { brand: (CAM_CANON[key] || m[1]), model: model };
 }
 function camSpan(txt){
   var s = document.createElement("span");
@@ -7941,11 +10376,21 @@ function render(s){
   var p = st.lastWall || "";
   var bn = parseName(baseName(p));
   var img = $("heroImg");
+  var prevImg = $("heroPrev");
   if (p){
     var src = wallUrl(p);
     if (img.getAttribute("src") !== src){
+      /* 2026-11-07 百叶窗换图：旧图先垫在下面，新图加载好后按 12 条横百叶拉开。
+      /* 2026-11-07 用户「马赛克效果」：旧图垫在下面，新图从大块马赛克逐级变细、最后落到清晰图。
+         首次进入（还没有旧图）不播，避免开场闪一下。 */
+      var oldSrc = img.getAttribute("src") || "";
       img.classList.remove("ready");
-      img.onload = function(){ img.classList.add("ready"); $("heroEmpty").style.display = "none"; };
+      if (prevImg && oldSrc) { prevImg.src = oldSrc; prevImg.style.opacity = "1"; }
+      img.onload = function(){
+        img.classList.add("ready");
+        $("heroEmpty").style.display = "none";
+        if (prevImg && prevImg.getAttribute("src")) { playHeroFx(img); }
+      };
       img.onerror = function(){
         img.classList.remove("ready");
         $("heroEmpty").style.display = "grid";
@@ -7953,10 +10398,11 @@ function render(s){
       };
       img.src = src;
     }
-    /* 2026-11-05 用户「要显示图片的名字」: 主标题用文件名里的中文图片名,
-       悬停再给完整文件名(含日期与去重键), 方便和资源管理器里的那张图对上。 */
-    var _fname = baseName(p);
-    setText("heroTitle", displayName({ name: _fname }));
+    /* 主标题优先用当前图 display；仅新版 metadata 的 zhname 可作次选。
+       悬停仍给完整文件名，便于和资源管理器里的图片对照。 */
+    var _fname = baseName(p), _cr = s.credit || {};
+    var _display = safeDisplay(st.lastDisplay) || (_cr.caption_version >= 2 ? _cr.zhname : "");
+    setText("heroTitle", displayName({ name: _fname, display: _display }));
     var _ht = $("heroTitle");
     if (_ht) { _ht.title = "图片名字：" + _fname; }
     /* 2026-10-24 用户要求：这张卡要能看出「这是哪一天的哪张图」。
@@ -7970,7 +10416,6 @@ function render(s){
     /* 2026-11-06 用户「底部署名行就写日期」：日期只在底部署名行出现一次，
        标题下副行不再重复。署名行取不到作者/拍摄日时，日期仍留在副行兜底；
        必应/聚焦没有署名行，继续写「YYYY-MM-DD 的图」不变。 */
-    var _cr = s.credit || {};
     var _credHasDate = !!(_shotMode && _cr.author && _cr.shot);
     var _imgDay = bn.date ? (_shotMode ? (_credHasDate ? "" : ("摄于 " + bn.date)) : (bn.date + " 的图")) : "";
     /* 2026-11-06 用户「把图片上时间安排在更换节奏卡」：换上时间归「更换节奏」卡,
@@ -7981,71 +10426,83 @@ function render(s){
     /* 2026-11-06 用户「尊重作者」: 完整作者名 + 拍摄日 + 许可 + 来源链接, 一行小字。
        不用首字母缩写 —— CC BY / CC BY-SA 要求完整署名标识; 来源只认 Commons 官方域名。
        作者名来自 Commons 元数据, 用 textContent 写入, 不拼 HTML。 */
-    var _cel = $("heroCredit");
-    if (_cel) {
-      if (_shotMode && _cr.author) {
-        /* 2026-11-06 用户「好好规整一下…没有那种工业感觉」：
-           改成「标签 + 值」两行仪表排版。标签统一低对比小字，值用等宽数字，
-           项目之间由 CSS 的 1px 竖线分隔（.ci+.ci::before），不再手工拼全角空格。 */
-        function _ci(label, val, cls) {
-          var s = document.createElement("span");
-          s.className = "ci";
-          if (label) {
-            var l = document.createElement("span");
-            l.className = "cl"; l.textContent = label;
-            s.appendChild(l);
-          }
-          var v = document.createElement("span");
-          v.className = "cv" + (cls ? " " + cls : "");
-          v.textContent = val;
-          s.appendChild(v);
-          return s;
+  var _cel = $("heroCredit");
+  if (_cel) {
+    if (_shotMode && _cr.author) {
+      /* 2026-11-06 用户「还是按照没有改之前的样子排版」：恢复成最初的两行「标签 + 值」——
+         第一行 摄影 / 摄于 / 机型 / 许可 / 来源，第二行 参数 / 位置；
+         不再分舱、不加外壳边框。机型保留用户选定的粗 grotesque（Helvetica/Arial），
+         品牌大小写按官方写法（Nikon 不变 NIKON），型号原样照抄。 */
+      function _ci(label, val, cls) {
+        var s = document.createElement("span");
+        s.className = "ci";
+        if (label) {
+          var l = document.createElement("span");
+          l.className = "cl"; l.textContent = label;
+          s.appendChild(l);
         }
-        function _sep() {
-          var i = document.createElement("i");
-          i.className = "cs";
-          return i;
-        }
-        function _row(cls) { var d = document.createElement("div"); d.className = cls; return d; }
-        function _add(row, item) {
-          if (row.childNodes.length) { row.appendChild(_sep()); }
-          row.appendChild(item);
-        }
-        _cel.textContent = "";
-        _cel.removeAttribute("title");
-        var _r1 = document.createElement("div");
-        _r1.className = "crd1";
-        _add(_r1, _ci("摄影", _cr.author));
-        if (_cr.shot) { _add(_r1, _ci("摄于", _cr.shot)); }
-        /* 机型来自 Commons 完整 EXIF，取不到就不写（不编设备）；品牌近似字体见 camSpan。 */
-        if (_cr.cam) {
-          var _ciCam = document.createElement("span");
-          _ciCam.className = "ci"; _ciCam.appendChild(camSpan(_cr.cam));
-          _add(_r1, _ciCam);
-        }
-        if (_cr.lic) { _add(_r1, _ci("", _cr.lic)); }
-        if (_cr.link && /^https:\/\/commons\.wikimedia\.org\//i.test(_cr.link)) {
-          var _lk = document.createElement("a");
-          _lk.href = _cr.link; _lk.target = "_blank"; _lk.rel = "noopener noreferrer";
-          _lk.textContent = "来源";
-          var _ciLk = document.createElement("span");
-          _ciLk.className = "ci"; _ciLk.appendChild(_lk);
-          _add(_r1, _ciLk);
-        }
-        _cel.appendChild(_r1);
-        /* 第二行同样是「标签 + 值」，暴露参数与坐标用等宽字体，读起来像仪表读数。 */
-        if (_cr.expo || _cr.gps) {
-          var _r2 = document.createElement("div");
-          _r2.className = "crd2";
-          if (_cr.expo) { _add(_r2, _ci("参数", _cr.expo, "tec")); }
-          if (_cr.gps) { _add(_r2, _ci("位置", _cr.gps, "tec")); }
-          _cel.appendChild(_r2);
-        }
-        _cel.style.display = "";
-      } else {
-        _cel.textContent = ""; _cel.title = ""; _cel.style.display = "none";
+        var v = document.createElement("span");
+        v.className = "cv" + (cls ? " " + cls : "");
+        v.textContent = val;
+        s.appendChild(v);
+        return s;
       }
+      function _sep() {
+        var i = document.createElement("i");
+        i.className = "cs";
+        return i;
+      }
+      function _add(row, item) {
+        if (row.childNodes.length) { row.appendChild(_sep()); }
+        row.appendChild(item);
+      }
+      _cel.textContent = "";
+      _cel.removeAttribute("title");
+      var _r1 = document.createElement("div");
+      _r1.className = "crd1";
+      _add(_r1, _ci("摄影", _cr.author));
+      if (_cr.shot) { _add(_r1, _ci("摄于", _cr.shot)); }
+      if (_cr.cam) {
+        var _cn = splitCamName(_cr.cam);
+        _add(_r1, _ci("", (_cn.brand ? (_cn.brand + " ") : "") + (_cn.model || _cr.cam), "camfg"));
+      }
+      if (_cr.lic) { _add(_r1, _ci("", _cr.lic)); }
+      /* 获奖 / 年度图片标识：值来自图片自己 Categories 里的真实分类名，
+         POTY 冠军写「年度最佳」、finalist 如实写「决赛入围」，没有就不占位。 */
+      if (_cr.honor) { _add(_r1, _ci("", _cr.honor, "honor")); }
+      if (_cr.link && /^https:\/\/commons\.wikimedia\.org\//i.test(_cr.link)) {
+        var _lk = document.createElement("a");
+        _lk.href = _cr.link; _lk.target = "_blank"; _lk.rel = "noopener noreferrer";
+        _lk.textContent = "来源";
+        var _ciLk = document.createElement("span");
+        _ciLk.className = "ci"; _ciLk.appendChild(_lk);
+        _add(_r1, _ciLk);
+      }
+      _cel.appendChild(_r1);
+      if (_cr.expo || _cr.gps || _cr.place) {
+        var _r2 = document.createElement("div");
+        _r2.className = "crd2";
+        if (_cr.expo) { _add(_r2, _ci("参数", _cr.expo, "tec")); }
+        /* 2026-11-06 用户「位置的经纬度还是加入你的元素，可以复制的那种样式」：
+           坐标走 DIN 读数、带虚线可点、点一下复制到剪贴板（纯本地，不联网、不跳地图）。
+           大部分照片没有 GPS（库里 47/72），这时退回页面原文里的「国家·城市」，
+           别让这一项凭空消失；两样都没有才不显示。 */
+        if (_cr.gps) {
+          var _ciG = document.createElement("span"); _ciG.className = "ci";
+          var _gl = document.createElement("span"); _gl.className = "cl"; _gl.textContent = "位置";
+          var _gv = document.createElement("span"); _gv.className = "cv coordm"; _gv.textContent = _cr.gps;
+          _gv.title = "点击复制坐标：" + _cr.gps;
+          _gv.addEventListener("click", function(){ copyText(String(_cr.gps).replace(/^\s*≈\s*/, "")); });
+          _ciG.appendChild(_gl); _ciG.appendChild(_gv);
+          _add(_r2, _ciG);
+        } else if (_cr.place) { _add(_r2, _ci("位置", _cr.place)); }
+        _cel.appendChild(_r2);
+      }
+      _cel.style.display = "";
+    } else {
+      _cel.textContent = ""; _cel.title = ""; _cel.style.display = "none";
     }
+  }
     /* 2026-11-06 用户「这些不要」：原始作品名/原始介绍/分类/上传时间一律去掉，
        悬停只保留拍摄地点、设备、参数。 */
     var _tip = [];
@@ -8158,7 +10615,7 @@ function render(s){
              : (mode === "bing") ? (cnt.bing || 0)
              : (cnt.spotlight || 0);
   var LIB_NAME = { focus:"聚焦库", bing:"必应库", commons:"万象库", picsum:"随拍库" };
-  setText("nextSub", "每 " + fmtCycle(cycMin) + " · 图库 " + libNum + " 张 · 收藏 "
+  setText("nextSub", "每 " + fmtCycle(cycMin) + " · 图库 " + libNum + " 张 · 收藏"
     + (s.favCount || 0) + " 张" + (s.local && s.local.count ? (" · 本地 " + s.local.count + " 张") : ""));
 
   /* 开关类 */
@@ -8280,7 +10737,6 @@ function render(s){
   renderLog(s.log || []);
 
   /* 出处清单展开着、模式却切了: 自动换成新库那一批, 不留着上一个库的清单 */
-  if (typeof CREDIT !== "undefined" && CREDIT.open && CREDIT.mode !== mode) { loadCredits(); }
 
   tick();
 }
@@ -8485,7 +10941,7 @@ function renderHistory(list, curName){
     var k = String((it && it.name) || "").replace(/\.[a-z0-9]+$/i, "").toLowerCase();
     if (!k || seen[k] || rows.length >= 4) return;
     seen[k] = 1;
-    rows.push({ name: it.name, path: it.path || "", thumb: it.thumb || "", src: it.src || "", at: at || "" });
+    rows.push({ name: it.name, display: it.display, path: it.path || "", thumb: it.thumb || "", src: it.src || "", at: at || "" });
   }
   var atMap = {};
   for (var i = 0; i < list.length; i++){
@@ -8526,7 +10982,7 @@ function renderHistory(list, curName){
   rows.forEach(function(it){
     // 有"换上时间"就角标写换上的时刻/月日；没有(图库里最近但本机没换过)就退回图片日期。
     // src 带上这张图真正的归属库, 后端 use/fav/del 才能"指哪打哪"; 不能再写死成 hist。
-    var f = tileFor({ name: it.name, path: it.path || "", thumb: it.thumb || "",
+    var f = tileFor({ name: it.name, display: it.display, path: it.path || "", thumb: it.thumb || "",
                       fav: false, src: it.src || "", at: it.at || "" },
                     { currentName: curName });
     box.appendChild(f);
@@ -8699,60 +11155,6 @@ function loadGallery(reset){
       $("libMoreWrap").style.display = "none";
     });
 }
-/* ── 主页「图片出处」清单 ──
-   2026-11-06 用户「所有图片的出处，都集中在主页上反映」: 一个地方列全当前库里每一张,
-   不用给图库每张缩略图塞第五个按钮。默认收起、展开才按需请求, 小字低对比。 */
-var CREDIT = { open:false, mode:"", loading:false };
-var CREDIT_SRC = { focus:"spotlight", bing:"bing", commons:"commons", picsum:"picsum" };
-function creditSrc(){ return CREDIT_SRC[curMode()] || "spotlight"; }
-function loadCredits(){
-  var box = $("creditList");
-  if (!box || CREDIT.loading) return;
-  CREDIT.loading = true;
-  CREDIT.mode = curMode();
-  box.innerHTML = "";
-  setText("creditStat", "正在读取…");
-  fetch("/?panel=credits&t=" + encodeURIComponent(TOKEN) + "&src=" + encodeURIComponent(creditSrc()), { cache:"no-store" })
-    .then(function(r){ if(!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-    .then(function(arr){
-      CREDIT.loading = false;
-      if(!arr || !arr.length){ setText("creditStat", "这个库还没有图片"); return; }
-      var nAuthor = 0, nLink = 0, shotMode = (creditSrc() === "commons" || creditSrc() === "picsum");
-      arr.forEach(function(it){
-        if(it.author) nAuthor++;
-        if(it.link) nLink++;
-        var full = displayName({ name: it.name });
-        var row = document.createElement("div");
-        row.className = "cr-row muted xs";
-        var nm = document.createElement("span");
-        nm.className = "cr-name";
-        nm.textContent = full;
-        nm.title = full;
-        row.appendChild(nm);
-        function bit(txt){ var s = document.createElement("span"); s.textContent = txt; row.appendChild(s); }
-        if(it.date) bit((shotMode ? "摄于 " : "") + it.date);
-        if(it.author) bit((it.author.charAt(0) === "©" ? "" : "摄影：") + it.author);
-        if(it.cam) row.appendChild(camSpan(it.cam));
-        if(it.lic) bit(it.lic);
-        if(it.note) bit(it.note);
-        if(it.link && /^https:\/\/(commons\.wikimedia\.org|www\.bing\.com)\//i.test(it.link)){
-          var a = document.createElement("a");
-          a.href = it.link; a.target = "_blank"; a.rel = "noopener noreferrer";
-          a.textContent = "来源 ↗";
-          row.appendChild(a);
-        }
-        box.appendChild(row);
-      });
-      setText("creditStat", "共 " + arr.length + " 张 · " + nAuthor + " 张有署名 · " + nLink + " 张可点开来源");
-    })
-    .catch(function(e){ CREDIT.loading = false; setText("creditStat", "出处读不出来：" + e.message); });
-}
-$("creditToggle").addEventListener("click", function(){
-  CREDIT.open = !CREDIT.open;
-  $("creditBody").style.display = CREDIT.open ? "" : "none";
-  setText("creditToggle", CREDIT.open ? "收起 ‹" : "展开 ›");
-  if (CREDIT.open) loadCredits();
-});
 Array.prototype.forEach.call(document.querySelectorAll(".lib-chip"), function(chip){
   chip.addEventListener("click", function(){
     Array.prototype.forEach.call(document.querySelectorAll(".lib-chip"), function(c){ c.classList.remove("on"); });
@@ -9893,11 +12295,16 @@ function Get-BwPanelGalleryItems {
     $row = [ordered]@{
       name  = $nm
       src   = [string]$it.Src
+      display = ''
       time  = $it.File.LastWriteTime.ToString('yyyy-MM-dd HH:mm')
       ts    = [long]([DateTimeOffset]::new($it.File.LastWriteTimeUtc.ToUniversalTime()).ToUnixTimeSeconds())
       fav   = $isFav
       thumb = ('/?panel=thumb&name=' + [System.Uri]::EscapeDataString($nm) +
                '&v=' + [string]$it.File.LastWriteTimeUtc.Ticks)
+    }
+    # 只有万象/随拍带中文译名; 必应/聚焦/本地不读文件头, 免得每次翻页白读 48 x 64KB。
+    if (([string]$it.Src -eq 'commons') -or ([string]$it.Src -eq 'picsum')) {
+      try { $row['display'] = Get-BwDisplayMeta ([string]$it.File.FullName) } catch { $row['display'] = '' }
     }
     if ($WithPath) { $row['path'] = [string]$it.File.FullName }
     $out += $row
@@ -9939,6 +12346,29 @@ function Get-BwFileCredit([string]$path) {
     $i += 2 + $len
   }
   return $null
+}
+# 面板显示名: 只认新版(caption_version=2)的内嵌中文译名, 按 文件改动时刻+大小 缓存。
+# 面板 GET 绝不在这一步联网翻译 —— 翻译只在后台补货里做, 这里只读文件头 64KB。
+function Get-BwDisplayMeta([string]$path) {
+  if (-not $path) { return '' }
+  if (-not $global:BwDisplayCache) { $global:BwDisplayCache = @{} }
+  $fi = $null
+  try { $fi = Get-Item -LiteralPath $path -ErrorAction Stop } catch { return '' }
+  $k = ([string]$fi.LastWriteTimeUtc.Ticks) + '|' + ([string]$fi.Length)
+  if ($global:BwDisplayCache.ContainsKey($path)) {
+    $hit = $global:BwDisplayCache[$path]
+    if ($hit -and ([string]$hit.Key -eq $k)) { return [string]$hit.Display }
+  }
+  $d = ''
+  $m = Get-BwFileCredit $path
+  if ($m -and (([string]$m.caption_version) -eq '2')) { $d = [string]$m.zhname }
+  elseif ($m -and (([string]$m.source_type) -in @('万象','随拍','维基共享','真实摄影'))) {
+    # 后台还没轮到的老图：当场用地理词典成句（纯本地，不联网），
+    # 不许退回文件名 —— 「BrooklynDinerNewYorkCity2024」被前端剥掉字母就只剩「2024」当标题。
+    try { $d = Get-BwPendingSrcName $m } catch { $d = '' }
+  }
+  $global:BwDisplayCache[$path] = [PSCustomObject]@{ Key = $k; Display = $d }
+  return $d
 }
 # 主页「图片出处」清单的数据源: 当前模式那个库里每张图一行。
 # 出处只认图片自身元数据和 Commons / 必应官方域名: 不编作者、不把微软版权串当摄影署名。
@@ -9996,7 +12426,10 @@ function Get-BwPanelCredits([string]$src) {
       elseif ($sl -eq 'bing') { $link = 'https://www.bing.com'; $note = '必应每日一图' }
       else { $note = '维基共享' }
     }
-    $rows += [ordered]@{ name = $nm; src = $sl; date = $shot; author = $author; lic = $lic; link = $link; note = $note; cam = $cam }
+    # 出处清单里的名字和图库同一口径: 只认新版内嵌中文译名, 没有就留空由前端按老规则显示。
+    $disp = ''
+    if ($m -and (([string]$m.caption_version) -eq '2')) { $disp = [string]$m.zhname }
+    $rows += [ordered]@{ name = $nm; display = $disp; src = $sl; date = $shot; author = $author; lic = $lic; link = $link; note = $note; cam = $cam }
     if ($rows.Count -ge 500) { break }
   }
   $global:BwCreditCache[$sl] = [PSCustomObject]@{ At = (Get-Date); Rows = $rows }
@@ -10133,13 +12566,36 @@ function Open-BwExistingPanel {
   return $true
 }
 
+# 2026-11-06 用户「刷新一下就要重开控制台」：以前每次重启服务都换随机端口 + 换令牌，
+# 已经开着的标签页当场失效，地址也跟着变。现在优先复用上一次的端口与令牌（同一个
+# 本机文件里本来就存着，权限没变），重启后同一个地址刷新就还能用。
+function Test-BwPortFree([int]$p) {
+  if ($p -le 0) { return $false }
+  try {
+    $l = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, $p)
+    $l.Start(); $l.Stop(); return $true
+  } catch { return $false }
+}
 function Start-BwPanelServer {
   param([int]$Port = 0, [int]$IdleMinutes = 30, [switch]$NoBrowser)
 
-  if ($Port -le 0) { $Port = Get-BwPanelPort }
+  $prevServe = $null
+  try {
+    $pf = Join-Path $global:BWRoot 'panel.serve.json'
+    if (Test-Path -LiteralPath $pf) { $prevServe = [IO.File]::ReadAllText($pf) | ConvertFrom-Json }
+  } catch {}
+
+  if ($Port -le 0) {
+    if ($prevServe -and [int]$prevServe.port -ge 1024 -and (Test-BwPortFree ([int]$prevServe.port))) {
+      $Port = [int]$prevServe.port
+    } else {
+      $Port = Get-BwPanelPort
+    }
+  }
   if ($Port -le 0) { throw '挑不出可用的本地端口' }
 
   $token = [guid]::NewGuid().ToString('N')
+  if ($prevServe -and ([string]$prevServe.token) -match '^[0-9a-f]{32}$') { $token = [string]$prevServe.token }
   $utf8 = New-Object System.Text.UTF8Encoding($false)
   $listener = $null
   try {
@@ -10148,6 +12604,10 @@ function Start-BwPanelServer {
   } catch {
     throw ('本地端口打不开: ' + $_.Exception.Message)
   }
+
+  # 2026-11-07: 面板一启动就把桌面百叶窗要用的 WPF 程序集与 P/Invoke 类型热好，
+  # 之后点「立即换一张」立刻开始动画，不会先愣一下。
+  try { [void](Initialize-BwDesktopFx) } catch {}
 
   # 2026-10-24 用户要求：地址栏要干净，不要 ?t= 令牌（令牌已嵌在页面里，页面照常能操作）
   $url = ('http://127.0.0.1:{0}/' -f $Port)
@@ -10707,7 +13167,10 @@ function Get-BwPanelState {
     $src = ''
     $sm = $idx['Src']
     if ($sm) { $src = [string]$sm[[string]$p.ToLower()] }
-    $histOut += [PSCustomObject]@{ name = $nm; path = $p; at = $at; src = $src }
+    $histOut += [PSCustomObject]@{ name = $nm; path = $p; at = $at; src = $src; display = '' }
+    if (($src -eq 'commons') -or ($src -eq 'picsum')) {
+      try { $histOut[-1].display = Get-BwDisplayMeta $p } catch {}
+    }
     $n++
   }
   $favOut = @(); $n = 0
@@ -10715,7 +13178,15 @@ function Get-BwPanelState {
     if ($n -ge 24) { break }
     $p = Resolve-BwPanelName $idx ([string]$x)
     if (-not $p) { continue }
-    $favOut += [PSCustomObject]@{ name = [string]$x; path = $p }
+    # 收藏项按索引里的归属库认源(与「最近换过」同一口径), 只有万象/随拍才读文件头。
+    $favD = ''
+    try {
+      $fsrc = ''
+      $fsm = $idx['Src']
+      if ($fsm -and $p) { $fsrc = [string]$fsm[[string]$p.ToLower()] }
+      if (($fsrc -eq 'commons') -or ($fsrc -eq 'picsum')) { $favD = Get-BwDisplayMeta $p }
+    } catch {}
+    $favOut += [PSCustomObject]@{ name = [string]$x; path = $p; display = $favD }
     $n++
   }
 
@@ -10809,7 +13280,7 @@ function Get-BwPanelState {
   # 回给面板, 用一行小字单独显示; 中文短句命名一个字不动, 也不缩写成首字母
   # (CC BY / CC BY-SA 要求完整署名标识, 缩写不构成合规署名)。
   # 只在这两个模式返回 —— 必应/聚焦的 copyright 是微软版权串, 混进来会驴唇不对马嘴。
-  $credit = [ordered]@{ author = ''; shot = ''; lic = ''; link = ''; cam = ''; origname = ''; desc = ''; cats = ''; gps = ''; expo = ''; uploaded = ''; zhname = ''; zhdesc = '' }
+  $credit = [ordered]@{ author = ''; shot = ''; lic = ''; link = ''; cam = ''; origname = ''; desc = ''; cats = ''; gps = ''; place = ''; expo = ''; uploaded = ''; zhname = ''; zhdesc = ''; caption_version = ''; honor = '' }
   if ($psMode -eq 'commons' -or $psMode -eq 'picsum') {
     try {
       if ($lastWall -and (Test-Path -LiteralPath $lastWall)) {
@@ -10829,16 +13300,32 @@ function Get-BwPanelState {
           $credit.gps = [string]$cm.gps
           $credit.expo = [string]$cm.expo
           $credit.uploaded = [string]$cm.uploaded
+          # 2026-11-06 用户「位置怎么没有了？」：Commons 页面有 GPS 的图才 47/72，其余照片
+          # 本来就没写坐标。这时不空着，退回页面原文里的「国家·城市」（离线地名表认得的那套），
+          # 面板上照样有「位置」这一项；两样都没有才不显示，绝不编坐标。
+          try {
+            $geo = Get-BwGeoLabel ((([string]$cm.desc) + ' ' + ([string]$cm.origname) + ' ' + ([string]$cm.cats)))
+            if ($geo) { $credit.place = [string]$geo }
+          } catch {}
           # 2026-11-06 用户「照片的好多信息没有展示」：页面原文的中文译文也带上，
           # 面板上直接能读，不用再自己对着英文猜。
           $credit.zhname = [string]$cm.zhname
           $credit.zhdesc = [string]$cm.zhdesc
+          # 只有后台按新链路重译过的图(caption_version=2)才允许当标题用;
+          # 老图的截断译名继续走面板的文件名兼容逻辑, 不假装它是新名字。
+          $credit.caption_version = [string]$cm.caption_version
+          # 2026-11-07 晚: 获奖/年度图片标识来自图片自己 Categories 里的真实分类名。
+          $credit.honor = [string]$cm.honor
           if ($bits.Count -ge 2) { $credit.lic = [string]$bits[0] }
           if (-not $credit.author -and $bits.Count -ge 3) { $credit.author = [string]$bits[1] }
         }
       }
     } catch {}
   }
+
+  # 当前壁纸的中文显示名: 与图库/出处/最近换过同一个读法(只认 caption_version=2)。
+  $lastDisplay = ''
+  try { if ($lastWall -and (($psMode -eq 'commons') -or ($psMode -eq 'picsum'))) { $lastDisplay = Get-BwDisplayMeta $lastWall } } catch {}
 
   return [ordered]@{
     ok          = $true
@@ -10855,6 +13342,7 @@ function Get-BwPanelState {
     style       = [ordered]@{ hasOrig = $hasOrig; orig = $origTxt }
     st          = [ordered]@{
       lastWall = $lastWall
+      lastDisplay = $lastDisplay
       lastSwap = $lastSwap
       queue    = $queueCount
       shown    = $shown
@@ -10919,7 +13407,7 @@ function Invoke-BwPanelSet([string]$key, $value) {
     $c | Add-Member -NotePropertyName $key -NotePropertyValue $v -Force
   } elseif ($key -eq 'wallpaper_style') {
     $v = ([string]$value).Trim().ToLower()
-    if (@('fill','fit','stretch','center','tile','span','keep') -notcontains $v) { throw ('填充方式不支持: ' + $v) }
+    if (@('fill','fit','stretch','center','tile','span','keep','auto') -notcontains $v) { throw ('填充方式不支持: ' + $v) }
     $c | Add-Member -NotePropertyName $key -NotePropertyValue $v -Force
   } elseif ($key -eq 'art_fit_mode' -or $key -eq 'desktop_shortcut') {
     $v = ([string]$value).Trim().ToLower()
