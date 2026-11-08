@@ -2,6 +2,7 @@
 config.json
 state.json
 wallpaper.log
+dl_ledger.log
 微软壁纸助手数据/
 launcher.txt
 daemon.stop

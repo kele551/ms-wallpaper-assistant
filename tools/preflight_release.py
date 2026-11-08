@@ -659,6 +659,32 @@ skip('对外文案红线词 0 命中',
 # ⑦ 测试套件（需要已打包的成品 exe）
 # ══════════════════════════════════════════════════════════════════════════
 say()
+say('⑦b 面板脚本语法：panel.html 的 <script> 块必须能被 JS 引擎解析')
+# 2026-11-06 事故：一次字符串替换吃掉了一行的收尾引号，整块 <script> 变 SyntaxError，
+# 浏览器一个函数都不执行 —— 页面停在「正在读取本机状态…」、卡片全是占位符，
+# 用户看到的就是「排版全乱了」。HTML 里的 JS 没有任何别的闸门盯着，只能用引擎自己判。
+_js = os.path.join(REPO, 'tests', 'test_panel_js.py')
+if not os.path.exists(_js):
+    check('tests/test_panel_js.py 存在', False, _js)
+else:
+    try:
+        _r = subprocess.run([sys.executable, _js], capture_output=True, text=True,
+                            encoding='utf-8', errors='replace', cwd=REPO, timeout=180)
+        _rc = _r.returncode
+        _out = ((_r.stdout or '') + (_r.stderr or '')).strip().splitlines()
+    except Exception as _e:
+        _rc, _out = -1, ['%s: %s' % (type(_e).__name__, _e)]
+    if _rc == 0 and _out and _out[-1].startswith('[SKIP]'):
+        skip('panel.html 的 <script> 块语法全绿', _out[-1])
+    else:
+        check('panel.html 的 <script> 块语法全绿', _rc == 0,
+              '退出码=%s' % _rc)
+        if _rc != 0:
+            for _l in _out[-8:]:
+                say('     | %s' % _l)
+
+# ══════════════════════════════════════════════════════════════════════════
+say()
 say('⑦ 端到端测试套件 tests/test_all.py（需要已打包的成品 exe）')
 _tests = os.path.join(REPO, 'tests', 'test_all.py')
 if not os.path.exists(EXE):
