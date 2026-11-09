@@ -317,25 +317,36 @@ def pick_remote_sha(ls_remote_output, ref):
 
 
 def _push(remote, ref):
-    """推一个 ref；GitHub 那条线本机时不时裸连不上，失败就带一次本地代理重试。
+    """推一个 ref，推完一律 ls-remote 复核远端 sha。
 
-    代理只在"这次推送"上用 -c 传进去（不落 git config）。推完一律 ls-remote 复核远端 sha：
-    退出码只说明"命令没崩"，说明不了"远端变了"（管道还会把真实状态吞掉，踩过）。
+    线路规则（2026-11-09 实测、会随网络漂移，故做成「代理优先、失败回退直连」）：
+      · GitCode(origin) 直连稳，经本地代理反而 Proxy CONNECT aborted —— 只走直连；
+      · GitHub(github) 直连时通时断，本地代理更稳 —— 先代理、失败回退直连。
+    代理只在「这次推送」上用 -c 传进去（不落 git config）。退出码只说明「命令没崩」，
+    说明不了「远端变了」（管道会把真实状态吞掉，踩过），所以最后一定用 ls-remote 复核。
     """
     if remote not in _git_raw(['git', 'remote'])[1]:
         print('   跳过 %s：本仓库没有这个 remote' % remote)
         return False
     want = _git_raw(['git', 'rev-parse', 'HEAD' if ref == BRANCH else ref])[1].split()[-1]
-    code, out = _git_raw(['git', '-c', 'http.proxy=' + GIT_PROXY, 'push', remote, ref])
-    if code != 0:
-        print('   裸推失败(%s)，带本地代理 %s 再试一次' % (out.strip()[-160:], GIT_PROXY))
-        code, out = _git_raw(['git', '-c', 'http.proxy=' + GIT_PROXY,
-                              'push', remote, ref])
-        if code != 0:
-            print('   带代理也失败:', out.strip()[-200:])
-    # 2026-11-09 修：ls-remote 复核也必须走代理，否则需要代理的环境里裸连取不到远端 sha，
-    # 会误报「推送没生效」而中止后续（建 Release / 推 main），留下双平台不一致的半成品。
-    got = pick_remote_sha(_git_raw(['git', '-c', 'http.proxy=' + GIT_PROXY, 'ls-remote', remote, ref])[1], ref)
+    attempts = [''] if remote == 'origin' else [GIT_PROXY, '']
+    pushed = False
+    for px in attempts:
+        code, out = _git_raw(['git'] + (['-c', 'http.proxy=' + px] if px else [])
+                             + ['push', remote, ref])
+        if code == 0:
+            pushed = True
+            break
+        print('   push %s（线路=%s）失败: %s —— 换下一条线路重试'
+              % (remote, px or '直连', out.strip()[-160:]))
+    if not pushed:
+        raise RuntimeError('推送 %s -> %s 所有线路均失败' % (ref, remote))
+    got = ''
+    for px in attempts:
+        got = pick_remote_sha(_git_raw(['git'] + (['-c', 'http.proxy=' + px] if px else [])
+                                       + ['ls-remote', remote, ref])[1], ref)
+        if got:
+            break
     if got and got == want:
         print('   pushed %s -> %s（远端 sha %s… 与本地一致）' % (ref, remote, want[:10]))
         return True
