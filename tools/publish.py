@@ -326,14 +326,16 @@ def _push(remote, ref):
         print('   跳过 %s：本仓库没有这个 remote' % remote)
         return False
     want = _git_raw(['git', 'rev-parse', 'HEAD' if ref == BRANCH else ref])[1].split()[-1]
-    code, out = _git_raw(['git', 'push', remote, ref])
+    code, out = _git_raw(['git', '-c', 'http.proxy=' + GIT_PROXY, 'push', remote, ref])
     if code != 0:
         print('   裸推失败(%s)，带本地代理 %s 再试一次' % (out.strip()[-160:], GIT_PROXY))
-        code, out = _git_raw(['git', '-c', 'http.https://github.com/.proxy=' + GIT_PROXY,
+        code, out = _git_raw(['git', '-c', 'http.proxy=' + GIT_PROXY,
                               'push', remote, ref])
         if code != 0:
             print('   带代理也失败:', out.strip()[-200:])
-    got = pick_remote_sha(_git_raw(['git', 'ls-remote', remote, ref])[1], ref)
+    # 2026-11-09 修：ls-remote 复核也必须走代理，否则需要代理的环境里裸连取不到远端 sha，
+    # 会误报「推送没生效」而中止后续（建 Release / 推 main），留下双平台不一致的半成品。
+    got = pick_remote_sha(_git_raw(['git', '-c', 'http.proxy=' + GIT_PROXY, 'ls-remote', remote, ref])[1], ref)
     if got and got == want:
         print('   pushed %s -> %s（远端 sha %s… 与本地一致）' % (ref, remote, want[:10]))
         return True
