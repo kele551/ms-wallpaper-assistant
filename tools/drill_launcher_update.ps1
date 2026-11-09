@@ -129,7 +129,12 @@ $r = Invoke-BwScriptUpdate -Quiet -Force
   Assert ([bool]$url2) '升级后的主程序把控制台起起来了'
   if ($url2) {
     $b2 = ($url2 -split '\?')[0].TrimEnd('/')
-    $tok = ([regex]::Match($url2, 't=([a-f0-9]+)')).Groups[1].Value
+    # 2026-10-24 起令牌嵌在页面 HTML 的 var TOKEN 里、地址栏干净不带 ?t= 参数
+    # （drill_upgrade.ps1 已跟上此变化；这里补一致，否则从空 URL 参数取令牌会 403「令牌不对」）
+    $page = Invoke-WebRequest -Uri $url2 -UseBasicParsing -TimeoutSec 15
+    $phtml = [System.Text.Encoding]::UTF8.GetString($page.RawContentStream.ToArray())
+    $tok = ([regex]::Match($phtml, 'var TOKEN = "([a-f0-9]{32})"')).Groups[1].Value
+    if (-not $tok) { $tok = ([regex]::Match($url2, 't=([a-f0-9]+)')).Groups[1].Value }
     $st = Invoke-WebRequest -Uri "$b2/api/state?t=$tok" -UseBasicParsing -TimeoutSec 15
     $sj = [System.Text.Encoding]::UTF8.GetString($st.RawContentStream.ToArray()) | ConvertFrom-Json
     Assert ($sj.scriptVer -eq $ver) "控制台报的脚本版本 = $($sj.scriptVer)"
