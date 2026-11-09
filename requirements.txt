@@ -1,15 +1,21 @@
 # 桌面壁纸 —— 依赖清单
 #
-# 说明：运行本程序**不需要安装任何第三方 Python 包**。
+# 说明：最终用户运行 exe **不需要安装任何第三方 Python 包**（也不用装 Python）——
+#   下面这些组件都由打包机内嵌进单文件 exe。
 #   程序主体是 PowerShell 脚本（core.ps1 / menu.ps1，Windows 自带 PowerShell 5.1 即可运行），
-#   另有一个只负责启动与自动升级的 Python 入口（launcher.py），只用 Python 标准库。
-#   下面两组依赖分别只用于"打包 exe"和"发版工具"，与最终用户无关。
+#   Python 入口（launcher.py + panel_gui.py）负责落地、升级、后台调度与独立控制面板窗口。
+#   独立窗口用 Windows 10/11 自带的 WebView2 运行时（系统组件，不是浏览器应用），用户不用装东西。
+#   下面三组依赖分别只用于"打包 exe"和"发版工具"，与最终用户无关。
 #
 # 许可证对应关系见 README 的「第三方组件与许可」一节。
 
-# ── 仅打包 exe 时需要（build-exe.py）────────────────────────────────────
+# ── 仅打包 exe 时需要（构建脚本 / 桌面壁纸.spec）─────────────────────────
 # PyInstaller: GPL-2.0-with-exception（官方明确：打包产物不受 GPL 约束）
 pyinstaller>=6.0
+# pywebview: BSD-3-Clause —— 独立 GUI 控制面板窗口（内嵌进 exe）
+pywebview>=6.0
+# pythonnet: MIT —— pywebview 的 Windows edgechromium 后端需要
+pythonnet>=3.0
 
 # ── 仅发版工具需要（tools/publish.py）───────────────────────────────────
 # requests: Apache-2.0

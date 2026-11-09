@@ -1,20 +1,20 @@
 {
-  "version": "2.4.4",
-  "min_launcher": "2.4.4",
+  "version": "2.4.5",
+  "min_launcher": "2.4.5",
   "notes": "",
   "scripts": {
     "core.ps1": {
-      "sha256": "726116E250B2291540AFB7C124FCF7A09161D2F03CABD808540579D7FB6B38B5",
+      "sha256": "7A458548CE24BB4583B7CD67080005AC6C7748CA54260FC5E952382D707C4005",
       "url": "https://gitcode.com/api/v5/repos/kele551/ms-wallpaper-assistant/raw/core.ps1?ref=main"
     },
     "menu.ps1": {
-      "sha256": "926804FAE832228AE93A50177AC732BEDE9AC01170126304BEB5E2CC53799610",
+      "sha256": "06C4C65845CCB1E00FD704F26AC5A277641D556D157D1364F2E04A77F67BDA9D",
       "url": "https://gitcode.com/api/v5/repos/kele551/ms-wallpaper-assistant/raw/menu.ps1?ref=main"
     }
   },
   "launcher": {
-    "sha256": "97784C1E4F6D03E3BEE24A34978FB03E7464F354C4410935BC6810882F6D059C",
-    "url": "https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v2.4.4/桌面壁纸.exe",
-    "size": 7723839
+    "sha256": "6B4173DD015CA48D038ADE4C470A92240752C397A62F619257D230E53046FB8C",
+    "url": "https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v2.4.5/桌面壁纸.exe",
+    "size": 12766834
   }
 }

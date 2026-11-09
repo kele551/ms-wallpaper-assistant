@@ -54,3 +54,9 @@ tools/publish.local.json
 tests/_t2/
 tests/_t3/
 tests/_t4/
+
+# 本机会话级构建快照与临时文件（不入库，也不删除本机原件）
+builds/
+*.backup
+*.tmp
+new_function.txt

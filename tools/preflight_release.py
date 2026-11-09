@@ -1012,7 +1012,11 @@ _miss = [m for m in _need if m not in _p_py]
 check('launcher.py 守护进程的启动/停止/出错都写日志（事后可回溯）', not _miss,
       ('launcher.py 里缺: ' + '、'.join(_miss)) if _miss else '')
 _i = _p_py.find('def mode_daemon')
-_seg = _p_py[_i:_i + 8000] if _i >= 0 else ''
+# 按整个函数体取，别用固定字符窗口：2026-11-09 守护加了「准时换图」后
+# mode_daemon 长到 8775 字符，原来 _p_py[_i:_i+8000] 会把末尾的
+# `except Exception as e:` 兜底切掉，明明有兜底却误报 FAIL。
+_j = _p_py.find('\ndef ', _i + 1) if _i >= 0 else -1
+_seg = _p_py[_i:(_j if _j > 0 else len(_p_py))] if _i >= 0 else ''
 _guard = ('while True:' in _seg) and ('        try:' in _seg) and ('except Exception as e:' in _seg)
 check('launcher.py 守护进程主循环有兜底（一轮出异常不会把整个后台带走）', _guard,
       'mode_daemon 的主循环里没找到 try / except 兜底')

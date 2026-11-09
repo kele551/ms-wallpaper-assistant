@@ -2,17 +2,20 @@
 # 作者: 海风（kele551）   https://github.com/kele551/ms-wallpaper-assistant
 #
 # 2026-10-23（V2.4.0）: 界面从"文本菜单"整体改成"网页控制台"。
-#   * 本文件只做三件事: 隐藏控制台窗口 → 起本地服务 → 打开浏览器。
+#   * 本文件只做三件事: 隐藏控制台窗口 → 起本地服务 → 打开控制面板。
+#     2026-11-09 起默认由 launcher.py 用系统 WebView2 开**独立原生窗口**，
+#     本文件在这种模式下只起服务、绝不开浏览器（-Gui / BWPANEL_GUI=1）。
+#     --browser / 组件缺失时才走原来的「起服务 + 开浏览器」回退路径。
 #   * 界面在 core.ps1 内嵌的 panel.html 里；页面上的每一项都落到 Invoke-BwPanelAction，
 #     改的是同一份 config.json / state.json —— 不是另做一套设置。
 #   * 为什么页面必须内嵌在 core.ps1: 老客户端的升级循环只认 core.ps1 / menu.ps1 两个文件名，
 #     多一个文件他们永远收不到。所以老用户点"检查更新"就能拿到整套控制台，不用换 exe。
 #   * 后台守护（--daemon）本来就是 core.ps1 在跑，与本文件无关，不受影响。
-param([switch]$DryRun)
+param([switch]$DryRun, [switch]$Gui)
 . (Join-Path $PSScriptRoot 'core.ps1') -DryRun:$DryRun
 
 # 版本常量: 发版脚本与发版自检都认这一行, 不要挪走、不要改格式。
-$global:BWVersion = '2.4.4'
+$global:BWVersion = '2.4.5'
 
 # 隐藏自己的控制台窗口: 界面已经是网页了，再留一个黑框就不伦不类。
 # 隐藏失败也不要紧 —— 功能不受影响，只是那个窗口还在。
@@ -81,13 +84,16 @@ try {
 } catch {}
 }
 
+# 2026-11-09: 独立 GUI 窗口由 launcher.py 创建; 本脚本只负责把服务起好、绝不开浏览器。
+$gui = ($Gui -or ($env:BWPANEL_GUI -eq '1'))
 # BWPANEL_NOBROWSER=1 只在自检/演练里用: 起服务但不开浏览器（不打扰正在用电脑的人）
-$noBrowser = ($env:BWPANEL_NOBROWSER -eq '1')
+$noBrowser = ($env:BWPANEL_NOBROWSER -eq '1') -or $gui
 # 2026-10-23: 已经有一个控制台在跑就直接复用它 —— 以前每点一次图标就多起一个服务进程,
-# 旧的要等 30 分钟闲置才退, 同时挂着好几个(每个约 140MB)。自检/演练(-NoBrowser)不复用。
-if (-not $noBrowser) {
+# 旧的要等 30 分钟闲置才退, 同时挂着好几个(每个约 140MB)。
+# GUI 模式也复用(传 -NoBrowser: 只复用服务、不弹浏览器); 自检/演练(-NoBrowser 且非 GUI)不复用。
+if ($gui -or -not $noBrowser) {
   $reused = $false
-  try { $reused = [bool](Open-BwExistingPanel) } catch { $reused = $false }
+  try { $reused = [bool](Open-BwExistingPanel -NoBrowser:$noBrowser) } catch { $reused = $false }
   if ($reused) { exit 0 }
 }
 try {

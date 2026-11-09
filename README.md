@@ -84,13 +84,13 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 下载
 
-### 👉 [点这里下载 v2.4.3（GitCode 直连，约 7.3 MB 的 `桌面壁纸.exe`）](https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v2.4.4/%E6%A1%8C%E9%9D%A2%E5%A3%81%E7%BA%B8.exe)
+### 👉 [点这里下载 v2.4.5（GitCode 直连，约 12.2 MB 的 `桌面壁纸.exe`）](https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v2.4.5/%E6%A1%8C%E9%9D%A2%E5%A3%81%E7%BA%B8.exe)
 
 > 境外仓库国内时常连不通（附件在 `release-assets.githubusercontent.com`，实测这台机器直连 21 秒握不上手），
 > 所以**下载请走 GitCode**：上面这个链接点下去就是 `桌面壁纸.exe`，双击即用，不用解压。
-> 想要 zip（exe + `使用说明.txt`）或 GitHub 那份的，在 [GitHub v2.4.3 发行页](https://github.com/kele551/ms-wallpaper-assistant/releases/tag/v2.4.3)。
-> 两处的 `桌面壁纸.exe` / `MSWallpaperAssistant-v2.4.3.exe` 是同一个文件，SHA256 都是
-> `074DCC06FB96BAB9E1239DF164027AE72790D3F034AB66A2C0CC664E00EF6539`（本次打包产物；发布后会再从两个平台各取回一次逐字节比对）。
+> 想要 zip（exe + `使用说明.txt`）或 GitHub 那份的，在 [GitHub v2.4.5 发行页](https://github.com/kele551/ms-wallpaper-assistant/releases/tag/v2.4.5)。
+> 两处的 `桌面壁纸.exe` / `MSWallpaperAssistant-v2.4.5.exe` 是同一个文件，SHA256 都是
+> `6B4173DD015CA48D038ADE4C470A92240752C397A62F619257D230E53046FB8C`（本次打包产物；发布后会再从两个平台各取回一次逐字节比对）。
 
 > **下载主源：[GitCode](https://gitcode.com/kele551/ms-wallpaper-assistant)**（与热点 / 狐径同一口径）—— 境内直连快，
 > **发行版附件与 GitHub 同版本同字节**，三个平台都收 Issue / PR。
@@ -107,8 +107,8 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 > 下载后执行 `certutil -hashfile 桌面壁纸.exe SHA256` 比对即可；一致就是原版。
 > 处理办法：把这个 exe 加进杀软的信任/排除名单。源码全部公开，可自行查阅。
 >
-> **怎么升到 v2.4.3**：装过旧版的朋友，打开控制台点「检查更新 → 立即升级」，或等后台每日自检弹提示
-> （升级是拿线上版本号和本地版本号比的，本地低于 2.4.3 就会提示）；没收到提示、或觉得用着不顺畅
+> **怎么升到 v2.4.5**：装过旧版的朋友，打开控制台点「检查更新 → 立即升级」，或等后台每日自检弹提示
+> （升级是拿线上版本号和本地版本号比的，本地低于 2.4.5 就会提示）；没收到提示、或觉得用着不顺畅
 > （例如**壁纸重复得太快**），就重新下载上面那个包覆盖安装一次，配置与收藏都会保留。
 > 这版安装包新增（都经过实机测试）：
 > - **必应模式当天那张图，开机就换**：v2.4.2 及更早，如果前一天手动挑过一张别的日期的必应图，
@@ -124,7 +124,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 三步用起来
 
-**第 1 步** —— 解压，双击 `桌面壁纸.exe`，浏览器会自动打开控制台。
+**第 1 步** —— 解压，双击 `桌面壁纸.exe`，会弹出「桌面壁纸 · 控制面板」独立窗口（不用浏览器、不用装任何东西）。
 
 **第 2 步** —— 第一次打开，它会自动下载今天的必应图 + 一批聚焦图，屏幕上会告诉你壁纸存在哪。等几十秒就好。
 
@@ -136,21 +136,23 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 > 开这个开关不用管理员。它只是在 Windows「启动」文件夹里放一个快捷方式而已。
 
-> 想先看它长什么样：[演示视频](docs/demo/index.html)（页面内嵌播放，**v2.4.0 网页控制台实录**：39 秒、全字幕）。
+> 想先看它长什么样：[演示视频](docs/demo/index.html)（页面内嵌播放，**v2.4.0 控制台实录**：39 秒、全字幕；当时还是浏览器界面，v2.4.5 起换成独立窗口，按钮位置不变）。
 
 ---
 
 ## 控制台上都有什么
 
-界面是一个**本机网页控制台**（双击 exe 后浏览器自动打开，地址形如 `http://127.0.0.1:端口/`，
-只在你自己的电脑上，不联网、不上传任何东西；关掉标签页不影响换壁纸）。
+界面是一个**独立原生窗口**：Windows 自带的 WebView2 把本机控制台页面装进「桌面壁纸 · 控制面板」，
+无地址栏、无标签页，双击 exe 直接弹出，**不打开浏览器**。页面仍来自只绑 127.0.0.1 的本机服务
+（`http://127.0.0.1:端口/`），不联网、不上传任何东西；关掉窗口不影响换壁纸。
+老习惯想用浏览器看，给 exe 加参数 `--browser` 运行即可。
 
 <details>
 <summary><b>控制台上都有什么</b>（点击展开）</summary>
 
 
 ```
-┌ 桌面壁纸 · 控制台 ─────────────────────── 脚本 v2.4.3 · 主程序 v2.4.3 ┐
+┌ 桌面壁纸 · 控制台 ─────────────────────── 脚本 v2.4.5 · 主程序 v2.4.5 ┐
 │                                                                        │
 │  当前壁纸                      更换节奏                                │
 │   [大图]                        ── 间隔滑块（5~1440 分钟）+ 常用档位   │
@@ -215,7 +217,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 「更换节奏 → 壁纸填充方式」改完**立刻应用到当前这张壁纸**，当场就能看到效果。
 
-> 退出请点控制台底部「退出控制台」（关掉浏览器标签页只是关掉"遥控器"，后台照换）。
+> 退出请点控制台底部「退出控制台」，或直接关掉窗口（关掉的只是"遥控器"，后台照换）。
 
 看到喜欢的图，点「收藏这张」就收下了，再点一次取消。收藏够了到
 「更换节奏 → 只在收藏里轮换」打开，以后换出来的都是你自己挑过的图。
@@ -273,7 +275,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 好不好用、哪儿别扭、还想要什么功能 —— 都欢迎说，一句两句也行：**提 Issue**（推荐）[GitHub Issues](https://github.com/kele551/ms-wallpaper-assistant/issues)　·　[GitCode Issues](https://gitcode.com/kele551/ms-wallpaper-assistant/issues)，或直接在 [GitCode 仓库](https://gitcode.com/kele551/ms-wallpaper-assistant) 留言。
 
-顺手带上这几样能省一轮来回：**Windows 版本**（设置 → 系统 → 关于）· **程序版本号**（控制台左上角就写着，比如 `脚本 v2.4.0`）· **`wallpaper.log` 末尾十几行**（控制台「最近动作」能看到）。
+顺手带上这几样能省一轮来回：**Windows 版本**（设置 → 系统 → 关于）· **程序版本号**（控制台左上角就写着，比如 `脚本 v2.4.5`）· **`wallpaper.log` 末尾十几行**（控制台「最近动作」能看到）。
 
 ---
 
@@ -289,8 +291,10 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 版本迭代
 
-**当前最新：v2.4.4**（2026-11-05；只修一件事 —— 必应模式下前一天手动挑过别的日期的图，第二天开机不换当天那张。内容见 [CHANGELOG](docs/CHANGELOG.md)）。最近三代改了什么：
+**当前最新：v2.4.5**（2026-11-09；控制面板改成独立原生窗口，双击 exe 不再打开浏览器，并修好旧版「双击打不开」的打包资源路径问题。内容见 [CHANGELOG](docs/CHANGELOG.md)）。最近三代改了什么：
 
+- **v2.4.5**：控制面板改成独立原生窗口（系统 WebView2 承载原来的页面），双击 exe 不再打开浏览器；
+  组件不可用时自动回退浏览器并记日志，也可用 `--browser` 手动切回。页面功能一项没减。
 - **v2.4.x**：界面从文本菜单改成本机网页控制台并收成「当前 / 图库 / 设置」三块；新增「本地文件夹」图源；必应模式锁定当天一图，且**开机就会换上当天那张**（v2.4.3）；主题配色落进配置文件不再随开机丢；面板端口避开浏览器禁行表；成品名定死 `桌面壁纸.exe`。
 - **v2.3.x**：菜单打开提速约三分之一；新增「必应模式」（只换必应当日图、一天一张）；面板仓库地址换成 GitHub 可点链接。
 - **v2.2.x**：产品更名「桌面壁纸」；升级可靠性、轮换顺序（永远按最旧优先）、硬盘占用（两个库都设上限 + 按屏幕挑画质）。
@@ -324,13 +328,16 @@ MIT（见 [LICENSE](LICENSE)）。
 
 ### 第三方组件与许可
 
-运行本程序**不需要安装任何第三方 Python 包**。下表列出全部外部组件，依赖清单同时放在
-仓库根目录的 [`requirements.txt`](requirements.txt)。
+最终用户**不需要安装任何第三方 Python 包**（也不用装 Python）：窗口组件已内嵌进单文件 exe。
+下表列出全部外部组件，依赖清单同时放在仓库根目录的 [`requirements.txt`](requirements.txt)。
 
 | 组件 | 用在哪 | 许可证 |
 | --- | --- | --- |
 | PowerShell（Windows 自带） | 程序主体 `core.ps1` / `menu.ps1` | 随 Windows 提供，不单独分发 |
-| Python 标准库 | 启动器 `launcher.py`（只负责启动与自动升级） | PSF License |
+| Python 标准库 | 启动器 `launcher.py` / `panel_gui.py`（启动、升级、后台调度、独立窗口） | PSF License |
+| WebView2 运行时（Windows 10/11 自带） | 承载控制面板页面的系统组件，不单独分发 | 随 Windows 提供 |
+| pywebview | 独立 GUI 窗口，打包时内嵌进 exe | BSD-3-Clause |
+| pythonnet | pywebview 在 Windows 上调用 WebView2 所需，打包时内嵌进 exe | MIT |
 | PyInstaller | **仅打包 exe 时**使用，产物是独立 exe | GPL-2.0-with-exception（官方明确：打包产物不受 GPL 约束） |
 | requests | **仅**发版工具 `tools/publish.py` 使用 | Apache-2.0 |
 
@@ -362,7 +369,7 @@ MIT（见 [LICENSE](LICENSE)）。
 - **维护者**：[@kele551](https://github.com/kele551)（海风），一人维护，同时担任提交者、审查者与发布批准者；Issue / PR 一般 **7 天内**给第一次答复，安全类问题按 [SECURITY.md](docs/SECURITY.md) 私下走、**3 天内**响应。
 - **许可**：MIT（见 [LICENSE](LICENSE)）；提交贡献即表示同意按同一许可发布。
 - **参与方式**：Issue 模板、PR 流程、代码风格、本地构建与自查、提交信息规范见 [CONTRIBUTING.md](docs/CONTRIBUTING.md)。
-- **发布纪律**：发版前必须跑发版前自检 `tools/preflight_release.py` 并全绿（版本一致性、成品与升级源同源、`.ps1` 的 BOM 与语法、对外文档不含私人邮箱），红一条不许发；[.github/workflows/build.yml](.github/workflows/build.yml) 在 Windows runner 上真实打包并输出 SHA256（每天构建只需 `pyinstaller`，运行主程序**零第三方依赖**）。
+- **发布纪律**：发版前必须跑发版前自检 `tools/preflight_release.py` 并全绿（版本一致性、成品与升级源同源、`.ps1` 的 BOM 与语法、对外文档不含私人邮箱），红一条不许发；[.github/workflows/build.yml](.github/workflows/build.yml) 在 Windows runner 上真实打包并输出 SHA256（每天构建需要 `pyinstaller` / `pywebview` / `pythonnet`，最终用户运行**零安装依赖**）。
 
 ---
 
@@ -371,7 +378,7 @@ MIT（见 [LICENSE](LICENSE)）。
 不想下载现成 exe、想自己从源码打一份的话，最短路径就是下面三步（**Windows 10/11 x64 + Python 3.11 及以上**）：
 
 ```powershell
-pip install "pyinstaller==6.22.3"        # 只有打包用得到；运行主程序零第三方依赖
+pip install -r requirements.txt          # 只有打包用得到；最终用户零安装依赖
 python build-exe.py --release            # 出成品
 python tools/preflight_release.py        # 发版前自检：全绿才算可用
 ```

@@ -63,7 +63,7 @@ images stay on your own machine.
 - GitHub Releases (same assets; this is where the code is pushed first): <https://github.com/kele551/ms-wallpaper-assistant/releases>
 
 Unzip the archive and double-click `桌面壁纸.exe` (Windows 10/11 x64). Installs made before the 2026-10-12 rename (`微软壁纸助手.exe`) or before the 2026-10-25 file-name fix (`壁纸助手.exe`) keep their old file name — same program, and in-place upgrades preserve whatever name you already have. The UI is a
-control panel in your browser (Chinese); click **立即换一张** to switch now, and the
+standalone native window (Chinese, powered by Windows' built-in WebView2); no browser is opened. Click **立即换一张** to switch now, and the
 **开机自动换** switch in 「更换节奏」 to turn automatic rotation on or off.
 Version: right-click the exe → Properties → Details.
 

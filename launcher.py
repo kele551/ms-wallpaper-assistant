@@ -27,9 +27,10 @@
 
 命令行
 ------
-  (无参数)     打开菜单
+  (无参数)     打开独立控制面板窗口（原生窗口，不依赖浏览器）
   --daemon     后台常驻, 按 config.json 的 cycle_minutes 自动换壁纸 (给"开机自启"用)
   --once       不常驻, 只跑一轮 (调试用)
+  --browser    用浏览器打开原来的网页控制台（独立窗口不可用时手动回退）
   --stop       通知正在跑的 --daemon 退出
 """
 import io
@@ -43,9 +44,10 @@ import subprocess
 import sys
 import time
 import datetime
+import panel_gui
 import ctypes
 
-VERSION = '2.4.4'
+VERSION = '2.4.5'
 # 【2026-10-16 升级通道加固】内置的 Ed25519 **公钥**（离线生成，公开无妨、本来就要随程序分发）。
 # 升级源 version.json 必须带一份同目录的 `version.json.sig`（128 个十六进制字符 = 64 字节签名），
 # 用这把公钥验过才认；验不过 / 没签名 / 签名格式不对，一律**拒绝**（fail-closed，见 mode_verify_update）。
@@ -470,6 +472,34 @@ def ver_tuple(v):
         return (0,)
 
 
+def _sha256_file(p):
+    try:
+        h = hashlib.sha256()
+        with open(p, 'rb') as f:
+            for chunk in iter(lambda: f.read(65536), b''):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return ''
+
+
+def _payload_manifest(d):
+    try:
+        return json.load(open(os.path.join(d, '.payload_sha.json'), encoding='utf-8'))
+    except Exception:
+        return {}
+
+
+def _save_payload_manifest(d, m):
+    try:
+        tmp = os.path.join(d, '.payload_sha.json.tmp')
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(m, f)
+        os.replace(tmp, os.path.join(d, '.payload_sha.json'))
+    except Exception:
+        pass
+
+
 def sync_payload(d):
     _write_launcher_txt(d)   # 2026-10-12: 见 _write_launcher_txt —— 所有 return 分支之前都过这一道
     src = payload_src()
@@ -504,22 +534,36 @@ def sync_payload(d):
                 shutil.copy2(s, os.path.join(d, f))
         return d, False
     if cur == VERSION:
-        # 【2026-10-10 修·载荷缺失时会静默退回旧版】原来这里写的是
-        #     if cur == VERSION and not missing: return d, False
-        # —— 版本号相同、但**少了任何一个** payload（用户很容易顺手删掉
-        # "使用说明.txt"或图标）时，守卫就不成立，直接落到下面那段破坏性路径：
-        # 把 exe 内嵌的四份**全量覆盖**一遍、并把 .version 写回 exe 版本。
-        # 为什么这是真问题：**在线升级可以只更新脚本、不动 exe**（升级源的 scripts
-        # 段就是干这个的），那种情况下数据目录里的 core.ps1 / menu.ps1 会比
-        # exe 内嵌的更新，而版本号**恰好相同** —— 于是一次"补个缺失文件"的动作，
-        # 会把热更过来的新脚本**静默换回 exe 里的旧版**，界面与行为退回旧版且毫无提示。
-        # 与上面"脚本比 exe 新"那一支同一个口径：**只补真正缺失的，绝不覆盖已存在的**。
-        # （代价：同版本下"脚本被改坏"不再由这里兜底 —— 那条路走的是升级源的
-        #   sha256 校验与 .bak 回滚，不该靠启动时无条件覆盖来修。）
-        for f in missing:
+        # 2026-11-09: 同版本重打包（修 bug / 换页面）时 exe 内嵌脚本变了、.version 没变，
+        # 旧的「只补缺失」会让真实数据目录永远跑旧脚本 —— 实测表现：面板还是旧版、
+        # /api/state 没有 nextSwapAt、倒计时根本不出现。
+        # 用「上次由本 exe 释放出去的哈希」区分两种改动：
+        #   数据目录 == 旧释放哈希 且 != 本次内嵌 -> exe 换了，覆盖；
+        #   数据目录与两者都不同 -> 热更/外部修改，原样保留（绝不覆盖，保住热更语义）。
+        man = _payload_manifest(d)
+        legacy = not bool(man)   # 旧安装从没写过清单：按「同版本 exe 重建」一次性迁移
+        for f in PAYLOAD_FILES:
+            dst = os.path.join(d, f)
             s = os.path.join(src, f)
-            if os.path.isfile(s):
-                shutil.copy2(s, os.path.join(d, f))
+            if not os.path.isfile(s):
+                continue
+            if not os.path.isfile(dst):
+                shutil.copy2(s, dst)
+                man[f] = _sha256_file(s)
+                continue
+            h_src = _sha256_file(s)
+            h_dst = _sha256_file(dst)
+            if h_dst == h_src:
+                man[f] = h_src
+            elif legacy or (man.get(f) and h_dst == man[f]):
+                # 无清单的历史安装 / 清单记录的正是上次由 exe 释放的哈希 -> exe 重建了，
+                # 同步到内嵌版本。有清单但本文件无记录 = 热更/外部改动，落到 else 保留。
+                shutil.copy2(s, dst)
+                man[f] = h_src
+                _note(d, '启动器: 同版本检测到脚本已更新, 已同步 ' + f)
+            else:
+                man.pop(f, None)   # 热更/外部改动: 保留且不纳入下次比对
+        _save_payload_manifest(d, man)
         return d, False
 
     if cur and cur != VERSION:
@@ -540,6 +584,8 @@ def sync_payload(d):
         s = os.path.join(src, f)
         if os.path.isfile(s):
             shutil.copy2(s, os.path.join(d, f))
+    _save_payload_manifest(d, {f: _sha256_file(os.path.join(src, f))
+                               for f in PAYLOAD_FILES if os.path.isfile(os.path.join(src, f))})
     with open(ver_file, 'w', encoding='utf-8') as fp:
         fp.write(VERSION)
     with open(os.path.join(d, '.files.json'), 'w', encoding='utf-8') as fp:
@@ -670,6 +716,16 @@ def run_cycle(d):
     return ps(os.path.join(d, 'core.ps1'), ['-Cycle'], no_window=True)
 
 
+def quick_swap(d):
+    """到点准时换图：core.ps1 -Quick 纯本地选图，绝不联网/下载/删图。成功返回 0。"""
+    return ps(os.path.join(d, 'core.ps1'), ['-Quick'], no_window=True)
+
+
+def run_cycle_async(d):
+    """维护（升级检查 / 补漏 / 补货）丢后台，不阻塞守护节拍与倒计时。"""
+    return ps(os.path.join(d, 'core.ps1'), ['-Cycle'], no_window=True, wait=False)
+
+
 # 换图间隔的允许范围(分钟), 与 core.ps1 里的 $global:BwLimit.cycle_minutes 保持一致。
 # 给上限不只是"讲道理": gap 超过约 41.9 亿分钟(≈7978 年)时, 算 target 会越过
 # datetime 的上限(9999-12-31)抛 OverflowError, 守护进程直接退出,
@@ -784,10 +840,33 @@ def sleep_watching_stop(stop_file, seconds, sleep=time.sleep, isfile=os.path.isf
 # ---------------------------------------------------------------- 各模式
 def mode_menu(d):
     # 2026-10-23 用户要求：「每次点开快捷图标，小黑窗不能弹出」。
-    # v2.4.0 起界面是浏览器里的网页控制台，menu.ps1 只起本地服务 + 开浏览器，
+    # v2.4.5 起默认走 panel_gui 的独立原生窗口；这里只作 --browser / 组件缺失时的回退。
     # 不需要控制台窗口；所以这里**不申请控制台**、也不建新窗口（CREATE_NO_WINDOW）。
     # 出错时 menu.ps1 会弹 WinForms 消息框，不依赖控制台。
     return ps(os.path.join(d, 'menu.ps1'), (), no_window=True)
+
+
+def _write_next_swap(d, at, reason=''):
+    """守护把权威的下次换图时刻落盘，供面板倒计时读取。
+
+    只在这个值真的变化时才写（临时文件 + 原子替换），每 30 秒一轮的循环
+    不会变成每秒写盘。面板读它，前端就不必再猜后台的 hold_until / 空闲暂停。
+    """
+    p = os.path.join(d, 'next_swap.json')
+    rec = {'at': int(at * 1000), 'reason': reason, 'pid': os.getpid()}
+    try:
+        cur = json.load(open(p, encoding='utf-8'))
+        if cur.get('at') == rec['at'] and cur.get('reason') == reason:
+            return
+    except Exception:
+        pass
+    try:
+        tmp = p + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(rec, f)
+        os.replace(tmp, p)
+    except Exception:
+        pass
 
 
 def mode_daemon(d):
@@ -814,6 +893,7 @@ def mode_daemon(d):
     #   表现就是"菜单说的时间到了却不换"。
     CHECK_S = 30    # 多久看一眼 state.json: 感知手动换图 / 停止信号
     LEAD_S = 2      # 到点后多等 2 秒, 避开 core.ps1 那边"差一点点没到"的边界
+    RETRY_S = 60    # 本地无图时的补图重试间隔（真实写进倒计时，不假等）
 
     prev = read_last_swap(d)
     hold_until = 0.0     # 这轮没换成图时的兜底: 至少等到这个时刻, 免得空转
@@ -859,6 +939,12 @@ def mode_daemon(d):
             target = compute_target(time.time(), max(base, hold_until),
                                     daily_pending, daily_hold,
                                     boot_pending, boot_hold)
+            # 权威时刻只由「上次换图 + 间隔」与 hold_until 决定。
+            # boot_pending / daily_pending 是**维护触发**（开机校对、跨天补当日图），
+            # 不是换图时刻 —— 拿 target 当倒计时会让守护一重启就归零，
+            # 10 分钟间隔被缩短成「重启即换」，实测确实提前换了图。
+            swap_at = max(base, hold_until) + LEAD_S
+            _write_next_swap(d, max(swap_at, time.time()), 'normal')
             if boot_pending and not boot_logged and target < max(base, hold_until):
                 # 只在本机第一次开机时说一句, 免得日志里刷屏
                 _note(d, '守护进程: 本次开机先跑一轮轮换 (必应当日图/填充方式要在这里校对)')
@@ -921,27 +1007,62 @@ def mode_daemon(d):
                 hold_until = away_until
                 daily_hold = away_until
                 boot_hold = away_until
+                # 人不在时后台确实要等，那就把真实等待时刻写出去：倒计时显示
+                # 的是"还有多久会再尝试"，而不是虚假地归零后干等。
+                _write_next_swap(d, away_until, 'away')
                 continue
             if away_logged:
                 _note(d, '用户回来了（已解锁/有操作），恢复换图')
                 away_logged = False
 
-            run_cycle(d)
+            # ---- 2026-11-09：到点必须换，且不能有任何等待 ----
+            # 旧链路直接跑 core.ps1 -Cycle：它先升级检查、补漏、联网抓图，
+            # 网络卡住时十几分钟都换不了图，倒计时却早已归零。
+            # 现在：先用纯本地通道 -Quick 在秒级内换完 -> 立刻发布下一轮权威时刻
+            # -> 维护动作丢后台，绝不占着节拍。倒计时与真实换图时刻严格同一刻。
+            # 只有真正到了「上次换图 + 间隔」才换图；开机校对/跨天补图这类
+            # 维护触发只跑后台巡检，不能提前换壁纸、也不能把倒计时清零。
+            wall_due = (ls is None) or (time.time() + LEAD_S >= max(base, hold_until))
+            if not wall_due:
+                boot_pending = False
+                if read_last_bing_date(d) == datetime.date.today().strftime('%Y-%m-%d'):
+                    daily_fails = 0
+                    daily_hold = 0.0
+                else:
+                    daily_hold = time.time() + daily_retry_seconds(daily_fails)
+                    daily_fails += 1
+                try:
+                    run_cycle_async(d)
+                except Exception:
+                    pass
+                prev = ls
+                _write_next_swap(d, max(base + LEAD_S, time.time()), 'normal')
+                continue
+            ok = (quick_swap(d) == 0)
             after = read_last_swap(d)
-            if after is None or after == ls:
-                # 这轮没换成 (网络不通 / 库是空的 / 必应还没发新图):
-                # 不空转, 隔一整轮再试
-                hold_until = time.time() + gap * 60
-            # 本次开机的第一轮已经跑过 -> 这个触发兑现了, 之后只看节拍和"跨天"
-            boot_pending = False
-            # 「今天换上必应当日图没有」要 core.ps1 真把 last_bing_date 写成今天才算兑现。
-            # 没写成(断网/下载失败)就按阶梯退避, 免得把"每天第一次"变成"每 5 分钟一次"。
+            # 跨天/必应当日图的退避照旧维护，别让 compute_target 每轮都判定「立刻到点」。
             if read_last_bing_date(d) == datetime.date.today().strftime('%Y-%m-%d'):
                 daily_fails = 0
                 daily_hold = 0.0
             else:
                 daily_hold = time.time() + daily_retry_seconds(daily_fails)
                 daily_fails += 1
+            boot_pending = False
+            try:
+                run_cycle_async(d)   # 升级检查 / 补漏 / 补货，后台跑，不阻塞倒计时
+            except Exception:
+                pass
+            if ok and after is not None and (prev is None or after != prev):
+                prev = after
+                hold_until = 0.0
+                # 换图完成即归零重置：倒计时从这一刻重新按间隔走，后台再慢也不影响。
+                _write_next_swap(d, time.time() + gap * 60 + LEAD_S, 'normal')
+                continue
+            # 本地一张可用图都没有：不假装换过，给出真实的短重试时刻，
+            # 倒计时显示「还有多久再试」而不是永远停在 00:00:00。
+            hold_until = time.time() + RETRY_S
+            _write_next_swap(d, hold_until, 'retry')
+            _note(d, '准时换图失败(本地无可用图), %d 秒后重试, 补货已转后台' % RETRY_S)
             prev = after
         except Exception as e:
             _note(d, '守护进程: 这一轮出错, 已自动继续 (%s: %s)' % (type(e).__name__, e))
@@ -1034,7 +1155,10 @@ def main():
         return mode_stop(d)
     if args & {'once', 'o'}:
         return mode_once(d)
-    return mode_menu(d)
+    if args & {'browser', 'b'} or os.environ.get('BWPANEL_BROWSER') == '1':
+        return mode_menu(d)
+    # 2026-11-09: 双击默认开独立 GUI 窗口，不再拉起浏览器；失败由 panel_gui 自己回退。
+    return panel_gui.run(d, mode_menu, _note, clean_env, PS_EXE, CREATE_NO_WINDOW)
 
 
 if __name__ == '__main__':

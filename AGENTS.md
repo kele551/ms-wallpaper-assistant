@@ -111,6 +111,11 @@ $e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile("core.p
   不跨库模糊搜第一个。「原图」只走 `/api/wall?p=<真图路径>` 或带令牌的
   `?panel=orig&name=`，**绝不退回 `?panel=thumb` 缩略图地址**；
   只有列表的 `<img>` 显示才用 thumb。
+- **控制面板默认独立窗口（2026-11-09 定的硬规矩）**：用户原话「不依赖浏览器打开控制面板」。
+  双击 exe 必须弹 `桌面壁纸 · 控制面板` 原生窗口（`launcher.py` + `panel_gui.py`，系统 WebView2 承载），
+  **绝不打开浏览器**；页面本体仍是 `core.ps1` 内嵌的 `panel.html`，不要另写一套界面、不要砍功能。
+  `--browser` / `BWPANEL_BROWSER=1` 是唯一的浏览器入口，只在独立窗口组件不可用时自动回退并记日志。
+  `menu.ps1` 在 GUI 模式（`-Gui` / `BWPANEL_GUI=1`）只起服务、绝不开浏览器。
 - **署名不要改**：`海风（kele551）`（中文）/ `HaiFeng (kele551)`（ASCII）/ `Copyright (C) 2026 HaiFeng (kele551)`。
 - **仓库里不许出现本机路径、私人邮箱、令牌**（`tools/preflight_release.py` 的 ⑥ 节会拦）。
 - 升级/自启/还原这类系统行为，改动后要能说清**怎么退回去**。

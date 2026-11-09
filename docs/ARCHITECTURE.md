@@ -14,7 +14,7 @@
 ```
 桌面壁纸.exe (launcher.py)
    ├─ 首次运行：把内嵌的 core.ps1 / menu.ps1 释放到 %LOCALAPPDATA%\壁纸助手 并记版本
-   ├─ 双击      ：开控制台 → 调 menu.ps1（菜单）
+   ├─ 双击      ：开独立控制面板窗口（panel_gui.py → 系统 WebView2）→ menu.ps1 起本机服务、不开浏览器
    ├─ 定时/后台  ：调 core.ps1 -Cycle（换下一张壁纸，不建任何窗口）
    └─ 升级      ：读线上 version.json → **Ed25519 验签** → 比对 → 下载并校验 sha256 → 换 exe / 热更脚本
 ```
@@ -26,6 +26,7 @@
 | 文件 | 职责 | 改它的场景 |
 |---|---|---|
 | `launcher.py` | 唯一入口：落地、数据目录、菜单/后台调度、热更新与升级校验、自启 | 改升级流程、启动行为、数据目录规则 |
+| `panel_gui.py` | 独立控制面板窗口：等本机服务就绪 → WebView2 原生窗口 → 失败才回退浏览器 | 改窗口标题/尺寸、单实例激活、回退行为 |
 | `core.ps1` | 核心库：图源下载、保存位置、库上限与清理、设壁纸 | 改图源、改换图逻辑、改清理规则 |
 | `menu.ps1` | 交互菜单（状态、换位置、看日志 `[L]`、检查更新…） | 改菜单文案与选项 |
 | `version.json` | **升级源**：版本号 + `core.ps1`/`menu.ps1` 的 sha256 + `launcher` 指纹；同目录还有 `version.json.sig`（Ed25519 签名） | 发版脚本自动生成，**不要手改** |
@@ -50,6 +51,7 @@
 | 改"图片存哪里"的挑选规则 | `core.ps1` 顶部 `Get-BwPickRoot` / `Get-BwDefaults` 一带（规则：优先本地固定磁盘里可用空间最大的非系统盘） |
 | 改库上限 / 清理策略 | `core.ps1` 里上限与 `Remove-BwFile`（超限时把**已经看过的、最老的**移进回收站，绝不删没看过的） |
 | 改菜单文字或选项 | `menu.ps1` |
+| 改控制面板页面内容 | `panel.html`（由 `tools/embed_panel.py` 生成后内嵌进 `core.ps1`；独立窗口与浏览器共用同一份页面） |
 | 改升级 / 自启 / 闪窗行为 | `launcher.py` |
 | 改打包产物名或内嵌文件 | `build-exe.py` |
 | 改门面与文档 | `README.md`、`docs/*.md` |
@@ -60,7 +62,7 @@
 
 ```powershell
 # 1) 只跑源码（不需要打包）
-python launcher.py            # 双击 exe 的等价物：控制台 + 菜单
+python launcher.py            # 双击 exe 的等价物：独立控制面板窗口
 python launcher.py --daemon   # 后台守护（不建窗口）
 
 # 2) 语法检查（改过 .ps1 必做，PowerShell 解析 0 错误才算过）

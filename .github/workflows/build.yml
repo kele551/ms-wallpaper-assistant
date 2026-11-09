@@ -36,9 +36,9 @@ jobs:
           # 与本地打包环境一致：Python 3.13
           python-version: '3.13'
 
-      - name: 安装 PyInstaller
-        # 本项目打包**只需要 pyinstaller**，主程序与打包脚本都只用标准库
-        run: python -m pip install --disable-pip-version-check "pyinstaller==6.22.3"
+      - name: 安装打包依赖
+        # 独立 GUI 窗口要 pywebview + pythonnet；这些只进构建机，最终用户不用装
+        run: python -m pip install --disable-pip-version-check "pyinstaller==6.22.3" "pywebview>=6.0" "pythonnet>=3.0"
 
       - name: 打包（仓库里的真实构建脚本）
         # --release 会额外产出带版本号的 exe 与 ASCII 名 zip；脚本自己会先检查

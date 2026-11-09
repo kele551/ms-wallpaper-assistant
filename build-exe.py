@@ -10,8 +10,10 @@
 
 前置条件
 --------
-    Python 3.9 以上, 并且装过 pyinstaller:
-        python -m pip install pyinstaller
+    Python 3.9 以上, 打包依赖见仓库根目录 requirements.txt:
+        python -m pip install -r requirements.txt
+    2026-11-09 起独立控制面板窗口需要 pywebview + pythonnet(+clr_loader);
+    这三个只进构建机、只影响 exe, 最终用户不用装 Python 也不用装任何包。
 
 产物
 ----
@@ -105,10 +107,20 @@ VSVersionInfo(
 
 
 def main():
+    # 2026-11-09: 独立窗口的后端依赖必须先装在构建机上。少了它 PyInstaller 照样能打包成功,
+    # 但打出来的 exe 缺 WebView2 后端 -> 双击时会静默回退浏览器。这里先卡住, 不留暗坑。
+    import importlib.util
+    _lack = [m for m in ('webview', 'pythonnet', 'clr_loader')
+             if importlib.util.find_spec(m) is None]
+    if _lack:
+        print('缺打包依赖: ' + ', '.join(_lack))
+        print('先装一次: python -m pip install -r requirements.txt')
+        return 1
+
     # 2026-10-16: _ed25519.py 也要进包 —— 它是 launcher.py --verify-update 的验签实现
     # (纯 Python、零第三方依赖)。不在 PAYLOAD_FILES 里(它不释放到数据目录), 但要跟 launcher.py
     # 一起拷进临时目录, PyInstaller 才会把它打进 exe, 否则 --verify-update 会报"验签模块缺失"。
-    missing = [f for f in PAYLOAD_FILES + ['launcher.py', '_ed25519.py']
+    missing = [f for f in PAYLOAD_FILES + ['launcher.py', '_ed25519.py', 'panel_gui.py']
                if not os.path.isfile(os.path.join(HERE, f))]
     if missing:
         print('缺文件, 没法打包: ' + ', '.join(missing))
@@ -142,6 +154,9 @@ def main():
         shutil.copy2(os.path.join(HERE, 'launcher.py'), os.path.join(work, 'launcher.py'))
         # 2026-10-16: 验签实现跟着 launcher.py 一起拷进临时目录, PyInstaller 才会打进去
         shutil.copy2(os.path.join(HERE, '_ed25519.py'), os.path.join(work, '_ed25519.py'))
+        # 2026-11-09: 独立窗口模块也要进临时目录; launcher.py 里 import panel_gui,
+        # PyInstaller 只有在这里找得到它才会把代码收进 exe。
+        shutil.copy2(os.path.join(HERE, 'panel_gui.py'), os.path.join(work, 'panel_gui.py'))
 
         vfile = os.path.join(work, 'file_version.txt')
         make_version_file(vfile, version)
@@ -152,6 +167,15 @@ def main():
             '--icon', os.path.join(HERE, ICON),
             '--version-file', vfile,
             '--add-data', 'payload;payload',
+            # 2026-11-09: 脚本资源一律放 payload/ —— launcher.py 的 payload_src()
+            # 固定读 _MEIPASS/payload。旧版把脚本放 exe 根目录, 数据目录里又缺脚本时,
+            # 双击 exe 服务起不来、界面完全没反应(用户报的「双击打不开」就是这么来的)。
+            '--hidden-import', 'panel_gui',
+            # pywebview / pythonnet / clr_loader 没有官方 PyInstaller hook, 必须显式收集
+            # 模块、.NET 程序集与 WebView2 Loader, 否则单文件 exe 里缺 DLL。
+            '--collect-all', 'webview',
+            '--collect-all', 'pythonnet',
+            '--collect-all', 'clr_loader',
             '--name', EXE_STEM,
             '--distpath', os.path.join(work, 'dist'),
             '--workpath', os.path.join(work, 'build'),
