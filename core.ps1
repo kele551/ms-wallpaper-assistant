@@ -6242,28 +6242,20 @@ function Find-BwWallFile([psobject]$c, [string]$name) {
   }
   return ''
 }
-# 参与轮换的图池。mode 决定池子怎么组:
-#   focus   = 聚焦库 + 开着的新图源库 + 本地文件夹(老行为, 混合池)
-#   commons = 只万象库(独立循环)
-#   picsum  = 只随拍库(独立循环)
-#   bing    = 本函数不会被走到(必应每日一张走 Invoke-BwCycle 规则 1, 不进队列)
+# 参与轮换的图池。四模式严格隔离 —— 选哪个模式就只在那个库里循环, 绝不跨库串图。
+#   2026-11-10 用户「四模式彻底隔离」: 聚焦/必应/万象/随拍各轮各的库, 互不混。
+#   此前 focus 是"随拍+万象"混合池、bing 也落到同一池, 导致聚焦模式出万象图、
+#   必应模式也串图 —— 根因是 11-08 把聚焦库移出轮换后没给各模式配回自己的库。
+#   11-08 移出聚焦库的理由是老库文件名是诗意标题(非三要素命名); 该问题已由 11-09 的
+#   approved_names.tsv 核定名机制在显示层解决, 恢复聚焦库不再有机翻乱串名风险。
 function Get-BwRotPool {
   $c = Get-BwConfig
   $m = Get-BwMode
+  if ($m -eq 'focus')   { return @(Get-BwSpotlightAll) }          # 聚焦模式 -> 只聚焦库
+  if ($m -eq 'bing')    { return @(Get-BwBingAll) }               # 必应模式 -> 只必应库
   if ($m -eq 'commons') { return @(Get-BwSrcFiles (Get-BwSrcDir $c 'commons')) }
   if ($m -eq 'picsum')  { return @(Get-BwSrcFiles (Get-BwSrcDir $c 'picsum')) }
-  # focus(默认): 已开启的新图源库(随拍/万象, 均已三要素命名) + 本地文件夹。
-  # 2026-11-08: 必应/聚焦是早期老库(名字是诗意标题, 不是国家+地理+主题), 按用户要求移出轮换,
-  #   不再混入严格三要素轮播; 两个老库文件原地保留, 仅不参与轮换。
-  # 两个新图源各自成模式时由上面的分支走各自的库, 这里只管 focus 混合池的组成。
-  $out = @()
-  foreach ($def in @(Get-BwSourceDefs)) {
-    if (Get-BwSrcEnabled $c $def.Key) { $out += @(Get-BwSrcFiles (Get-BwSrcDir $c $def.Key)) }
-  }
-  # 2026-10-24: 本地文件夹图源也进轮换池。没设置这个图源时 Get-BwLocalFiles 返回空数组,
-  # 对老用户等于没加这一行 —— 轮换顺序、队列、收藏全都不受影响。
-  $out += @(Get-BwLocalFiles $c)
-  return @($out)
+  return @()
 }
 # 一张图真的换到桌面了 -> 记进它所属源名下的 rot 表(老图回收靠它算间隔)。
 # 不是新图源的图就什么都不做; 写盘走原子写; -DryRun 一个字都不写。
@@ -7155,23 +7147,9 @@ function Sync-BwQueue($s) {
   $dir = $c.spotlight_save_dir
   if (-not (Test-Path -LiteralPath $dir)) { return 0 }
   $live = @{}
-  # 2026-10-09: "还在库里"要把其它图源的库也算上 —— 否则队列里那些图
-  # 每一轮都会被当成"已经被删掉"剔出去, 白抓一场。
+  # 2026-11-10 四模式彻底隔离: "还在库里"只认当前模式的库(Get-BwRotPool 已按模式返回各自库),
+  # 不再无条件把必应库算进来 —— 那会让切模式后上一库的旧图留在队列里被继续换出。
   foreach ($f in @(Get-BwRotPool)) { $live[[string]$f.Name] = $true }
-  # 开了「只看收藏」时队列里会混进必应库的图, 把它们也算作"还在",
-  # 否则这些图会在每次取图前被当成"已被删掉"剔得一干二净。
-  #
-  # 【2026-10-10 修·用户提议引出】这一句原来只在 fav_only 时才跑, 现在**无条件跑** ——
-  # 因为"聚焦轮完就轮必应库"(见 Get-BwFreshQueue)会把必应图排进**常规队列**。
-  # 不放开的话: 队列里那 22 张必应在每次取图前都被 Sync-BwQueue 当"已删除"剔掉
-  # (必应库不在 Get-BwRotPool 里), 同时打出一行
-  # "队列里有 22 张已经不在库里 (被删除或移到别处), 已剔除" 的**假告警**,
-  # 而且必应图永远换不上桌面 —— 等于这次改动白做。
-  # 独立模式(commons/picsum): 队列里绝不该留必应图。切模式时旧队列可能还压着上一模式的
-  # 必应/聚焦图, 这里不再把它们算作"还在", 由 Get-BwFreshQueue 按新模式重洗。
-  if ((Get-BwMode) -ne 'commons' -and (Get-BwMode) -ne 'picsum') {
-    foreach ($f in @(Get-BwBingAll)) { $live[[string]$f.Name] = $true }
-  }
   $before = @($s.queue | Where-Object { $_ }).Count
   if ($before -eq 0) { return 0 }
   $s.queue = @($s.queue | Where-Object { $_ -and $live.ContainsKey([string]$_) })
@@ -8805,32 +8783,26 @@ function Invoke-BwOnTimeSwap {
     if ($s.last_wall) { $cur = [string]$s.last_wall }
     $used = @{}
     foreach ($h in @(Get-BwHist $s)) { if ($h) { $used[[string]$h] = $true } }
-    $mk = Get-BwModeSrcKey
+    # 2026-11-10 四模式彻底隔离: 到点换图只从当前模式的库取, 绝不跨库回退。
+    # 原实现本模式库取完后会依次退到聚焦库/必应库/随拍库, 于是"聚焦模式出万象图";
+    # 且那个随拍 fallthrough 用的 'snapshot' key 根本不存在(源定义只有 commons/picsum)。
+    # Get-BwRotPool 已改为按模式返回各自的库, 这里直接用它, 单一真源。
+    $mode = Get-BwMode
+    $tag  = switch ($mode) { 'focus' {'聚焦库'} 'bing' {'必应库'} 'commons' {'万象库'} 'picsum' {'随拍库'} default {'本模式库'} }
     $pools = @()
-    if ($mk) {
-      $pools += [PSCustomObject]@{ Tag = '本模式库'; Files = @(Get-BwSrcFiles (Get-BwSrcDir $c $mk)) }
-    } else {
-      $pools += [PSCustomObject]@{ Tag = '本模式库'; Files = @(Get-BwRotPool) }
-    }
-    $pools += [PSCustomObject]@{ Tag = '聚焦库'; Files = @(Get-BwSpotlightAll) }
-    $bingDir = [string]$c.bing_save_dir
-    if ($bingDir -and (Test-Path -LiteralPath $bingDir -PathType Container)) {
-      $pools += [PSCustomObject]@{ Tag = '必应库'; Files = @(Get-ChildItem -LiteralPath $bingDir -File -Filter *.jpg -ErrorAction SilentlyContinue) }
-    }
-    $snapDir = Get-BwSrcDir $c 'snapshot'
-    if ($snapDir -and (Test-Path -LiteralPath $snapDir -PathType Container)) {
-      $pools += [PSCustomObject]@{ Tag = '随拍库'; Files = @(Get-BwSrcFiles $snapDir) }
-    }
+    $pools += [PSCustomObject]@{ Tag = $tag; Files = @(Get-BwRotPool) }
     $gs = Get-BwScreenSize
     $sar = if ([int]$gs.H -gt 0) { [double]$gs.W / [double]$gs.H } else { 16.0 / 9.0 }
     foreach ($pool in $pools) {
       $files = @($pool.Files)
       if ($files.Count -eq 0) { continue }
-      # 没看过优先；其次才退到看过的。每池最多验 60 张，避免大库拖慢到点动作。
-      $pick = @($files | Sort-Object -Property Name | Select-Object -First 60)
-      $fresh = @($pick | Where-Object { -not $used.ContainsKey((Get-BwNameKey $_.Name)) })
-      $seen2 = @($pick | Where-Object { $used.ContainsKey((Get-BwNameKey $_.Name)) })
-      foreach ($f in (@($fresh) + @($seen2))) {
+      # 2026-11-10 用户定死「做过的图不能再做, 常看常新」: 只从没用过的里挑,
+      # 绝不退回到看过的。全用过了就返回失败 -> 守护走短重试 + 后台补新图,
+      # 不靠重复旧图填空(那正是同一张万象图反复出现的根因)。
+      # 全库范围挑没用过的(各库上限 200 张, 内存筛一遍很快), 再打散 —— 只取前 60 张会
+      # 永远卡在文件名升序的头部, 后面的图再新也轮不到, 不算"常看常新"。
+      $fresh = @($files | Where-Object { -not $used.ContainsKey((Get-BwNameKey $_.Name)) } | Sort-Object { Get-Random })
+      foreach ($f in @($fresh)) {
         $p = [string]$f.FullName
         if (-not $p -or $p -ieq $cur) { continue }
         if (-not (Test-Path -LiteralPath $p)) { continue }
