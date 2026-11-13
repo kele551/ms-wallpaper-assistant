@@ -84,13 +84,13 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 下载
 
-### 👉 [点这里下载 v2.4.6（GitCode 直连，约 12.2 MB 的 `桌面壁纸.exe`）](https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v2.4.7/%E6%A1%8C%E9%9D%A2%E5%A3%81%E7%BA%B8.exe)
+### 👉 [点这里下载 v2.4.7（GitCode 直连，约 12.5 MB 的 `桌面壁纸.exe`）](https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v2.4.7/%E6%A1%8C%E9%9D%A2%E5%A3%81%E7%BA%B8.exe)
 
 > 境外仓库国内时常连不通（附件在 `release-assets.githubusercontent.com`，实测这台机器直连 21 秒握不上手），
 > 所以**下载请走 GitCode**：上面这个链接点下去就是 `桌面壁纸.exe`，双击即用，不用解压。
-> 想要 zip（exe + `使用说明.txt`）或 GitHub 那份的，在 [GitHub v2.4.6 发行页](https://github.com/kele551/ms-wallpaper-assistant/releases/tag/v2.4.6)。
-> 两处的 `桌面壁纸.exe` / `MSWallpaperAssistant-v2.4.6.exe` 是同一个文件，SHA256 都是
-> `6D8113C07034E087114B208E36F4DB5681CC14074EC402863F0F44C1D4BFA605`（本次打包产物；发布后会再从两个平台各取回一次逐字节比对）。
+> 想要 zip（exe + `使用说明.txt`）或 GitHub 那份的，在 [GitHub v2.4.7 发行页](https://github.com/kele551/ms-wallpaper-assistant/releases/tag/v2.4.7)。
+> 两处的 `桌面壁纸.exe` / `MSWallpaperAssistant-v2.4.7.exe` 是同一个文件，SHA256 都是
+> `455C10B7269A0E0FD6B4EDB5CB704BCDCDA352FD0C0879CAED489A4DC4C5D4F9`（本次打包产物；发布后会再从两个平台各取回一次逐字节比对）。
 
 > **下载主源：[GitCode](https://gitcode.com/kele551/ms-wallpaper-assistant)**（与热点 / 狐径同一口径）—— 境内直连快，
 > **发行版附件与 GitHub 同版本同字节**，三个平台都收 Issue / PR。
@@ -107,8 +107,8 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 > 下载后执行 `certutil -hashfile 桌面壁纸.exe SHA256` 比对即可；一致就是原版。
 > 处理办法：把这个 exe 加进杀软的信任/排除名单。源码全部公开，可自行查阅。
 >
-> **怎么升到 v2.4.6**：装过旧版的朋友，打开控制台点「检查更新 → 立即升级」，或等后台每日自检弹提示
-> （升级是拿线上版本号和本地版本号比的，本地低于 2.4.6 就会提示）；没收到提示、或觉得用着不顺畅
+> **怎么升到 v2.4.7**：装过旧版的朋友，打开控制台点「检查更新 → 立即升级」，或等后台每日自检弹提示
+> （升级是拿线上版本号和本地版本号比的，本地低于 2.4.7 就会提示）；没收到提示、或觉得用着不顺畅
 > （例如**壁纸串模式、老图反复出现**），就重新下载上面那个包覆盖安装一次，配置与收藏都会保留。
 > 这版安装包新增（都经过实机测试）：
 > - **四种模式彻底隔离**：聚焦只换聚焦、必应只换必应、万象只换万象、随拍只换随拍，
@@ -151,7 +151,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 
 ```
-┌ 桌面壁纸 · 控制台 ─────────────────────── 脚本 v2.4.6 · 主程序 v2.4.6 ┐
+┌ 桌面壁纸 · 控制台 ─────────────────────── 脚本 v2.4.7 · 主程序 v2.4.7 ┐
 │                                                                        │
 │  当前壁纸                      更换节奏                                │
 │   [大图]                        ── 间隔滑块（5~1440 分钟）+ 常用档位   │
