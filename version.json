@@ -1,10 +1,10 @@
 {
-  "version": "2.4.6",
+  "version": "2.4.7",
   "min_launcher": "2.4.6",
-  "notes": "",
+  "notes": "命名修复：GPS坐标反查三要素中文名；面板UI：日期贴底、删除原图介绍块、所有模式标签统一；修复COM段长度bug导致EXIF参数丢失；队列计数修复",
   "scripts": {
     "core.ps1": {
-      "sha256": "591886B30E5939CD20AEFE73C579C2A1B3EA1AAFF50C6721149A0971379E46AA",
+      "sha256": "DD0352FB20DDF6373644F5E80228AFF542D4605779E841361AF8B02BB36B37E0",
       "url": "https://gitcode.com/api/v5/repos/kele551/ms-wallpaper-assistant/raw/core.ps1?ref=main"
     },
     "menu.ps1": {

@@ -64,6 +64,19 @@ $e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile("core.p
   离线词典的天花板是「达标但平实」，需要文采时可逐张润色，不硬凑。
   **禁止在原名带地理信息时退回看图编**；候选按「有地理标签」优先排序，
   只调顺序、不硬排除（精确 16:9 合格率低，硬排除会拖慢补货）。
+- **地理位置以页面 GPS 坐标为准，不从描述文字猜地名（2026-11-12 定的硬规矩）**：
+  用户原话：「图片的地理位置依靠页面里的坐标来判断」。
+  Commons 图片页面带相机坐标（`extmetadata.GPSLatitude/GPSLongitude`），
+  这是作者实拍时记录的真实位置，比描述文字里的英文/法文地名可靠得多。
+  命名时**国家和具体地名优先从坐标反查**，描述文字只用来提取画面主体
+  （湖、大坝、瀑布、教堂、山脉、城市天际线等），不从描述句子里硬抠地名。
+  反查结果必须是三要素：**国家 + 具体地名（城市/公园/湖泊/山脉）+ 画面主体**，
+  拼成一句通顺中文短句。坐标反查认不出时（边界地带、无人区、坐标缺失），
+  才退回描述/分类文字提取地名；仍然认不出的，进 `approved_names.tsv` 人工核定，
+  **绝不编地名、绝不把数字海拔翻成"米高"这类残句、绝不吞掉湖名/山名等主体词**。
+  当前离线坐标表 `Get-BwGeoFromCoord` 只覆盖主要城市和国家腹地矩形，
+  认不出具体地名是常态——后续应接在线反查（OpenStreetMap Nominatim，
+  免费、无需密钥、限速 1 次/秒，与现有 Commons 1.5 秒间隔兼容）来补全。
 - **例外：原名没有国家地理元素时，只能看图编文件名（2026-11-06 用户补充）**：
   「如果文件名字没有国家地理元素，只能看图编文件名」。当 Commons 原始作品名 /
   描述 / 分类里确实**不含任何国家、城市、地标**，且连画面主体也认不出时
@@ -200,6 +213,25 @@ GitHub Issues 里带 `good first issue` / `help wanted` 标签的条目，每条
     "correct but plain", so hand-polish is allowed. Never fall back to visual captions
     when the original title carries geography. Geo-tagged candidates are sorted first,
     never hard-filtered (exact 16:9 yield is low; filtering slows refills).
+  - **Location comes from page GPS coordinates, not from parsing description text
+    (hard rule, 2026-11-12)**: user's words -- "the image's geographic location
+    must be determined by the coordinates on the page." Commons pages carry
+    `extmetadata.GPSLatitude/GPSLongitude` recorded by the photographer at the
+    time of shooting, which is far more reliable than place names embedded in
+    English/French description text. Country and concrete place name must be
+    resolved FROM THE COORDINATES first; the description text is used ONLY to
+    extract the subject (lake, dam, waterfall, church, mountain, skyline), not
+    to mine place names out of sentences. The result must be the three elements:
+    country + concrete place (city / park / lake / mountain) + subject, woven
+    into one fluent Chinese sentence. When coordinate reverse-lookup fails
+    (border areas, wilderness, missing coords), fall back to description/category
+    text; if that also fails, the image goes into `approved_names.tsv` for
+    manual naming. NEVER invent a place, NEVER mangle an altitude number into
+    a fragment like "米高", NEVER swallow a lake/mountain name. The current
+    offline table `Get-BwGeoFromCoord` only covers major cities and country
+    heartland rectangles -- an online reverse-geocoder (OpenStreetMap Nominatim,
+    free, no key, 1 req/s, compatible with the existing 1.5s Commons interval)
+    should be added to fill in specific places.
   - **Exception: no geo in the original title -> look at the image (user, 2026-11-06)**:
     "If the file name has no country/geography element, the name can only be written
     by looking at the image." Only when Commons metadata contains no country, city or

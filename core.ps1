@@ -4101,9 +4101,57 @@ function Get-BwCaptionCountry([string]$title, [string]$desc, [string]$cats) {
   }
   return '' # 多国/跨境画面保留原句，不能擅选一个国家。
 }
+# 2026-11-12 用户「图片文件名不用读取，直接读取页面的说明」:
+# 作品名(文件名)常是艺术化标题(The Green Excitement / The Blues)，拿它当翻译源就翻出
+# 「绿色的兴奋」。页面说明才是命名的真源 —— 描述为空/只有个维基链接时，分类里往往写着
+# 真正的主体和地点(Aurora in Stockholm County / Volcanic degassing in Kamchatka)。
+# 这里从分类里挑「内容分类」(主体+地点)，剔掉授权/上传者/设备/评选/日期等噪声，
+# 拼成一句英文描述，供 Get-BwCaptionInput 在描述不可用时当命名正文。全程本地、零积分。
+function Get-BwCatContent([string]$cats) {
+  if (-not $cats) { return '' }
+  $noise = '(?i)^(?:cc0|cc-by|public domain|self-published|uploaded|files? (?:uploaded|with)|images? by|photographs? by|pictures? by|featured|quality|valued|winners?|finalists?|pictures? of (?:the )?year|pictures? of the day|images? from wiki loves|wiki loves|images? used in|published photographs|media supported|taken with|photographs? taken on|photographs? taken in|\d{4} in |files with coordinates|information field template|images? of \w+ by |featured pictures|images? missing sdc|images? with annotations|special areas|protected areas with known|pictures? of week|picture of week)'
+  $parts = @()
+  foreach ($seg in ([string]$cats -split '/')) {
+    $c = ($seg -replace '^\s+', '' -replace '\s+$', '')
+    if (-not $c -or $c.Length -lt 5) { continue }
+    if ($c -match $noise) { continue }
+    # 纯地名/纯年份/noise 尾巴都不要；保留 "主体 in 地点" 这类有内容的短语
+    if ($c -match '^\d') { continue }
+    if ($c -match '(?i)\b(?:in|over|of|at)\b') { $parts += $c }
+  }
+  if (-not $parts.Count) { return '' }
+  # 去重并按长度排，短的(常是主体)在前，长的(常是主体+地点)在后，最多 4 条防长串
+  $uniq = @()
+  foreach ($p in ($parts | Sort-Object { $_.Length })) {
+    $dup = $false
+    foreach ($u in $uniq) { if ($u.IndexOf($p, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $dup = $true; break } }
+    if (-not $dup) { $uniq += $p }
+    if ($uniq.Count -ge 4) { break }
+  }
+  return (($uniq -join ', ') + '.')
+}
+# 2026-11-12 防闸门误杀: 描述整段很长时, 机翻后必然超过 Format-BwZhName 的 48 字上限,
+# 被整句清空 -> 退回词典泛名(赛狗场 Walthamstow Stadium 译对了的句子被丢, 结果写成「英国伦敦的森林」)。
+# 这里取信息最集中的第一句来翻译。只在原描述偏长时才截; 第一句过短(可能是 "United Kingdom." 这种
+# 国家单独成句)或就是整句时不动, 避免误伤本来就短的正文。英文句号切分, 避开缩写误切。
+function Get-BwFirstSentence([string]$text) {
+  $t = ([string]$text).Trim()
+  if ($t.Length -le 90) { return $t }
+  $m = [regex]::Match($t, '^.*?\.(?=\s+[A-Z]|\s*$)')
+  if ($m.Success -and $m.Value.Length -ge 20 -and $m.Value.Length -lt $t.Length) {
+    return $m.Value.Trim()
+  }
+  return $t
+}
 function Get-BwCaptionInput([string]$origname, [string]$desc, [string]$cats) {
   $title  = Get-BwCaptionSource $origname ($cats + ' ' + $desc)
   $detail = Get-BwCaptionSource $desc ($cats + ' ' + $origname)
+  # 描述是空/纯链接/模板套话时，用分类里的内容分类当命名正文，而不是退回艺术化作品名。
+  # 只在描述确实不可用时才启用，避免覆盖正常的完整描述。
+  $catText = Get-BwCatContent $cats
+  if ($catText -and (-not $detail -or $detail -match '^https?://' -or $detail.Length -lt 12)) {
+    $detail = $catText
+  }
   # 去掉开头的目录/地点代码（如 "HK TWD " "NYC " "LA "），它们不是描述正文，
   # 机翻会原样留下拉丁字母（"香港TWD荃湾…"），名字因含外文被闸门作废。
   # 只剥「连续全大写 2~4 字母、空格分隔」的前缀——"HK TWD" 命中、"New York" 这类
@@ -4126,19 +4174,34 @@ function Get-BwCaptionInput([string]$origname, [string]$desc, [string]$cats) {
     return $m.Value
   })
   $country = Get-BwCaptionCountry $title $detail $cats
+  # 2026-11-12 用户「不要我审核」: 描述是「X is situated on/in Y」时, 原来整句被当套话拒绝,
+  # 退回诗意标题(如 "ALMA's snowy mountains")导致主体和具体地名全丢。
+  # 现在改为: 提取 X 当主体, 提取 Y 当地名, 不拒绝。
+  $subjectFromLocated = ''
+  $locatedPlace = ''
+  if ($detail -match '(?i)^(.+?)\s+(?:is|are|was|were|has been)\s+(?:located|situated|found|based)\s+.*?\b(?:in|on|at)\s+the\s+(.+?)(?:\.|\()') {
+    $subjectFromLocated = $Matches[1].Trim()
+    $locatedPlace = $Matches[2].Trim()
+  }
   # 介绍有动作/构图时优先用完整句子；只有地名或模板提示时仍用作品名。
   $useDetail = $detail -and $detail.Length -le 800 -and $detail -notmatch '…|\.\.\.|(?i)this is a photo of|scheduled monument number|^Taken by|^Image ID:' -and
     # 2026-11-08 修复回归：描述是「X is a … located…」「This picture was taken…」
     # 「A wide-angle landscape photograph of…」这类套话时，作品名反而更准、更短。
     # 套话整句机翻会变差（Gopelafoss 是位于…），这里退回用作品名。
+    # 2026-11-12: 但如果已提取到主语(X is situated)，就用提取的主语，不拒绝。
+    (-not $subjectFromLocated) -and
     $detail -notmatch '(?i)^[A-Z].{0,60}?\b(is|are|was|were|has been)\b' -and
     $detail -notmatch '(?i)^(this|the)\s+(picture|photo|image|photograph)\b' -and
     $detail -notmatch '(?i)^(a|an)\s+(?:[a-z0-9-]+\s+){0,4}(photograph|picture|image|photo|landscape)\s+(of|showing|depicting|taken)\b' -and
     ($detail -match '(?i)\b(calling|singing|perched|standing|sitting|flying|swimming|walking|running|with|view|seen|sunset|sunrise|over|under|along|from)\b' -or
      $detail -match '(?i)\b(in|near|at|of|on|by|from|over|under|along)\s+[A-Z][a-z]{2,}')
   $text = $title
-  if ($useDetail) {
-    $text = $detail
+  if ($subjectFromLocated) {
+    # 用提取的主语当正文, 地点稍后加进 $allPlaces
+    $text = $subjectFromLocated
+  } elseif ($useDetail) {
+    # 长描述只取第一句翻译, 避免译句超长被 Format 整句清空(见 Get-BwFirstSentence 注释)。
+    $text = Get-BwFirstSentence $detail
     # 作品名明确写了性别、介绍却只写物种时，保留这个事实，不自行判断画面。
     if ($title -match '^(Male|Female)\s+(.+)$') {
       $sex = $Matches[1].ToLower(); $rest = $Matches[2]
@@ -4173,6 +4236,26 @@ function Get-BwCaptionInput([string]$origname, [string]$desc, [string]$cats) {
     if ($dup) { continue }
     $extra += $s
     if ($extra.Count -ge 4) { break }
+  }
+  # 2026-11-12: "X is situated on the Chajnantor plateau" 里的具体地名
+  # 原来 Get-BwCaptionPlaces 只抓逗号后大写开头的段, "on the Chajnantor plateau"
+  # 以小写 on 开头被漏掉。这里手动补进去。
+  if ($locatedPlace) {
+    foreach ($seg in @($locatedPlace -split ',')) {
+      $s = ($seg -replace '^[\s\.]+', '' -replace '[\s\.]+$', '')
+      $s = $s -replace '(?i)^(?:on|in|at|near)\s+the\s+', ''
+      $s = $s -replace '(?i)^the\s+', ''
+      if (-not $s -or $s -match '\d') { continue }
+      if ($s -notmatch '^[A-Z]') { continue }
+      $dup = $false
+      foreach ($e in $extra) {
+        if ($e.IndexOf($s, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or $s.IndexOf($e, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $dup = $true; break }
+      }
+      if (-not $dup -and $extra.Count -lt 4) {
+        $extra += $s
+        if ($allPlaces.Count -lt 6) { $allPlaces += $s }
+      }
+    }
   }
   if ($extra.Count) { $text = $text.TrimEnd(' ', '.') + ', ' + ($extra -join ', ') }
   # 国家放到句首而非句尾：机翻对句尾 ", China." 常直译成「在中国」，被通顺闸门以含「在」作废；
@@ -4354,6 +4437,11 @@ function Test-BwNameTriad([string]$name, [string]$countryZh, [string]$geo) {
   $geoOk = [bool]($city -and $city.Length -ge 2 -and
                   ($t.IndexOf($city, [StringComparison]::Ordinal) -ge 0))
   if (-not $geoOk) {
+    # 2026-11-12 用户「不要每张让我指正」: 页面明写出了具体地点(国家·城市), 名字却没带上,
+    # 就是吞掉地名——这是「俄罗斯的火山熔岩」「瑞典绿色的兴奋」的共同病灶。
+    # 原来只挡「泛词开头」, 艺术化作品名直译(绿色的兴奋)会被主体兜底放过。
+    # 现在只要有明确 city 就必须出现, 不再靠主体词蒙混; 交给入库闸的重算线用词典补回地名。
+    if ($city -and $city.Length -ge 2) { return $false }
     foreach ($g in $script:BwTriadGeneric) {
       if ($rest.StartsWith($g, [StringComparison]::Ordinal)) { return $false }
     }
@@ -4423,6 +4511,18 @@ function Get-BwPageCaption([string]$origname, [string]$desc, [string]$cats) {
   # 国家先翻：译文选优时要用它认「国家开头」的语序，也要核对译文有没有把国家丢掉。
   $countryZh = ''
   if ($inputText.country) { $countryZh = Get-BwZhText $inputText.country }
+  # 2026-11-12 防闸门误杀: 机翻把规范国名直译成另一套说法(United Kingdom->联合王国、
+  # United States->美利坚合众国), 与 geo 表/三要素表的「英国/美国」对不上, 4473 行
+  # 「译文里找不到 countryZh 就清空」会把本来写对了国家的译句误杀。统一成项目规范国名。
+  if ($inputText.country) {
+    $canon = @{
+      'United Kingdom'='英国'; 'United States'='美国'; 'United Arab Emirates'='阿联酋';
+      'Czech Republic'='捷克'; 'South Korea'='韩国'; 'North Korea'='朝鲜';
+      'Russia'='俄罗斯'; 'Vietnam'='越南'; 'Laos'='老挝'; 'Syria'='叙利亚';
+      'Tanzania'='坦桑尼亚'; 'Bolivia'='玻利维亚'; 'Venezuela'='委内瑞拉'
+    }
+    if ($canon.ContainsKey($inputText.country)) { $countryZh = [string]$canon[$inputText.country] }
+  }
   $zh = Get-BwZhText $inputText.text $countryZh
   # 页面专名被机翻意译掉时还原（岛城→长岛市 等），先修再过闸门，保证地理准确。
   $zh = Repair-BwGeoMistranslation $zh (($inputText.text) + ' ' + $origname + ' ' + $desc + ' ' + $cats)
@@ -4572,27 +4672,44 @@ function Get-BwLiteralPageName([string]$origname, [string]$desc, [string]$cats) 
 # 绝不编造、绝不把拉丁原题塞进池子。
 # 关键教训: 不能让多个函数各译一遍再拼(同一个 Burgkhammer 会译出 布格/伯克/布尔克 三种),
 # 必须以页面描述的译文($body)为唯一音译基准, 补国家/地理前先查重。
-function New-BwPageTriadName([string]$origname, [string]$desc, [string]$cats, [string]$body) {
+function New-BwPageTriadName([string]$origname, [string]$desc, [string]$cats, [string]$body, [string]$gps = '') {
   $all = ([string]$origname) + ' ' + ([string]$desc) + ' ' + ([string]$cats)
   $country = ''
-  try { $country = [string](Get-BwGeoCountry (Get-BwGeoLabel $all)) } catch {}
+  $geo = ''
+  # 2026-11-12 用户「地理位置依靠页面里的坐标来判断」: 有GPS坐标时Nominatim反查优先,
+  # 直接得到中文国家+具体地名, 不从描述文字硬抠。反查失败再退回文字词典。
+  if ($gps) {
+    try { $ng = [string](Get-BwNominatimReverse $gps) } catch { $ng = '' }
+    if ($ng) {
+      $country = Get-BwGeoCountry $ng
+      $geo = Get-BwGeoCity $ng
+    }
+  }
+  if (-not $country) {
+    try { $country = [string](Get-BwGeoCountry (Get-BwGeoLabel $all)) } catch {}
+  }
   if (-not $country) { return '' }
   $b = ([string]$body).Trim()
   # 相机品牌只属于 zhdesc, 不进名字
   $b = [regex]::Replace($b, '（[^）]*拍摄）', '')
+  # 2026-11-12 用户「名字要通顺」: 去掉描述里的废话前缀, 不进名字
+  # 例: "拍摄的洛杉矶动物园中的美洲豹" -> "洛杉矶动物园中的美洲豹"
+  $b = [regex]::Replace($b, '^(拍摄的|拍摄于|拍摄|照片显示|照片中|这张照片|图像显示|图片显示|一张|这是一张|在.*?拍摄的)', '')
+  $b = $b.TrimStart(' ', '，', ',', '的', '了')
   if ($b.StartsWith($country, [StringComparison]::Ordinal)) {
     $b = $b.Substring($country.Length).TrimStart(' ', '，', ',', '、')
   }
   if (-not $b) { return '' }
-  # 地理: 只取页面分类里真实出现的「Images of <Place> by ...」这类专名, 译不出或主体已含就不补。
-  $geo = ''
-  foreach ($seg in @([string]$cats -split '/')) {
-    $m = [regex]::Match($seg.Trim(), '(?i)^Images of ([A-Za-zÄÖÜäöüß .\-]+?)(?:\s+by\s+|$)')
-    if (-not $m.Success) { continue }
-    $zh = ''
-    try { $zh = [string](Get-BwZhText $m.Groups[1].Value.Trim()) } catch {}
-    $zh = [regex]::Replace($zh, '[^\u4e00-\u9fa5]', '')
-    if ($zh.Length -ge 2 -and $b.IndexOf($zh, [StringComparison]::Ordinal) -lt 0) { $geo = $zh; break }
+  # 地理: 坐标反查已有具体地名时直接用; 否则从页面分类里「Images of <Place>」提取。
+  if (-not $geo) {
+    foreach ($seg in @([string]$cats -split '/')) {
+      $m = [regex]::Match($seg.Trim(), '(?i)^Images of ([A-Za-zÄÖÜäöüß .\-]+?)(?:\s+by\s+|$)')
+      if (-not $m.Success) { continue }
+      $zh = ''
+      try { $zh = [string](Get-BwZhText $m.Groups[1].Value.Trim()) } catch {}
+      $zh = [regex]::Replace($zh, '[^\u4e00-\u9fa5]', '')
+      if ($zh.Length -ge 2 -and $b.IndexOf($zh, [StringComparison]::Ordinal) -lt 0) { $geo = $zh; break }
+    }
   }
   $name = $country + $geo + $b
   $name = [regex]::Replace($name, '[，,]\s*[，,]', '，').Trim(' ', '，', ',', '、')
@@ -4624,12 +4741,23 @@ function Get-BwApprovedName([string]$origname) {
 # 名字版本号: approved_names.tsv 的改动时刻。面板四条显示路径都吃这份白名单,
 # 前端拿它判断「名字改过了没」, 好把一次性加载的图库快照标成过期并重新拉取。
 function Get-BwNameVersion {
-  $v = '0'
+  # 2026-11-12 用户「都变成我审核了 / 老毛病」真正闭环 bug:
+  # 原来 nameVer 只看 approved_names.tsv 的 mtime。改 core.ps1 的命名逻辑(词典/闸门/派生)
+  # 时核定表没动 -> nameVer 不变 -> 已打开的面板 12 秒探针认为「没变化」不重拉,
+  # 一直挂缓存的旧名(如「安吉利斯港码头」), 只能靠关窗重开。这就是反复发作的
+  # 「逻辑改了、后端对了、界面还是旧名」。把 core.ps1 指纹并入 nameVer 后,
+  # 逻辑一变探针即感知 -> 前端 refresh -> 拿到新名, 形成闭环。多一个 Get-Item, 探针依旧很轻。
+  $parts = @()
   try {
     $p = Join-Path ([string]$global:BWRoot) 'approved_names.tsv'
-    if (Test-Path -LiteralPath $p) { $v = [string]((Get-Item -LiteralPath $p).LastWriteTimeUtc.Ticks) }
+    if (Test-Path -LiteralPath $p) { $parts += [string]((Get-Item -LiteralPath $p).LastWriteTimeUtc.Ticks) }
   } catch {}
-  return $v
+  try {
+    $cp = Join-Path ([string]$global:BWRoot) 'core.ps1'
+    if (Test-Path -LiteralPath $cp) { $parts += [string]((Get-Item -LiteralPath $cp).LastWriteTimeUtc.Ticks) }
+  } catch {}
+  if (-not $parts) { return '0' }
+  return ($parts -join '|')
 }
 function Add-BwPendingName([string]$origname, [string]$cand, [string]$desc, [string]$cats, [string]$link, [string]$camera) {
   $root = [string]$global:BWRoot
@@ -4653,11 +4781,46 @@ function Add-BwPendingName([string]$origname, [string]$cand, [string]$desc, [str
     if (-not $exists) { [System.IO.File]::AppendAllText($p, ($line + "`r`n"), $enc) }
   } catch {}
 }
-function Test-BwPoolChineseName([string]$name, [string]$origname, [string]$desc, [string]$cats) {
+function Test-BwPoolChineseName([string]$name, [string]$origname, [string]$desc, [string]$cats, [ref]$FixedName, [string]$gps = '') {
   if (-not $name) { return $false }
   if ($name -match '[A-Za-z]') { return $false }
   $cn = ([regex]::Matches($name, '[\u4e00-\u9fa5]')).Count
-  return ($cn -ge 2)
+  if ($cn -lt 2) { return $false }
+  # 2026-11-12 用户「两个图源新进的图都要按规则执行」: 入库这道闸原来只查「有俩汉字、
+  # 没英文字母」，比补名/显示层的三要素闸弱一大截 —— 翻译管线吐出「俄罗斯的火山熔岩」
+  # 这种把具体地名吞掉的泛称也能落盘 (实测 commons149461873 / 69582937)。
+  # 这里把入库闸接到同一条三要素规则上：名字必须国家开头 + 含具体地点 + 有画面主体。
+  # 两道兜底：
+  #   ① 页面地理能认出(国家·地点)但名字没带上时，先用 Repair-BwNameHead 补国家/地点再判；
+  #   ② 页面压根认不出地理(词典无词、坐标也无词)：2026-11-12 用户「三要素怎么又守不住」
+  #      实测根因就在这里——旧代码此时只查「有俩汉字、没英文字母」就无条件放行，
+  #      「松山自行车赛」这种没国家、没具体地名、主体还机翻错的烂名因此落盘。
+  #      现在改成：认不出地理也照过三要素终检(国家开头+具体地点+主体)，过不了就不落盘，
+  #      交 pending_names.tsv 等人工核定；地理识别本身已用坐标表覆盖补强，不会误杀大批图。
+  $geo = ''
+  # 2026-11-12 用户「地理位置依靠页面里的坐标来判断」: 有GPS坐标时, Nominatim在线反查优先,
+  # 不从英文描述文字里硬抠地名。反查失败再退回文字解析, 最后才用离线坐标表兜底。
+  if ($gps) { try { $geo = [string](Get-BwNominatimReverse $gps) } catch {} }
+  if (-not $geo) { try { $geo = [string](Get-BwGeoLabel ((([string]$origname) + ' ' + ([string]$desc) + ' ' + ([string]$cats)))) } catch {} }
+  if (-not $geo -and $gps) { try { $geo = [string](Get-BwGeoFromCoord $gps) } catch {} }
+  $check = [string]$name
+  if ($geo) {
+    $country = ''
+    try { $country = [string](Get-BwGeoCountry $geo) } catch {}
+    if ($country -and (-not $check.StartsWith($country, [StringComparison]::Ordinal))) {
+      try { $repaired = [string](Repair-BwNameHead $check $geo); if ($repaired.Length -ge $check.Length) { $check = $repaired } } catch {}
+    }
+    # 有地理，就按三要素硬判：国家开头 + 具体地点 + 主体，缺一不进池。
+    $ok = [bool](Test-BwNameTriad $check '' $geo)
+    if ($ok -and $FixedName) { $FixedName.Value = $check }   # 把补过地名/国家的名字回传，落盘与判定同源
+    return $ok
+  }
+  # 认不出地理：2026-11-12 起不再无条件放行。仍走同一条三要素终检，
+  # 保证「国家开头 + 具体地点 + 画面主体」这条底线在任何情况下都不被兜底绕过。
+  # 认不出又写不出三要素的候选宁可不落盘，进 pending_names.tsv 交人工核定。
+  $ok = [bool](Test-BwNameTriad $check '' '')
+  if ($ok -and $FixedName) { $FixedName.Value = $check }
+  return $ok
 }
 # 名称是完整中文短句，不按字符硬截；文件名和显示名均保留完整地名与数字。
 function Format-BwZhName([string]$s) {
@@ -4704,6 +4867,157 @@ function Format-BwZhName([string]$s) {
   # 太长的译文留作介绍，绝不产生半个地名/半句话的标题。
   if ($t.Length -gt 48) { return '' }
   return $t
+}
+# 2026-11-12 用户「没有地名，就参考坐标分析国家地理名称」：
+# 页面文字/离线词典都认不出地名时，用图片自己的 GPS 坐标离线反查国家（+主要城市）。
+# 纯本地、零联网、零积分，内置精简经纬度表。原则：宁可漏、不可错——
+# 只有坐标明确落入某国核心范围才返回；边界/小国/认不出返回空串，交 approved_names.tsv 兜底。
+# 输入 gps 形如 "≈13.817°N, 100.56°E" 或 "33.37°N, 75.52°E"；输出 "国家" 或 "国家·城市"。
+function Get-BwGeoFromCoord([string]$gps) {
+  if (-not $gps) { return '' }
+  $mLat = [regex]::Match([string]$gps, '(-?\d+(?:\.\d+)?)\s*°\s*([NS])')
+  $mLon = [regex]::Match([string]$gps, '(-?\d+(?:\.\d+)?)\s*°\s*([EW])')
+  if (-not ($mLat.Success -and $mLon.Success)) { return '' }
+  $lat = [double]$mLat.Groups[1].Value
+  if ($mLat.Groups[2].Value -eq 'S') { $lat = -$lat }
+  $lon = [double]$mLon.Groups[1].Value
+  if ($mLon.Groups[2].Value -eq 'W') { $lon = -$lon }
+  if ([math]::Abs($lat) -gt 90 -or [math]::Abs($lon) -gt 180) { return '' }
+  # 主要城市代表点：坐标在半径内返回「国家·城市」。半径按城市尺度给，宁小勿大。
+  # (lat, lon, 半径度, "国家·城市")
+  $cities = @(
+    @(13.756, 100.502, 0.35, '泰国·曼谷'),
+    @(33.684, 73.047, 0.45, '巴基斯坦·伊斯兰堡'),
+    @(34.020, 71.580, 0.45, '巴基斯坦·白沙瓦'),
+    @(32.627, 74.874, 0.35, '巴基斯坦·卡图亚'),
+    @(40.713, -73.996, 0.30, '美国·纽约'),
+    @(40.760, -73.979, 0.30, '美国·纽约'),
+    @(47.606, -122.332, 0.30, '美国·西雅图'),
+    @(51.507, -0.128, 0.30, '英国·伦敦'),
+    @(52.520, 13.405, 0.30, '德国·柏林'),
+    @(48.857, 2.352, 0.30, '法国·巴黎'),
+    @(41.903, 12.496, 0.30, '意大利·罗马'),
+    @(35.690, 51.389, 0.35, '伊朗·德黑兰'),
+    @(29.592, 52.583, 0.35, '伊朗·设拉子'),
+    @(49.283, -122.935, 0.30, '加拿大·温哥华'),
+    @(43.653, -79.384, 0.30, '加拿大·多伦多'),
+    @(53.350, -6.260, 0.25, '爱尔兰·都柏林'),
+    # 2026-11-12 用户「三要素守不住」实测: 松山竞轮场(33.8088N,132.7415E)在日本四国岛,
+    # 落在旧日本矩形(34~38N,135~140E)外、城市表也无日本点, 两路全空 -> 闸门退回弱兜底放行
+    # 「松山自行车赛」。补日本主要城市代表点(半径保守, 认不出不写错), 覆盖四国/九州/本州。
+    @(33.839, 132.766, 0.28, '日本·松山'),
+    @(33.590, 130.401, 0.28, '日本·福冈'),
+    @(34.385, 132.455, 0.28, '日本·广岛'),
+    @(34.693, 135.502, 0.30, '日本·大阪'),
+    @(35.011, 135.768, 0.30, '日本·京都'),
+    @(35.181, 136.907, 0.30, '日本·名古屋'),
+    @(35.676, 139.650, 0.35, '日本·东京'),
+    @(43.062, 141.354, 0.35, '日本·札幌'),
+    @(26.212, 127.681, 0.25, '日本·冲绳那霸')
+  )
+  foreach ($c in $cities) {
+    $d = [math]::Sqrt([math]::Pow($lat - [double]$c[0], 2) + [math]::Pow(($lon - [double]$c[1]) * [math]::Cos($lat * [math]::PI / 180), 2))
+    if ($d -le [double]$c[2]) { return [string]$c[3] }
+  }
+  # 国家级核心范围：保守矩形（minLat,maxLat,minLon,maxLon,国家）。
+  # 2026-11-12 实测教训：粗矩形会把邻国误判成另一国（黑山→意大利、老挝→泰国、
+  # 爱尔兰→英国、加拿大→美国），写错国家比认不出更糟。故只保留「腹地矩形」——
+  # 各国经纬度核心区、与邻国不重叠的部分；边界/小国/跨洲地带一律不收，宁可认不出。
+  # 只在「页面文字 + 离线词典 + 核定表」都没有国家时才会走到这里，不会覆盖已正确的图。
+  $countries = @(
+    @(22, 32, 68, 88, '印度'),          # 印度北部腹地（避开与巴基斯坦/尼泊尔交界）
+    @(30, 40, 48, 60, '伊朗'),          # 伊朗腹地
+    @(48, 54, 7, 14, '德国'),           # 德国中西部腹地
+    @(47, 53, 2, 8, '法国'),            # 法国北部腹地
+    @(51, 55, -3, 1, '英国'),           # 英格兰腹地（避开爱尔兰/苏格兰）
+    @(37, 43, -6, 2, '西班牙'),         # 西班牙腹地
+    @(40, 45.4, 10, 18, '意大利'),      # 意大利本土腹地（北界收到45.4，避开克罗地亚/斯洛文尼亚）
+    @(37, 42, 21, 27, '希腊'),          # 希腊本土腹地
+    @(9, 35, 45, 57, '沙特阿拉伯'),
+    @(9, 20, 99, 105, '泰国'),          # 泰国中南部腹地（避开老挝/缅甸）
+    # 2026-11-12 日本补四国/九州: 旧矩形(34~38N,135~140E)只覆盖本州东部, 四国岛松山
+    # (33.8N,132.7E)整块漏掉。按经度分三段保守覆盖, 与韩国(36~39N,127~129E)不重叠。
+    @(34, 38, 135, 141, '日本'),        # 本州东中部腹地
+    @(33, 35.5, 132, 135, '日本'),      # 四国岛腹地（松山/高知/德岛/香川）
+    @(31.5, 34, 130, 132, '日本'),      # 九州腹地（福冈/熊本/鹿儿岛）
+    @(33, 36, 130, 132, '日本'),        # 本州西部（广岛/冈山/山口）
+    @(36, 39, 127, 129, '韩国'),
+    @(-35, -12, 116, 145, '澳大利亚'),
+    # 2026-11-12 实测: 巴西粗矩形把玻利维亚 El Torno(17.86S,63.51W)误判成巴西,
+    # 而页面原题写 Bolivia、显示名也是「玻利维亚的峡谷航拍」。南美各国边界犬牙交错,
+    # 矩形无法安全区分, 删掉南美矩形——认不出交核定表, 绝不错写国家。
+    @(19, 32, -103, -87, '墨西哥'),
+    @(52, 60, 20, 30, '白俄罗斯')
+  )
+  foreach ($n in $countries) {
+    if ($lat -ge [double]$n[0] -and $lat -le [double]$n[1] -and $lon -ge [double]$n[2] -and $lon -le [double]$n[3]) {
+      return [string]$n[4]
+    }
+  }
+  return ''
+}
+# 2026-11-12 用户「图片的地理位置依靠页面里的坐标来判断」: 接 OpenStreetMap Nominatim
+# 在线反查。坐标直接得到中文国家+具体地名(城市/公园/湖/山), 不从描述文字硬抠。
+# 免费无密钥, 限速1次/秒(与Commons 1.5s间隔兼容), 结果缓存到本地JSON不重复请求。
+# 返回格式与 Get-BwGeoFromCoord 一致: "国家" 或 "国家·具体地名"。
+function Get-BwNominatimReverse([string]$gps) {
+  if (-not $gps) { return '' }
+  $mLat = [regex]::Match([string]$gps, '(-?\d+(?:\.\d+)?)\s*°\s*([NS])')
+  $mLon = [regex]::Match([string]$gps, '(-?\d+(?:\.\d+)?)\s*°\s*([EW])')
+  if (-not ($mLat.Success -and $mLon.Success)) { return '' }
+  $lat = [double]$mLat.Groups[1].Value
+  if ($mLat.Groups[2].Value -eq 'S') { $lat = -$lat }
+  $lon = [double]$mLon.Groups[1].Value
+  if ($mLon.Groups[2].Value -eq 'W') { $lon = -$lon }
+  if ([math]::Abs($lat) -gt 90 -or [math]::Abs($lon) -gt 180) { return '' }
+  # 缓存键: 精确到小数点后3位(约100米半径), 同一位置不重复请求
+  $key = ('{0:F3},{1:F3}' -f $lat, $lon)
+  $cachePath = Join-Path ([string]$global:BWRoot) 'nominatim_cache.json'
+  # 读缓存(PS 5.1 兼容: ConvertFrom-Json 返回 PSCustomObject, 转成 hashtable)
+  if (Test-Path -LiteralPath $cachePath) {
+    try {
+      $raw = Get-Content -LiteralPath $cachePath -Raw -Encoding UTF8
+      if ($raw) {
+        $cached = $raw | ConvertFrom-Json
+        if ($cached -and $cached.PSObject.Properties.Name -contains $key) {
+          return [string]$cached.$key
+        }
+      }
+    } catch {}
+  }
+  # 调 Nominatim (zoom=14 给出街区/自然特征级精度, accept-language=zh 返回中文名)
+  $ua = 'MSWallpaperAssistant/2.4.7 (https://github.com/kele551/ms-wallpaper-assistant)'
+  $url = "https://nominatim.openstreetmap.org/reverse?lat=$lat&lon=$lon&format=json&accept-language=zh&zoom=14"
+  $resp = $null
+  try {
+    Start-Sleep -Milliseconds 1100
+    $resp = Invoke-RestMethod -Uri $url -UserAgent $ua -TimeoutSec 10 -UseBasicParsing
+  } catch { return '' }
+  if (-not $resp -or -not $resp.address) { return '' }
+  $addr = $resp.address
+  $country = [string]$addr.country
+  if (-not $country) { return '' }
+  # 具体地名优先级: 找最能代表画面位置的专名(公园/湖/山/城市/镇), 排除国家名本身
+  $place = ''
+  foreach ($field in @('national_park','park','nature_reserve','lake','mountain','city','town','village','county','state_district','suburb')) {
+    $v = [string]$addr.$field
+    if ($v -and $v.Trim() -ne '' -and $v.Trim() -ne $country) { $place = $v.Trim(); break }
+  }
+  $result = if ($place) { "$country·$place" } else { $country }
+  # 写缓存(追加而非全量重写, 小文件直接覆盖)
+  try {
+    $obj = @{}
+    if (Test-Path -LiteralPath $cachePath) {
+      $raw2 = Get-Content -LiteralPath $cachePath -Raw -Encoding UTF8
+      if ($raw2) {
+        $old = $raw2 | ConvertFrom-Json
+        foreach ($p in $old.PSObject.Properties) { $obj[$p.Name] = [string]$p.Value }
+      }
+    }
+    $obj[$key] = $result
+    ($obj | ConvertTo-Json -Compress) | Set-Content -LiteralPath $cachePath -Encoding UTF8
+  } catch {}
+  return $result
 }
 # 2026-11-06 用户「两个新图源的图片，带国家地理元素，图片内容的通顺描述」：
 # 名字一律要带国家。国家只从两处来 —— Commons 元数据里写明的国家（Get-BwCaptionCountry），
@@ -5014,7 +5328,15 @@ function Get-BwPendingSrcName($m) {
   if (-not $original) { $original = [string]$m.title }
   $txt = ([string]$m.desc) + ' ' + $original
   $geo = ''
-  try { $geo = Get-BwGeoLabel $txt } catch {}
+  try { $geo = Get-BwGeoLabel ($txt + ' ' + ([string]$m.cats)) } catch {}
+  # 2026-11-12 用户「没有地名就参考坐标分析国家地理名称」：文本/离线词典认不出地名时，
+  # 用图片自己的 GPS 离线反查国家（+主要城市）兜底。认不出仍返回空，交 approved_names.tsv 核定。
+  # 2026-11-12 修正: 实际调用传入的 $m 是 hashtable, 其 .PSObject.Properties['gps'] 恒为 False,
+  # 用属性存在性判断会让坐标兜底永不触发(自测用 pscustomobject 才过, 是假象)。改判 $m.gps 真值,
+  # hashtable / pscustomobject 都兼容; 无 gps 或空串时自然跳过。
+  if (-not $geo -and $m.gps) {
+    try { $geo = [string](Get-BwGeoFromCoord ([string]$m.gps)) } catch {}
+  }
   $dict = ''
   # Get-BwSubjectName 自己就是「地名+主体」整句，不再拿 Get-BwFlowName 套第二层
   #（套过会写成「英国的英国伯明翰的街景」）。
@@ -5469,6 +5791,13 @@ function Get-BwGeoLabel([string]$text) {
     @{ 'liverpool street|exchange square' = '英国·伦敦' },
     @{ 'lower manhattan|jersey city|little island' = '美国·纽约' },
     @{ 'minato' = '日本·东京港区' },
+    # 2026-11-12 安吉利斯港图: 页面说明 "Port Angeles Wharf"(美国华盛顿州安吉利斯港), 分类
+    # "Pt Angeles Wharf"。旧词典一条不认 -> 显示层派生为空 -> 回吐旧名「安吉利斯港码头」(无国家)。
+    # 浏览器机翻会把 Port Angeles 误作「洛杉矶」, 绝不用浏览器译文, 只认页面原文罗马字。
+    @{ 'port angeles|pt angeles' = '美国·安吉利斯港' },
+    # 2026-11-12 松山竞轮场图: Commons 分类写 "Yodo, Matsuyama", 作品名 "Matsuyama Bicycle Race",
+    # 全是罗马字, 旧词典一条都不认。补这两条让文本线先认出, 不必等到坐标兜底。
+    @{ 'matsuyama' = '日本·松山' }, @{ 'yodo' = '日本·松山淀区' },
     @{ 'tokyo' = '日本·东京' }, @{ 'kyoto' = '日本·京都' }, @{ 'osaka' = '日本·大阪' },
     @{ 'aarhus|århus' = '丹麦·奥胡斯' },
     @{ 'quebec city|quebec' = '加拿大·魁北克城' },
@@ -5524,7 +5853,10 @@ function Get-BwGeoLabel([string]$text) {
     @{ 'crissy field' = '美国·旧金山克里西菲尔德' },
     @{ 'robson valley|mount robson' = '加拿大·罗布森山谷' },
     @{ 'esplanade bridge|marine bay' = '新加坡·滨海湾' },
-    @{ 'flinders lane|russell street' = '澳大利亚·墨尔本' }
+    @{ 'flinders lane|russell street' = '澳大利亚·墨尔本' },
+    # 2026-11-12 用户截图核对 Commons 原页：Kamchatka / Avachinsky 必须进具体地名表，
+    # 否则只认到 Russia 一只国家，名字退成「俄罗斯的火山熔岩」，具体火山口丢了。
+    @{ 'kamchatka|堪察加' = '俄罗斯·堪察加半岛' }
   )
   # 只写了国家没写城市时的兜底
   $countries = @(
@@ -5754,6 +6086,9 @@ function Get-BwSubjectName([string]$text, [string]$Prefer) {
   # 于是名字要么笼统要么被别的词抢走。这里单列一张「具体事物」表，排在最前面，
   # 只收页面介绍里真出现过的词，一条一条对得上中文，不猜。
   $specific = @(
+    # 2026-11-12 用户截图核对 Commons 原页：页面写的是 Avachinsky Volcano / volcanic crater，
+    # 不能退化成 nature 表里的「火山熔岩」；具体火山名优先于泛主体。
+    @{ 'avachinsky|avacha volcano' = '阿瓦钦斯基火山口' },
     # 页面描述明确为 A Coruña 的 city hall / Municipal Palace；具体主体优先于 facade 泛称。
     @{ 'city hall|town hall|municipal palace|ayuntamiento' = '市政厅' },
     @{ 'wooden jetty|jetty|breakwater|groyne' = '防波堤' },
@@ -6505,6 +6840,17 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
       if (-not $original) { $original = [string]$asset.title }
       $page = $null
       try { $page = Fetch-BwCommonsPage ([string]$asset.link) } catch {}
+      # 2026-11-12 修复：Flickr 导入的图 wikitext {{Information|description=}} 常为空，
+      # Fetch-BwCommonsPage 会退回分类拼凑("October 2024 solar storms in Oregon")，
+      # 而 extmetadata.ImageDescription(候选阶段已抓成 $asset.desc) 才有真正描述
+      # ("2024 Aurora Borealis from Tillamook, Oregon")。wikitext 描述弱时用 extmetadata 顶上，
+      # 否则具体地名(蒂拉穆克)和主体(极光)会被吞掉，名字退化成"美国俄勒冈州风光"。
+      $enDesc = [string]$asset.desc
+      if ($enDesc.Trim()) {
+        $hasRealSentence = [regex]::IsMatch($enDesc, '(?i)\b(from|in|near|at|over|on|by|of)\s+[A-Z][a-z]')
+        $pageWeak = (-not $page.desc) -or ($page.desc -notmatch '(?i)\b(from|in|near|at|over|on|by)\s+[A-Z][a-z]')
+        if ($hasRealSentence -and $pageWeak) { $page.desc = $enDesc.Trim() }
+      }
       if (-not $page -or $page.ok -ne $true -or (-not $page.desc -and -not $page.cats)) {
         $fail++
         Log ('来源页未读到正文，暂缓命名/下载并留待重试: ' + $original) 'WARN'
@@ -6514,6 +6860,9 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
       $nameText = $original + ' ' + [string]$page.desc + ' ' + [string]$page.cats
       $caption = $null
       try { $caption = Get-BwPageCaption $original ([string]$page.desc) ([string]$page.cats) } catch {}
+      # 2026-11-12 坐标反查提前: 命名阶段就要用GPS, 不能等闸门。
+      $gpsVal = [string]$asset.gps
+      if (-not $gpsVal) { try { $gpsVal = Get-BwCatCoord ([string]$asset.cats) } catch {} }
       # 2026-11-08 用户「原汁原味, 包括图片的名字」+「半天没有图片进来」:
       # 名字只取这张图自己的 Commons 页面(译文或原题), 不拼主题词、不补地理、不看图形容、不为通顺改写。
       # 删掉「三要素未齐就跳过候选」—— 它一轮拦掉 76 个候选, 是空库无限重试的主因。
@@ -6521,7 +6870,7 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
       if ($caption) { $subj = [string]$caption.zhname }
       # 页面译文被闸门清空时, 用页面字段重组三要素(每词都有页面出处); 仍不成就把原题忠实译成中文。
       if (-not $subj) {
-        $subj = New-BwPageTriadName $original ([string]$page.desc) ([string]$page.cats) ([string]$caption.zhdesc)
+        $subj = New-BwPageTriadName $original ([string]$page.desc) ([string]$page.cats) ([string]$caption.zhdesc) ([string]$gpsVal)
       }
       if (-not $subj) { $subj = Get-BwLiteralPageName $original ([string]$page.desc) ([string]$page.cats) }
       # 2026-11-09 用户「命名要读图片的页面意思」: Get-BwLiteralPageName 是整句 desc 的直译,
@@ -6538,10 +6887,26 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
       }
       # 2026-11-08 一句话规则: 池子里的图片名字只能是中文。译不出中文的图不进池子。
       # 闸放在抓完页面之后、下载原图之前: 不合格就不下载、不落盘, 直接换下一张候选。
-      if (-not (Test-BwPoolChineseName $subj $original ([string]$page.desc) ([string]$page.cats))) {
-        Log ('译不出中文名, 不入池: ' + $original) 'WARN'
-        if ($sceneKey -and $sceneSeen -and $sceneSeen.ContainsKey($sceneKey) -and $sceneSeen[$sceneKey] -eq 'pending') { $sceneSeen.Remove($sceneKey) }
-        continue
+      # 2026-11-12 用户「两个源新进的图都要按规则执行, 不要每张让我指正」:
+      # 闸门挡下的烂名(作品名艺术化直译/吞掉具体地点), 先用这张图自己的页面字段离线重算一个
+      # 带国家+具体地点+主体的合格名再判一次; 重算得出就入库, 仍不过才拒。全程本地零积分。
+      # gpsVal 已在上方提前计算(Nominatim反查用)。
+      if (-not (Test-BwPoolChineseName $subj $original ([string]$page.desc) ([string]$page.cats) ([ref]$subj) ([string]$gpsVal))) {
+        # 直接用页面字段走离线词典成句(Get-BwSubjectName), 不经过会沿用老烂名的 Get-BwPendingSrcName。
+        # 词典整句本身是「国家+具体地点+主体」(实测 Aurora in Stockholm County -> 瑞典斯德哥尔摩的极光)。
+        $retry = ''
+        try {
+          $retryText = ([string]$page.desc) + ' ' + $original + ' ' + ([string]$page.cats)
+          $retry = [string](Get-BwSubjectName $retryText 'urban')
+        } catch {}
+        if ($retry -and (Test-BwPoolChineseName $retry $original ([string]$page.desc) ([string]$page.cats) ([ref]$retry) ([string]$gpsVal))) {
+          $subj = $retry
+          Log ('命名闸门挡下后已按页面字段重算: ' + $original + ' -> ' + $subj)
+        } else {
+          Log ('命名闸门未过且无法重算, 不入池: ' + $original + ' (原名: ' + $subj + ')') 'WARN'
+          if ($sceneKey -and $sceneSeen -and $sceneSeen.ContainsKey($sceneKey) -and $sceneSeen[$sceneKey] -eq 'pending') { $sceneSeen.Remove($sceneKey) }
+          continue
+        }
       }
       # 2026-11-09 改: 取消「逐张核定」对下载的拦截。
       # 候选只要通过上面的中文名终检(名字已是中文、能看懂、非机翻腔), 就用自动生成的中文名直接入池下载;
@@ -6556,8 +6921,7 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
       # date = 作者拍摄日(与文件名前缀一致), shot_date 再显式记一份, added_date = 本机入库日。
       # 三者不混; 元数据写在图片自己身上, 拷走也不丢拍摄时间。
       # 2026-11-06 用户「三件事一起做」之二：EXIF 没有 GPS 时，退到页面分类的坐标（带 ≈ 标记近似）。
-      $gpsVal = [string]$asset.gps
-      if (-not $gpsVal) { try { $gpsVal = Get-BwCatCoord ([string]$asset.cats) } catch {} }
+      # 2026-11-12 坐标反查接入后 $gpsVal 已提前到闸门之前算好, 与命名闸门共用同一个值, 这里不再重算。
       $m = @{ date=$shotDay; shot_date=$shotDay; added_date=(Get-Date -Format 'yyyy-MM-dd');
               title=[string]$asset.title; copyright=[string]$asset.copy; author=[string]$asset.author;
               camera=[string]$asset.camera;
@@ -7142,6 +7506,20 @@ function Get-BwFavFiles($s) {
 # 才发现不存在、一张一张慢慢淘汰 (队列上百张时能明显感到卡)。
 # 注意: 库目录整个不见了 (移动硬盘没插、网络盘没连上) 时**不动队列** ——
 # 那种情况只是暂时读不到, 清掉队列等于把用户的轮换进度白丢了。
+# 2026-11-12 用户「做过的不能再做, 常看常新, 不能重复」: 两处换图路径要共用同一份
+# 「已经当过壁纸」名单 —— 历史(Get-BwHist) + 各图源轮换表(rot)。抽出来给 Sync-BwQueue
+# 和 Invoke-BwOnTimeSwap 共用, 杜绝「准时换图不重复、半小时到点却把旧图又放上去」的打架。
+function Get-BwUsedKeys($s) {
+  $used = @{}
+  foreach ($h in @(Get-BwHist $s)) { if ($h) { $used[[string]$h] = $true } }
+  foreach ($sdef in @(Get-BwSourceDefs)) {
+    try {
+      $r0 = Get-BwSrcRec (Get-BwSrcRecs) $sdef.Key
+      foreach ($kk in @((Get-BwSrcMap $r0.rot).Keys)) { $used[[string]$kk] = $true }
+    } catch {}
+  }
+  return $used
+}
 function Sync-BwQueue($s) {
   $c = Get-BwConfig
   $dir = $c.spotlight_save_dir
@@ -7152,9 +7530,14 @@ function Sync-BwQueue($s) {
   foreach ($f in @(Get-BwRotPool)) { $live[[string]$f.Name] = $true }
   $before = @($s.queue | Where-Object { $_ }).Count
   if ($before -eq 0) { return 0 }
-  $s.queue = @($s.queue | Where-Object { $_ -and $live.ContainsKey([string]$_) })
+  # 2026-11-12 修重复: 队列里"已经当过壁纸"的图也要剔除, 不能只剔被删的。
+  # 原来队列是补货时一次性洗好的固定列表, 用过的图不移除 -> 「半小时到点」从队列
+  # 又取到旧图, 与「准时换图」(只从没用过里挑) 打架, 于是同一批图反复出现。
+  $used = @{}
+  if ($global:BWNoRepeat) { $used = Get-BwUsedKeys $s }
+  $s.queue = @($s.queue | Where-Object { $_ -and $live.ContainsKey([string]$_) -and (-not $used.ContainsKey((Get-BwNameKey [string]$_))) })
   $gone = $before - @($s.queue).Count
-  if ($gone -gt 0) { Log ('队列里有 ' + $gone + ' 张已经不在库里 (被删除或移到别处), 已剔除') }
+  if ($gone -gt 0) { Log ('队列剔除 ' + $gone + ' 张不在库里或已当过壁纸的图, 只留没用过的') }
   return $gone
 }
 # 取队列里下一张。队列空了(或剩下的图被手动删了) -> 下载一批新的重洗。
@@ -7351,14 +7734,13 @@ function Get-BwNextWall($s) {
         Log ('库是空的: 已从「已看过」移回 ' + $backN + ' 张老图, 库里现在 ' + $libCount + ' 张')
       }
     }
-    if (($c.auto_fetch -or $recover) -and ($round -eq 1)) {
-      # 2026-11-06 用户「统一」: 空库补货不再拿"库容上限"当张数(上限统一成 200 后
-      #   会变成一次想补 199 张), 四个模式一律按 spotlight_per_cycle 走, 与聚焦一模一样。
+    # 2026-11-12: 有新鲜图就直接排队用, 不阻塞前台等下载(upload.wikimedia.org 超时 90 秒,
+    #   期间面板队列显示 0, 用户以为坏了)。下载新图放后台 backfill 即可。
+    if ($recover -and ($round -eq 1)) {
+      # 库空了或全用过了: 前台必须先下 1 张才能换
       $want = Get-BwSpotlightWant
-      if ($recover) { Log ($mode + ' 库是空的, 自动补救 (不等用户手动), 先下 1 张立刻换, 其余后台补') }
-      else { Log ('队列已空 (库中现有 ' + $libCount + ' 张), 先下 1 张立刻换, 其余后台补') }
+      Log ($mode + ' 库空或全用过, 自动补救 (不等用户手动), 先下 1 张立刻换, 其余后台补')
       $one = @()
-      # 库是空的: 这时候"有图"比"省着用"重要, 不受当日额度限制(单轮上限照旧生效)
       if (-not $global:BWDry) {
         if ($mode -eq 'focus') { $one = @(Invoke-SpotlightFetch -count 1 -Quiet -IgnoreDailyCap:$recover) }
         else { $one = @(Invoke-BwSrcFetch -key $mode -count 1 -Quiet -Force -IgnoreCap) }
@@ -7381,6 +7763,10 @@ function Get-BwNextWall($s) {
       }
       # 1 张都没下到 (网络不通/接口的图收干了) -> 不硬等整批, 直接重洗现有库
       Log ('先下的 1 张没下到, 不再硬等, 直接重洗现有库')
+    } elseif ($c.auto_fetch -and (-not $recover)) {
+      # 有新鲜图但 auto_fetch 开着: 不阻塞前台下载, 后台补新图, 新鲜图直接排队
+      Log ('有新鲜图可换, 后台补新图不阻塞')
+      Start-BwBackfill (Get-BwSpotlightWant)
     } elseif ($c.auto_fetch -or $recover) {
       Log ('队列又空了: 这一轮已经补过货, 直接重洗现有库')
     } else {
@@ -8781,8 +9167,8 @@ function Invoke-BwOnTimeSwap {
     $s = Get-BwState
     $cur = ''
     if ($s.last_wall) { $cur = [string]$s.last_wall }
-    $used = @{}
-    foreach ($h in @(Get-BwHist $s)) { if ($h) { $used[[string]$h] = $true } }
+    # 2026-11-12 与队列取图共用同一份「已用过」名单(历史+各源rot), 杜绝两处判据打架。
+    $used = Get-BwUsedKeys $s
     # 2026-11-10 四模式彻底隔离: 到点换图只从当前模式的库取, 绝不跨库回退。
     # 原实现本模式库取完后会依次退到聚焦库/必应库/随拍库, 于是"聚焦模式出万象图";
     # 且那个随拍 fallthrough 用的 'snapshot' key 根本不存在(源定义只有 commons/picsum)。
@@ -8819,6 +9205,11 @@ function Invoke-BwOnTimeSwap {
         $s.last_swap = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
         Add-BwHist $s $f.Name
         Add-BwSrcRot $p
+        # 2026-11-12 修: 这条「准时换图/点一下直接切」主通道原来只挑新图换上、从不维护 s.queue,
+        # 导致面板「队列剩余」一直堆着已用过的图(只在另一次 Invoke-BwSwap 时才被去重清空),
+        # 用户看到的数字长期失准。这里换图后同步调用 Sync-BwQueue, 与 Get-BwNextWall 同一把尺:
+        # 把刚换上的(已进 rot)和其余已用过的图一并从队列剔除, 面板数字即刻真实。
+        if ($global:BWNoRepeat) { [void](Sync-BwQueue $s) }
         Save-BwStateKeepFav $s
         Log ('准时换图(本地零等待) -> ' + $f.Name + ' [' + $pool.Tag + ']')
         return $true
@@ -9333,7 +9724,8 @@ $global:BwPanelHtml = @'
   .art img:not([src]){visibility:hidden}
   .art::after{content:"";position:absolute;inset:0;pointer-events:none;
     background:linear-gradient(to top,var(--scrim),var(--scrim-2) 56%,transparent 82%)}
-  .art .cap{position:absolute;left:var(--sp-4);right:var(--sp-4);bottom:var(--sp-3);z-index:2}
+  .art .cap{position:absolute;left:var(--sp-4);right:var(--sp-4);bottom:0;z-index:2;margin:0}
+  .art .cap h3,.art .cap p{margin-left:0;padding-left:0}
   .art .cap .badge{display:inline-block;font-size:var(--fs-micro);letter-spacing:.05em;color:var(--on-art);
     background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.22);border-radius:var(--r-pill);
     padding:3px var(--sp-2);margin-top:var(--sp-2)}
@@ -9578,7 +9970,6 @@ $global:BwPanelHtml = @'
               <canvas id="heroMosaic" class="mosaic" aria-hidden="true"></canvas>
               <div class="empty" id="heroEmpty">正在读取本机状态…</div>
               <div class="cap">
-                <!-- 2026-11-06 用户「这个标题移到图片的名字下方」：模式徽标放到标题下面。 -->
                 <h3 id="heroTitle">—</h3>
                 <span class="badge" id="heroBadge">当前壁纸</span>
                 <p id="heroSub">—</p>
@@ -9591,13 +9982,8 @@ $global:BwPanelHtml = @'
             </div>
             <!-- 2026-11-06 尊重作者 + 工业风：万象/随拍的三舱遥测条（CAMERA / RIGHTS / POSITION）。
                  只在当前壁纸属于这两个模式、且拿得到作者时出现；整块由 render() 生成。 -->
-            <div class="muted xs" id="heroCredit" style="display:none;padding:0 16px 12px;line-height:1.6;white-space:normal;overflow-wrap:anywhere"></div>
-            <!-- 2026-11-06 用户「留着吧，有些介绍的蛮详细的」：保留页面介绍（中文译文）这一块，
-                 只在有译文时出现；没有译文整块隐藏，不留空位。 -->
-            <div class="imeta" id="heroMeta" style="display:none">
-              <div class="imeta-h"><b>原图介绍</b><span class="muted xs" id="imetaFrom"></span></div>
-              <dl class="imeta-list" id="imetaList"></dl>
-            </div>
+            <div class="muted xs" id="heroCredit" style="display:none;padding:0 var(--sp-4) var(--sp-3);line-height:1.6;white-space:normal;overflow-wrap:anywhere"></div>
+            <!-- 页面介绍已移除：命名已经够好，不需要再显示原始描述。 -->
             <div class="monrow">
               <span class="muted xs lbl">显示器</span>
               <span class="chip on" id="chipScreen" title="多屏支持暂不做">主屏 —</span>
@@ -10551,11 +10937,8 @@ function render(s){
        必应/聚焦的前缀是微软发布日，保持「YYYY-MM-DD 的图」不变。
        取不到日期就不硬凑，只留换上的时间，依旧不露原始 id / 英文 slug。 */
     var _shotMode = (mode === "commons" || mode === "picsum");
-    /* 2026-11-06 用户「底部署名行就写日期」：日期只在底部署名行出现一次，
-       标题下副行不再重复。署名行取不到作者/拍摄日时，日期仍留在副行兜底；
-       必应/聚焦没有署名行，继续写「YYYY-MM-DD 的图」不变。 */
-    var _credHasDate = !!(_shotMode && _cr.author && _cr.shot);
-    var _imgDay = bn.date ? (_shotMode ? (_credHasDate ? "" : ("摄于 " + bn.date)) : (bn.date + " 的图")) : "";
+    /* 用户要求: 拍摄日期始终叠在图片标题下方, 不因有作者行就隐藏。 */
+    var _imgDay = bn.date ? (_shotMode ? ("摄于 " + bn.date) : bn.date) : "";
     /* 2026-11-06 用户「把图片上时间安排在更换节奏卡」：换上时间归「更换节奏」卡,
        副行只写图片自己的日期; 没有日期就整行隐藏, 不再挂一个孤零零的「—」。 */
     var _sub = $("heroSub");
@@ -10599,7 +10982,6 @@ function render(s){
       var _r1 = document.createElement("div");
       _r1.className = "crd1";
       _add(_r1, _ci("摄影", _cr.author));
-      if (_cr.shot) { _add(_r1, _ci("摄于", _cr.shot)); }
       if (_cr.cam) {
         var _cn = splitCamName(_cr.cam);
         _add(_r1, _ci("", (_cn.brand ? (_cn.brand + " ") : "") + (_cn.model || _cr.cam), "camfg"));
@@ -10651,40 +11033,8 @@ function render(s){
     if (_him) {
       if (_tip.length) { _him.title = _tip.join("\n"); } else { _him.removeAttribute("title"); }
     }
-    /* 2026-11-06 用户「留着吧，有些介绍的蛮详细的」：只保留页面介绍（中文译文），
-       没有译文就不显示这块。 */
-    var _mbox = $("heroMeta"), _mlist = $("imetaList");
-    if (_mbox && _mlist) {
-      _mlist.textContent = "";
-      var _rows = [];
-      /* 2026-11-06 用户「名字和介绍一模一样」：名字本来就取自页面介绍，两者高度重复时
-         这块卡就是复读，自动收起；只有介绍里确有名字没覆盖的信息（公共字占比 < 0.6）才显示。 */
-      var _zn = String(_cr.zhname || "").replace(/[\s，。、·,.!！?？:：]/g, "");
-      var _zd = String(_cr.zhdesc || "").replace(/[\s，。、·,.!！?？:：]/g, "");
-      var _dup = false;
-      if (_zn && _zd) {
-        if (_zd.indexOf(_zn) !== -1 || _zn.indexOf(_zd) !== -1) {
-          _dup = true;
-        } else {
-          var _set = {};
-          for (var _i = 0; _i < _zn.length; _i++) { _set[_zn.charAt(_i)] = 1; }
-          var _hit = 0;
-          for (var _j = 0; _j < _zd.length; _j++) { if (_set[_zd.charAt(_j)]) { _hit++; } }
-          if (_hit / Math.max(_zn.length, _zd.length) >= 0.6) { _dup = true; }
-        }
-      }
-      if (_cr.zhdesc && !_dup) { _rows.push(["", _cr.zhdesc, false]); }
-      /* 2026-11-06 用户「别写什么中文了，本来就是中文」：不再放「中文/介绍」这类行标签，
-         介绍文本直接排开，干净。 */
-      _rows.forEach(function (r) {
-        var _dd = document.createElement("dd"); _dd.textContent = r[1];
-        _mlist.appendChild(_dd);
-      });
-      setText("imetaFrom", (_cr.link && /commons\.wikimedia\.org/i.test(_cr.link)) ? "来自 Commons 页面" : "");
-      _mbox.style.display = _rows.length ? "" : "none";
-    }
     setText("heroBadge", isBing ? "必应模式 · 每日一图"
-      : ((mode === "commons" || mode === "picsum") ? (MODE_NAME[mode] + " · 当前壁纸") : "当前壁纸"));
+      : (MODE_NAME[mode] ? (MODE_NAME[mode] + " · 当前壁纸") : "当前壁纸"));
     $("btnOpenImg").style.display = "";
   } else {
     img.classList.remove("ready");
@@ -12541,7 +12891,13 @@ function Get-BwDisplayMeta([string]$path) {
     $apFile = Join-Path ([string]$global:BWRoot) 'approved_names.tsv'
     if (Test-Path -LiteralPath $apFile) { $apTick = [string]((Get-Item -LiteralPath $apFile).LastWriteTimeUtc.Ticks) }
   } catch {}
-  $k = ([string]$fi.LastWriteTimeUtc.Ticks) + '|' + ([string]$fi.Length) + '|' + $apTick
+  # 2026-11-12: 命名逻辑(core.ps1)变了也要让本进程内的显示缓存失效 —— 与 nameVer 同理。
+  $coreTick = '0'
+  try {
+    $cpFile = Join-Path ([string]$global:BWRoot) 'core.ps1'
+    if (Test-Path -LiteralPath $cpFile) { $coreTick = [string]((Get-Item -LiteralPath $cpFile).LastWriteTimeUtc.Ticks) }
+  } catch {}
+  $k = ([string]$fi.LastWriteTimeUtc.Ticks) + '|' + ([string]$fi.Length) + '|' + $apTick + '|' + $coreTick
   if ($global:BwDisplayCache.ContainsKey($path)) {
     $hit = $global:BwDisplayCache[$path]
     if ($hit -and ([string]$hit.Key -eq $k)) { return [string]$hit.Display }
@@ -12554,8 +12910,25 @@ function Get-BwDisplayMeta([string]$path) {
     if (-not $d) {
       $old = [string]$m.zhname
       $cv  = [string]$m.caption_version
-      # ② 内嵌译名只有「cv=2 且干净短名」才直接上界面; 旧版机翻长串不算。
-      if ($cv -eq '2' -and (Test-BwCleanZhName $old)) { $d = $old }
+      # 2026-11-12 用户「都变成我审核了」真正根因: 旧代码只要「cv=2 且干净短名」就把内嵌旧名
+      # 直接上界面, 从不过三要素闸 —— 于是「安吉利斯港码头」这种没国家的名字一直挂在面板上,
+      # 只能靠人工逐张核定。现在对 Commons 四源: 页面地理能认出时, 旧名必须过三要素才沿用;
+      # 过不了就强制进 ③ 派生线自动重算(认出的地理已补进词典/坐标表), 不再等人审。
+      $srcIsCommons = ([string]$m.source_type) -in @('万象','随拍','维基共享','真实摄影')
+      $forceRedrive = $false
+      if ($srcIsCommons -and $old) {
+        try {
+          $geoOld = [string](Get-BwGeoLabel (([string]$m.desc) + ' ' + ([string]$m.origname) + ' ' + ([string]$m.cats)))
+          if (-not $geoOld -and $m.gps) { $geoOld = [string](Get-BwGeoFromCoord ([string]$m.gps)) }
+          $countryOld = Get-BwGeoCountry $geoOld
+          # 只在「识别出了国家、旧名却不以这个国家开头」时重算 —— 即纯粹的「缺国家」病。
+          # 不用「过不了三要素」做触发: 那会把「西班牙托尔拉韦斯卡」这种带具体地名、
+          # 只是主体词不在词表里的合格名, 重算成「西班牙的河流」这种更差的泛名。
+          if ($countryOld -and -not $old.StartsWith($countryOld, [StringComparison]::Ordinal)) { $forceRedrive = $true }
+        } catch {}
+      }
+      # ② 内嵌译名「cv=2 + 干净短名 + (非Commons源 或 过三要素)」才直接上界面。
+      if ($cv -eq '2' -and (Test-BwCleanZhName $old) -and -not $forceRedrive) { $d = $old }
       else {
         # ③ 机翻长串/空名: 走本地地理+主题词典派生(纯离线), 但只有派生名确实更干净才采用。
         $derived = ''
@@ -12573,8 +12946,10 @@ function Get-BwDisplayMeta([string]$path) {
             if (Test-BwCleanZhName $sub) { $derived = $sub }
           } catch {}
         }
+        # 2026-11-12: forceRedrive(旧名缺国家/三要素不合格)时, 派生名带国家更长也要采用,
+        # 不再被「必须更短」挡住 —— 这正是「安吉利斯港码头 -> 美国安吉利斯港的码头」的关键。
         if ((Test-BwCleanZhName $derived) -and
-            (-not (Test-BwCleanZhName $old) -or $derived.Length -lt $old.Length)) {
+            ($forceRedrive -or -not (Test-BwCleanZhName $old) -or $derived.Length -lt $old.Length)) {
           $d = $derived
         } elseif ($old -and (Test-BwCleanZhName $old)) { $d = $old }
         # ④ 最后防线: 词典连地名都认不出的极少数(德文页面等), 退到「国家·城市」短标签,
@@ -13447,6 +13822,26 @@ function Get-BwPanelState {
   try { if ($s.last_swap) { $lastSwap = [string]$s.last_swap } } catch {}
   try { $shown = [int]$s.shown } catch { $shown = 0 }
   try { $queueCount = @($s.queue | Where-Object { $_ }).Count } catch { $queueCount = 0 }
+  # 队列刚被清空(切模式/重洗)时, 直接数当前模式库里还有多少张没看过的,
+  # 免得面板切完模式显示"队列剩余 0"好几秒, 好像没图了。
+  if ($queueCount -eq 0) {
+    try {
+      $m = Get-BwMode
+      $libFiles = @()
+      if ($m -eq 'commons') { $libFiles = @(Get-BwSrcFiles (Get-BwSrcDir $c 'commons')) }
+      elseif ($m -eq 'picsum') { $libFiles = @(Get-BwSrcFiles (Get-BwSrcDir $c 'picsum')) }
+      elseif ($m -eq 'bing') { $libFiles = @(Get-ChildItem -LiteralPath $c.bing_save_dir -Filter *.jpg -ErrorAction SilentlyContinue) }
+      else { $libFiles = @(Get-BwSpotlightAll) }
+      $seenSet = @{}
+      foreach ($h in @($s.history)) { if ($h) { $seenSet[[string]$h] = $true } }
+      $fresh = 0
+      foreach ($lf in $libFiles) {
+        $k = Get-BwNameKey $lf.Name
+        if ($k -and -not $seenSet.ContainsKey($k)) { $fresh++ }
+      }
+      if ($fresh -gt 0) { $queueCount = $fresh }
+    } catch {}
+  }
 
   $favs = @()
   try { $favs = @($s.favorites | Where-Object { $_ }) } catch { $favs = @() }
