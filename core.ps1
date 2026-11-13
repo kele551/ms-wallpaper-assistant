@@ -9725,7 +9725,6 @@ $global:BwPanelHtml = @'
   .art::after{content:"";position:absolute;inset:0;pointer-events:none;
     background:linear-gradient(to top,var(--scrim),var(--scrim-2) 56%,transparent 82%)}
   .art .cap{position:absolute;left:var(--sp-4);right:var(--sp-4);bottom:0;z-index:2;margin:0}
-  .art .cap h3,.art .cap p{margin-left:0;padding-left:0}
   .art .cap .badge{display:inline-block;font-size:var(--fs-micro);letter-spacing:.05em;color:var(--on-art);
     background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.22);border-radius:var(--r-pill);
     padding:3px var(--sp-2);margin-top:var(--sp-2)}
@@ -9970,6 +9969,7 @@ $global:BwPanelHtml = @'
               <canvas id="heroMosaic" class="mosaic" aria-hidden="true"></canvas>
               <div class="empty" id="heroEmpty">正在读取本机状态…</div>
               <div class="cap">
+                <!-- 2026-11-06 用户「这个标题移到图片的名字下方」：模式徽标放到标题下面。 -->
                 <h3 id="heroTitle">—</h3>
                 <span class="badge" id="heroBadge">当前壁纸</span>
                 <p id="heroSub">—</p>
@@ -9983,7 +9983,6 @@ $global:BwPanelHtml = @'
             <!-- 2026-11-06 尊重作者 + 工业风：万象/随拍的三舱遥测条（CAMERA / RIGHTS / POSITION）。
                  只在当前壁纸属于这两个模式、且拿得到作者时出现；整块由 render() 生成。 -->
             <div class="muted xs" id="heroCredit" style="display:none;padding:0 var(--sp-4) var(--sp-3);line-height:1.6;white-space:normal;overflow-wrap:anywhere"></div>
-            <!-- 页面介绍已移除：命名已经够好，不需要再显示原始描述。 -->
             <div class="monrow">
               <span class="muted xs lbl">显示器</span>
               <span class="chip on" id="chipScreen" title="多屏支持暂不做">主屏 —</span>
@@ -10929,15 +10928,8 @@ function render(s){
     setText("heroTitle", displayName({ name: _fname, display: _display }));
     var _ht = $("heroTitle");
     if (_ht) { _ht.title = "图片名字：" + _fname; }
-    /* 2026-10-24 用户要求：这张卡要能看出「这是哪一天的哪张图」。
-       名字一直是主标题（例如「到灯塔去！」），副行原来只有换上的时间；
-       现在把图片自己的日期放到最前面，日期取自文件名的 YYYY-MM-DD_ 前缀。
-       2026-11-06 用户「我们应该尊重作者的拍摄时间」：万象/随拍的前缀已改成
-       Commons 的 DateTimeOriginal（作者实际拍摄那天），所以这两源写「摄于」；
-       必应/聚焦的前缀是微软发布日，保持「YYYY-MM-DD 的图」不变。
-       取不到日期就不硬凑，只留换上的时间，依旧不露原始 id / 英文 slug。 */
+    /* 日期始终叠在图片底部：万象/随拍是 EXIF 拍摄日期写「摄于」，必应/聚焦是原生日期只写日期。 */
     var _shotMode = (mode === "commons" || mode === "picsum");
-    /* 用户要求: 拍摄日期始终叠在图片标题下方, 不因有作者行就隐藏。 */
     var _imgDay = bn.date ? (_shotMode ? ("摄于 " + bn.date) : bn.date) : "";
     /* 2026-11-06 用户「把图片上时间安排在更换节奏卡」：换上时间归「更换节奏」卡,
        副行只写图片自己的日期; 没有日期就整行隐藏, 不再挂一个孤零零的「—」。 */
@@ -11033,8 +11025,9 @@ function render(s){
     if (_him) {
       if (_tip.length) { _him.title = _tip.join("\n"); } else { _him.removeAttribute("title"); }
     }
-    setText("heroBadge", isBing ? "必应模式 · 每日一图"
-      : (MODE_NAME[mode] ? (MODE_NAME[mode] + " · 当前壁纸") : "当前壁纸"));
+    /* 2026-11-06 用户「留着吧，有些介绍的蛮详细的」：只保留页面介绍（中文译文），
+       没有译文就不显示这块。 */
+    setText("heroBadge", MODE_NAME[mode] + " · 当前壁纸");
     $("btnOpenImg").style.display = "";
   } else {
     img.classList.remove("ready");

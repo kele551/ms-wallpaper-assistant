@@ -298,7 +298,7 @@
   .art img:not([src]){visibility:hidden}
   .art::after{content:"";position:absolute;inset:0;pointer-events:none;
     background:linear-gradient(to top,var(--scrim),var(--scrim-2) 56%,transparent 82%)}
-  .art .cap{position:absolute;left:var(--sp-4);right:var(--sp-4);bottom:var(--sp-3);z-index:2}
+  .art .cap{position:absolute;left:var(--sp-4);right:var(--sp-4);bottom:0;z-index:2;margin:0}
   .art .cap .badge{display:inline-block;font-size:var(--fs-micro);letter-spacing:.05em;color:var(--on-art);
     background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.22);border-radius:var(--r-pill);
     padding:3px var(--sp-2);margin-top:var(--sp-2)}
@@ -556,13 +556,7 @@
             </div>
             <!-- 2026-11-06 尊重作者 + 工业风：万象/随拍的三舱遥测条（CAMERA / RIGHTS / POSITION）。
                  只在当前壁纸属于这两个模式、且拿得到作者时出现；整块由 render() 生成。 -->
-            <div class="muted xs" id="heroCredit" style="display:none;padding:0 16px 12px;line-height:1.6;white-space:normal;overflow-wrap:anywhere"></div>
-            <!-- 2026-11-06 用户「留着吧，有些介绍的蛮详细的」：保留页面介绍（中文译文）这一块，
-                 只在有译文时出现；没有译文整块隐藏，不留空位。 -->
-            <div class="imeta" id="heroMeta" style="display:none">
-              <div class="imeta-h"><b>原图介绍</b><span class="muted xs" id="imetaFrom"></span></div>
-              <dl class="imeta-list" id="imetaList"></dl>
-            </div>
+            <div class="muted xs" id="heroCredit" style="display:none;padding:0 var(--sp-4) var(--sp-3);line-height:1.6;white-space:normal;overflow-wrap:anywhere"></div>
             <div class="monrow">
               <span class="muted xs lbl">显示器</span>
               <span class="chip on" id="chipScreen" title="多屏支持暂不做">主屏 —</span>
@@ -1508,19 +1502,9 @@ function render(s){
     setText("heroTitle", displayName({ name: _fname, display: _display }));
     var _ht = $("heroTitle");
     if (_ht) { _ht.title = "图片名字：" + _fname; }
-    /* 2026-10-24 用户要求：这张卡要能看出「这是哪一天的哪张图」。
-       名字一直是主标题（例如「到灯塔去！」），副行原来只有换上的时间；
-       现在把图片自己的日期放到最前面，日期取自文件名的 YYYY-MM-DD_ 前缀。
-       2026-11-06 用户「我们应该尊重作者的拍摄时间」：万象/随拍的前缀已改成
-       Commons 的 DateTimeOriginal（作者实际拍摄那天），所以这两源写「摄于」；
-       必应/聚焦的前缀是微软发布日，保持「YYYY-MM-DD 的图」不变。
-       取不到日期就不硬凑，只留换上的时间，依旧不露原始 id / 英文 slug。 */
+    /* 日期始终叠在图片底部：万象/随拍是 EXIF 拍摄日期写「摄于」，必应/聚焦是原生日期只写日期。 */
     var _shotMode = (mode === "commons" || mode === "picsum");
-    /* 2026-11-06 用户「底部署名行就写日期」：日期只在底部署名行出现一次，
-       标题下副行不再重复。署名行取不到作者/拍摄日时，日期仍留在副行兜底；
-       必应/聚焦没有署名行，继续写「YYYY-MM-DD 的图」不变。 */
-    var _credHasDate = !!(_shotMode && _cr.author && _cr.shot);
-    var _imgDay = bn.date ? (_shotMode ? (_credHasDate ? "" : ("摄于 " + bn.date)) : (bn.date + " 的图")) : "";
+    var _imgDay = bn.date ? (_shotMode ? ("摄于 " + bn.date) : bn.date) : "";
     /* 2026-11-06 用户「把图片上时间安排在更换节奏卡」：换上时间归「更换节奏」卡,
        副行只写图片自己的日期; 没有日期就整行隐藏, 不再挂一个孤零零的「—」。 */
     var _sub = $("heroSub");
@@ -1564,7 +1548,6 @@ function render(s){
       var _r1 = document.createElement("div");
       _r1.className = "crd1";
       _add(_r1, _ci("摄影", _cr.author));
-      if (_cr.shot) { _add(_r1, _ci("摄于", _cr.shot)); }
       if (_cr.cam) {
         var _cn = splitCamName(_cr.cam);
         _add(_r1, _ci("", (_cn.brand ? (_cn.brand + " ") : "") + (_cn.model || _cr.cam), "camfg"));
@@ -1618,38 +1601,7 @@ function render(s){
     }
     /* 2026-11-06 用户「留着吧，有些介绍的蛮详细的」：只保留页面介绍（中文译文），
        没有译文就不显示这块。 */
-    var _mbox = $("heroMeta"), _mlist = $("imetaList");
-    if (_mbox && _mlist) {
-      _mlist.textContent = "";
-      var _rows = [];
-      /* 2026-11-06 用户「名字和介绍一模一样」：名字本来就取自页面介绍，两者高度重复时
-         这块卡就是复读，自动收起；只有介绍里确有名字没覆盖的信息（公共字占比 < 0.6）才显示。 */
-      var _zn = String(_cr.zhname || "").replace(/[\s，。、·,.!！?？:：]/g, "");
-      var _zd = String(_cr.zhdesc || "").replace(/[\s，。、·,.!！?？:：]/g, "");
-      var _dup = false;
-      if (_zn && _zd) {
-        if (_zd.indexOf(_zn) !== -1 || _zn.indexOf(_zd) !== -1) {
-          _dup = true;
-        } else {
-          var _set = {};
-          for (var _i = 0; _i < _zn.length; _i++) { _set[_zn.charAt(_i)] = 1; }
-          var _hit = 0;
-          for (var _j = 0; _j < _zd.length; _j++) { if (_set[_zd.charAt(_j)]) { _hit++; } }
-          if (_hit / Math.max(_zn.length, _zd.length) >= 0.6) { _dup = true; }
-        }
-      }
-      if (_cr.zhdesc && !_dup) { _rows.push(["", _cr.zhdesc, false]); }
-      /* 2026-11-06 用户「别写什么中文了，本来就是中文」：不再放「中文/介绍」这类行标签，
-         介绍文本直接排开，干净。 */
-      _rows.forEach(function (r) {
-        var _dd = document.createElement("dd"); _dd.textContent = r[1];
-        _mlist.appendChild(_dd);
-      });
-      setText("imetaFrom", (_cr.link && /commons\.wikimedia\.org/i.test(_cr.link)) ? "来自 Commons 页面" : "");
-      _mbox.style.display = _rows.length ? "" : "none";
-    }
-    setText("heroBadge", isBing ? "必应模式 · 每日一图"
-      : ((mode === "commons" || mode === "picsum") ? (MODE_NAME[mode] + " · 当前壁纸") : "当前壁纸"));
+    setText("heroBadge", MODE_NAME[mode] + " · 当前壁纸");
     $("btnOpenImg").style.display = "";
   } else {
     img.classList.remove("ready");
