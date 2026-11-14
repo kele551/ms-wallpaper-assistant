@@ -9,6 +9,9 @@ param(
   [string]$Repo = (Split-Path $PSScriptRoot -Parent)
 )
 $ErrorActionPreference = 'Stop'
+Import-Module Microsoft.PowerShell.Utility -ErrorAction SilentlyContinue
+Import-Module Microsoft.PowerShell.Management -ErrorAction SilentlyContinue
+
 # 一律用 PATH 里的 git / python（仓库里不许写本机路径）
 $git = 'git'
 $py = 'python'

@@ -6,6 +6,9 @@ param(
   [string]$Repo = (Split-Path $PSScriptRoot -Parent)
 )
 $ErrorActionPreference = 'Stop'
+Import-Module Microsoft.PowerShell.Utility -ErrorAction SilentlyContinue
+Import-Module Microsoft.PowerShell.Management -ErrorAction SilentlyContinue
+
 $git = 'git'
 $node = 'python'
 

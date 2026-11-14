@@ -86,7 +86,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 下载
 
-### 👉 [点这里下载 v2.4.7（GitCode 直连，约 12.5 MB 的 `桌面壁纸.exe`）](https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v2.4.7/%E6%A1%8C%E9%9D%A2%E5%A3%81%E7%BA%B8.exe)
+### 👉 [点这里下载 v2.4.7（GitCode 直连，约 12.5 MB 的 `桌面壁纸.exe`）](https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v2.4.9/%E6%A1%8C%E9%9D%A2%E5%A3%81%E7%BA%B8.exe)
 
 > 境外仓库国内时常连不通（附件在 `release-assets.githubusercontent.com`，实测这台机器直连 21 秒握不上手），
 > 所以**下载请走 GitCode**：上面这个链接点下去就是 `桌面壁纸.exe`，双击即用，不用解压。
@@ -292,7 +292,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 版本迭代
 
-**当前最新：v2.4.7**（2026-11-09；控制面板改成独立原生窗口，双击 exe 不再打开浏览器，并修好旧版「双击打不开」的打包资源路径问题。内容见 [CHANGELOG](docs/CHANGELOG.md)）。最近三代改了什么：
+**当前最新：v2.4.9**（2026-11-09；控制面板改成独立原生窗口，双击 exe 不再打开浏览器，并修好旧版「双击打不开」的打包资源路径问题。内容见 [CHANGELOG](docs/CHANGELOG.md)）。最近三代改了什么：
 
 - **v2.4.5**：控制面板改成独立原生窗口（系统 WebView2 承载原来的页面），双击 exe 不再打开浏览器；
   组件不可用时自动回退浏览器并记日志，也可用 `--browser` 手动切回。页面功能一项没减。
