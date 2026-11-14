@@ -384,6 +384,42 @@ def _relay_proxy(timeout=0.4):
     return ''
 
 
+def _push_github_via_api(ref):
+    """git 两条线路都断时，改走 api.github.com 精确推送（远端 sha 与本地逐位一致）。
+
+    2026-11-14 17:50 实测：github.com:443 的 TCP 建连(0.14s)与 TLS(0.44s) 都成功，
+    但请求数据发出后被掐、20 秒断开（curl 退出码 56）；同刻狐径日志写「经狐径 失败
+    （代理隧道没建起来）」。也就是 git 传输线本身被掐，换端口/换代理都救不了，
+    而 api.github.com 只有 159 ms。
+
+    F:\\Harness\\tools\\github_push_exact.py 不是"复刻"：它按树逐文件补 blob、断言新
+    tree sha == 本地 HEAD^{tree}，再用本地 author/committer/时间发 commit 并快进 ref，
+    所以远端 commit sha 与本地完全相同，不制造两平台 head 分歧。
+    """
+    tool = r'F:\Harness\tools\github_push_exact.py'
+    if not os.path.exists(tool):
+        print('   没有 F:\\Harness\\tools\\github_push_exact.py，无法走 API 通道')
+        return False
+    url = _git_raw(['git', 'remote', 'get-url', 'github'])[1].strip()
+    m = re.search(r'github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?$', url)
+    if not m:
+        print('   解析不出 GitHub owner/name：%s' % url)
+        return False
+    repo = '%s/%s' % (m.group(1), m.group(2))
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    print('   git 传输两条线路都断 —— 改走 api.github.com 精确推送（%s @ %s）' % (repo, ref))
+    p = subprocess.run([sys.executable, tool, '--dir', root, '--repo', repo, '--branch', ref],
+                       capture_output=True)
+    out = (p.stdout or b'').decode('utf-8', 'replace')
+    err = (p.stderr or b'').decode('utf-8', 'replace')
+    for line in out.strip().splitlines()[-6:]:
+        print('   ' + line)
+    if p.returncode == 0 and ('现在指向' in out or '已经就是本地 HEAD' in out):
+        return True
+    print('   API 通道失败: %s' % (err.strip()[-300:] or out.strip()[-300:]))
+    return False
+
+
 def _push(remote, ref):
     """推一个 ref，推完一律 ls-remote 复核远端 sha。
 
@@ -418,8 +454,16 @@ def _push(remote, ref):
             break
         print('   push %s（线路=%s）失败: %s —— 换下一条线路重试'
               % (remote, px or '直连', out.strip()[-160:]))
+    api_pushed = False
     if not pushed:
-        raise RuntimeError('推送 %s -> %s 所有线路均失败' % (ref, remote))
+        if remote == 'github' and _push_github_via_api(ref):
+            pushed, api_pushed = True, True
+        if not pushed:
+            raise RuntimeError('推送 %s -> %s 所有线路均失败' % (ref, remote))
+    if api_pushed:
+        print('   pushed %s -> %s（经 api.github.com，远端 sha %s… 与本地一致）'
+              % (ref, remote, want[:10]))
+        return True
     got = ''
     for _round in range(3):
         for px in attempts:
