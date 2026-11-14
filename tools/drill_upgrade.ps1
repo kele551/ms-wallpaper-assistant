@@ -32,13 +32,46 @@ try {
   & $git -C $Repo show 'v2.3.3:core.ps1' > (Join-Path $old 'core.ps1')
   & $git -C $Repo show 'v2.3.3:menu.ps1' > (Join-Path $old 'menu.ps1')
   # 2026-10-16 起升级要先验签; 验签要调主程序 --verify-update, 所以老客户端也得有 exe + launcher.txt
-  $oldExe = Get-ChildItem $Repo -Filter '*.exe' | Where-Object { $_.Name -like '*2.3.3*' } | Select-Object -First 1
+  # 2026-11-14：仓库只留最近三个发行版，旧 exe 不再放进仓库 —— 老客户端主程序按
+  #   缓存目录 → 仓库同名文件 → 从 GitCode 发行版下载一次（本地缓存复用）→ 当前 exe 兜底
+  # 的顺序取。最后一档只保证"验签 + 脚本升级"覆盖，跨版本兼容覆盖会降级并给出 WARN。
+  $baseVer = '2.3.3'
+  $cacheDir = Join-Path (Split-Path $Repo -Parent) 'cache\old-client'
+  $cacheExe = Join-Path $cacheDir ("壁纸助手-v$baseVer.exe")
+  $oldExe = $null
+  $exeFrom = ''
+  if (Test-Path -LiteralPath $cacheExe) {
+    $oldExe = Get-Item -LiteralPath $cacheExe
+    $exeFrom = '缓存'
+  }
+  if (-not $oldExe) {
+    $oldExe = Get-ChildItem $Repo -Filter '*.exe' | Where-Object { $_.Name -like "*$baseVer*" } | Select-Object -First 1
+    if ($oldExe) { $exeFrom = '仓库文件' }
+  }
+  if (-not $oldExe) {
+    New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+    $dlUrl = "https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v$baseVer/壁纸助手.exe"
+    try {
+      Invoke-WebRequest -Uri $dlUrl -OutFile $cacheExe -TimeoutSec 600 -UseBasicParsing
+      $oldExe = Get-Item -LiteralPath $cacheExe
+      $exeFrom = 'GitCode 发行版（已缓存）'
+    } catch {
+      $oldExe = $null
+      Write-Host ("  [WARN] 取不到 v$baseVer 的老 exe（{0}），改用当前 exe 当老客户端；" -f $_.Exception.Message)
+      Write-Host '         跨版本兼容这一档本次没覆盖到，其余断言照常跑'
+    }
+  }
+  if (-not $oldExe) {
+    $oldExe = Get-ChildItem $Repo -Filter '*.exe' | Select-Object -First 1
+    $exeFrom = '当前 exe（降级）'
+  }
   if ($oldExe) {
     Copy-Item $oldExe.FullName (Join-Path $old '壁纸助手.exe') -Force
+    SayOk ("老客户端主程序就绪（来源：{0}，{1:N0} B）" -f $exeFrom, $oldExe.Length)
     # 必须 UTF-8（-Encoding ASCII 会把中文 exe 名写成问号，程序就找不到主程序、拒绝升级）
     [System.IO.File]::WriteAllText((Join-Path $old 'launcher.txt'), (Join-Path $old '壁纸助手.exe'), (New-Object System.Text.UTF8Encoding($false)))
   } else {
-    SayBad '找不到 v2.3.3 的 exe（升级验签要用）'
+    SayBad '一份 exe 都拿不到（升级验签要用）'
     $script:fails++
   }
   Set-Content -LiteralPath (Join-Path $old '.version') -Value '2.3.3' -Encoding ASCII
