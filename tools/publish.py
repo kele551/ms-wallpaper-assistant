@@ -675,15 +675,42 @@ def gh_token():
                        '或让已登录的 gh 在 PATH 上')
 
 
+def _github_assets_meta(ver):
+    """取 GitHub 发行版附件的「文件名 -> (大小, sha256)」。
+
+    GitHub 从 2024 起在 assets 里给 digest=sha256:...，有了它就不必把 12 MB
+    从 30~40 KB/s 的链路上拽回来算指纹（2026-11-14 实测：整包下载 367 s，
+    元数据比对不到 1 s）。取不到就返回空字典，回退成下载比对。
+    """
+    try:
+        tok = gh_token()
+    except Exception:
+        return {}
+    h = {'Authorization': 'Bearer ' + tok, 'Accept': 'application/vnd.github+json',
+         'User-Agent': 'mwa-verify'}
+    try:
+        rel = _api_json('https://api.github.com/repos/%s/%s/releases/tags/v%s'
+                        % (OWNER, REPO, ver), h)
+    except Exception:
+        return {}
+    out = {}
+    for a in rel.get('assets', []):
+        d = (a.get('digest') or '').lower()
+        if d.startswith('sha256:'):
+            out[a.get('name')] = (a.get('size'), d.split(':', 1)[1])
+    return out
+
+
 def verify(ver, assets, gh_assets=None):
-    """逐个附件从 GitCode / GitHub 下载回来比对 SHA256（中文名要 percent-encode）。
+    """逐个附件核对 SHA256：GitHub 优先用平台指纹，其余仍下载回来算。
 
     两平台的**附件名可以不一样**（GitHub 会把中文名削成 ASCII/空名），
-    所以两边分别按各自的名字下载：GitCode 用 assets，GitHub 用 gh_assets。
+    所以两边分别按各自的名字核对：GitCode 用 assets，GitHub 用 gh_assets。
     """
     if gh_assets is None:
         gh_assets = assets
     ok = True
+    gh_meta = _github_assets_meta(ver)
     targets = []
     for p in assets:
         targets.append(('GitCode', os.path.basename(str(p)), str(p), True))
@@ -692,6 +719,13 @@ def verify(ver, assets, gh_assets=None):
     for label, name, p, is_gc in targets:
         size = os.path.getsize(p)
         want = hashlib.sha256(open(p, 'rb').read()).hexdigest()
+        if not is_gc and name in gh_meta:
+            msize, msha = gh_meta[name]
+            same = msha == want and (msize in (None, size))
+            ok = ok and same
+            print('  [%s] %s %-32s %9d B  一致=%s（平台指纹比对，未下载）'
+                  % ('PASS' if same else 'FAIL', label, name, size, same))
+            continue
         if is_gc:
             url = '%s/%s/%s/releases/download/v%s/%s' % (GC_WEB, OWNER, REPO, ver,
                                                          quote(name))
