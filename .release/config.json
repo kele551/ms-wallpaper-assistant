@@ -1,0 +1,48 @@
+{
+  "name": "桌面壁纸",
+  "runs_on": "windows-latest",
+  "branch": "main",
+  "python": "3.13",
+  "deps": [
+    "\"pyinstaller==6.22.3\""
+  ],
+  "build": [
+    "python build-exe.py"
+  ],
+  "outputs": [
+    "桌面壁纸.exe"
+  ],
+  "version_source": "launcher.py:VERSION",
+  "sign": {
+    "enabled": false,
+    "key_env": "RELEASE_SIGN_KEY",
+    "command": "",
+    "outputs": []
+  },
+  "checksums": {
+    "file": "SHA256SUMS.txt",
+    "files": [
+      "桌面壁纸.exe"
+    ]
+  },
+  "publish": {
+    "github": {
+      "owner": "kele551",
+      "repo": "ms-wallpaper-assistant"
+    },
+    "gitcode": {
+      "owner": "kele551",
+      "repo": "ms-wallpaper-assistant"
+    },
+    "extra": []
+  },
+  "preflight": [
+    "pwsh -NoProfile -ExecutionPolicy Bypass -File .release/preflight.ps1"
+  ],
+  "gates": {
+    "expect_company": "HaiFeng (kele551)",
+    "expect_repo_suffix": "kele551/ms-wallpaper-assistant",
+    "repo_const_file": "build-exe.py:APP_REPO"
+  },
+  "commit_back": []
+}

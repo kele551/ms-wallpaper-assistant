@@ -60,3 +60,5 @@ builds/
 *.backup
 *.tmp
 new_function.txt
+# 云端发版配置必须进仓库（上面那条 config.json 是运行时配置）
+!.release/config.json
