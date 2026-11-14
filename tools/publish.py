@@ -369,6 +369,21 @@ def _proxy_alive(proxy_url, timeout=1.0):
         return False
 
 
+def _relay_proxy(timeout=0.4):
+    """找一个**真正在监听**的本地中转端口，返回 proxy url；都没有返回 ''。
+
+    狐径(FoxPath)首选 8787，被占时按 (8789, 8797, 8897, 18787, 28787) 顺延 ——
+    所以消费方不能死钉 8787：8787 常被 firefox.exe 占成 Bound（不 Listen），
+    死钉它等于把每次 push 都送去撞墙（2026-11-14 下午就是这么连打两次假故障）。
+    这里按「非 8787 优先」的次序试，命中第一个 Listen 的就用它。
+    """
+    for port in (8789, 8787, 8797, 8897, 18787, 28787):
+        url = 'http://127.0.0.1:%d' % port
+        if _proxy_alive(url, timeout=timeout):
+            return url
+    return ''
+
+
 def _push(remote, ref):
     """推一个 ref，推完一律 ls-remote 复核远端 sha。
 
@@ -387,12 +402,12 @@ def _push(remote, ref):
     if remote == 'origin':
         attempts = ['']
     else:
-        if GIT_PROXY and _proxy_alive(GIT_PROXY):
-            attempts = [GIT_PROXY, '']          # 中转优先，失败回退直连
+        relay = _relay_proxy()
+        if relay:
+            attempts = [relay, '']          # 中转优先，失败回退直连
         else:
             attempts = ['']
-            if GIT_PROXY:
-                print('   %s 端口没在监听，跳过中转、直接连（不派给死代理空等）' % GIT_PROXY)
+            print('   没有中转端口在监听（8789/8787/8797/8897/18787/28787），跳过中转、直接连（不派给死代理空等）')
     cred = _cred_args()
     pushed = False
     for px in attempts:
@@ -635,10 +650,11 @@ def _download(url, timeout=SOCK_TMO, tries=2, headers=None, deadline=None, expec
 
     边下边攒、每 15 秒报一次进度；超过 deadline **整条放弃**（重试只会再扔进去十分钟）。
     """
+    relay = _relay_proxy()
     ops = [_rq.build_opener(_rq.ProxyHandler({}))]
-    if GIT_PROXY and 'github' in url and _proxy_alive(GIT_PROXY):
+    if relay and 'github' in url:
         ops.append(_rq.build_opener(_rq.ProxyHandler(
-            {'http': GIT_PROXY, 'https': GIT_PROXY})))
+            {'http': relay, 'https': relay})))
     hd = {'User-Agent': 'mwa-verify', 'Accept-Encoding': 'identity'}
     hd.update(headers or {})
     for _ in range(tries):
