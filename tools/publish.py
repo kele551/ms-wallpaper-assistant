@@ -84,9 +84,12 @@ if _CFG_PATH.is_file():
         print('警告: %s 解析失败(%s)，按"没有本机配置"继续' % (_CFG_PATH, _e), file=sys.stderr)
 
 _ENV_TOKEN_FILE = os.environ.get('GITCODE_TOKEN_FILE') or _CFG.get('token_file')
-# 都没给就落到仓库内的 .gitcode_token（已 gitignore）；也可以直接用环境变量 GITCODE_TOKEN 传令牌本身
-TOKEN_CANDIDATES = [_ENV_TOKEN_FILE] if _ENV_TOKEN_FILE else [str(REPO_DIR / '.gitcode_token')]
-TOKEN_FILE = Path(TOKEN_CANDIDATES[0])
+# 2026-11-14 用户定死：GitCode 的上传与删除一律用私人令牌（PAT），统一存本机共用凭据，
+# 不再依赖 git-credentials 里的 git 密码（那个只有 24 字符，调 API 会 401 token not found）。
+SHARED_TOKEN_FILE = r'F:\Harness\secrets\raw\gitcode-pat.txt'
+# 优先级：显式指定 → 本机共用凭据 → 仓库内 .gitcode_token（已 gitignore）；也可直接用环境变量 GITCODE_TOKEN
+TOKEN_CANDIDATES = ([_ENV_TOKEN_FILE] if _ENV_TOKEN_FILE else []) + [SHARED_TOKEN_FILE, str(REPO_DIR / '.gitcode_token')]
+TOKEN_FILE = Path(_ENV_TOKEN_FILE or SHARED_TOKEN_FILE)
 # 打包 / 子脚本用的解释器：默认就用当前这个解释器
 PY = os.environ.get('MWA_PY') or _CFG.get('python') or sys.executable
 
