@@ -1,0 +1,154 @@
+name: release
+
+# 与 FoxPath 的 release.yml 同一思路：把打包搬到 GitHub 的机器上，本机只推源码。
+# 起因：本机上行链路时好时坏，13 MB 的 exe 屡屡卡住；runner 到 GitHub 是内网，没有峰谷。
+#
+# 它只构建产物、按需挂 Release。**不生成 version.json、不签名**，私钥不出本机：
+# version.json 与 .sig 不到 1 KB，本机改完 push 即可，无需走大文件通道。
+#
+# 原有的版本/署名/仓库地址三道闸门**保留且仍然 throw** —— 产物不合格就不该发出去。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '发布用的 tag（如 v2.4.7）。留空＝只构建、不上传'
+        required: false
+        default: ''
+      draft:
+        description: '先建草稿 Release（确认后再手动发布）'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Windows 构建 + 按需上传 Release
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: 安装打包依赖
+        # 独立 GUI 窗口要 pywebview + pythonnet；这些只进构建机，最终用户不用装
+        run: python -m pip install --disable-pip-version-check "pyinstaller==6.22.3" "pywebview>=6.0" "pythonnet>=3.0"
+
+      - name: 打包（仓库里的真实构建脚本）
+        # --release 额外产出带版本号的 exe 与 ASCII 名 zip；
+        # 脚本自己会先检查 core.ps1 / menu.ps1 是 UTF-8 带 BOM，缺 BOM 直接拒绝打包
+        run: python build-exe.py --release
+
+      - name: 整理产物 + 生成 SHA256 清单
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist-staging | Out-Null
+          Get-ChildItem -File -Filter *.exe | Copy-Item -Destination dist-staging
+          Get-ChildItem -File -Filter *.zip | Copy-Item -Destination dist-staging
+          $lines = foreach ($f in (Get-ChildItem -File dist-staging | Sort-Object Name)) {
+            $h = (Get-FileHash -Algorithm SHA256 -LiteralPath $f.FullName).Hash
+            '{0}  {1}  {2} bytes' -f $h, $f.Name, $f.Length
+          }
+          $lines | Set-Content -Encoding utf8 dist-staging\SHA256SUMS.txt
+          Write-Host '===== SHA256 ====='
+          $lines | ForEach-Object { Write-Host $_ }
+
+      - name: 版本号 / 署名 / 仓库地址三道闸门
+        shell: pwsh
+        run: |
+          $txt = Get-Content -Raw launcher.py
+          if ($txt -match "VERSION\s*=\s*'([0-9.]+)'") {
+            $srcVer = $Matches[1]
+            Write-Host ("源码 VERSION = " + $srcVer)
+            "源码 VERSION = $srcVer" | Add-Content -Encoding utf8 dist-staging\SHA256SUMS.txt
+          } else {
+            throw '在 launcher.py 里找不到 VERSION 常量'
+          }
+          $vj = Get-Content -Raw version.json | ConvertFrom-Json
+          Write-Host ("version.json = " + $vj.version)
+          "version.json = $($vj.version)" | Add-Content -Encoding utf8 dist-staging\SHA256SUMS.txt
+          if ($srcVer -ne $vj.version) {
+            throw "launcher.py 的 VERSION（$srcVer）与 version.json（$($vj.version)）不一致 —— 先对齐再发版"
+          }
+
+          # 名字唯一来源是 launcher.py 的 EXE_STEM，别再在第二处写死
+          $exe = Get-Item '桌面壁纸.exe'
+          $fv = "$($exe.VersionInfo.FileVersion)".Trim()
+          $company = "$($exe.VersionInfo.CompanyName)".Trim()
+          $comments = "$($exe.VersionInfo.Comments)".Trim()
+          Write-Host ("exe 文件版本 = " + $fv)
+          Write-Host ("exe 大小     = " + $exe.Length + " B")
+          Write-Host ("CompanyName  = " + $company)
+          Write-Host ("Comments     = " + $comments)
+
+          if (-not $fv.StartsWith($vj.version)) {
+            throw "exe 文件版本（$fv）与 version.json（$($vj.version)）不一致"
+          }
+          if ($company -ne 'HaiFeng (kele551)') { throw "CompanyName 署名不对：$company" }
+          $spec = Get-Content -Raw build-exe.py
+          if ($spec -notmatch "APP_REPO\s*=\s*'([^']+)'") { throw 'build-exe.py 里找不到 APP_REPO' }
+          $specRepo = $Matches[1]
+          if ($specRepo -notmatch '^(gitcode|github|atomgit)\.com/kele551/ms-wallpaper-assistant$') {
+            throw "build-exe.py 的 APP_REPO 不对（应为 kele551/ms-wallpaper-assistant 的 GitCode/GitHub/AtomGit 地址）：$specRepo"
+          }
+          if ($comments -ne $specRepo) {
+            throw "exe 注释里的仓库地址（$comments）与 build-exe.py 的 APP_REPO（$specRepo）不一致"
+          }
+
+          $sha = (Get-FileHash -Algorithm SHA256 -LiteralPath '桌面壁纸.exe').Hash.ToUpper()
+          "exe 文件版本 = $fv" | Add-Content -Encoding utf8 dist-staging\SHA256SUMS.txt
+          "exe sha256  = $sha" | Add-Content -Encoding utf8 dist-staging\SHA256SUMS.txt
+
+          # 本机写 version.json 需要的那两个值，打到 job summary，本机直接抄
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## 本机写 version.json（launcher 段）用这两个值"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```'
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "sha256 = $sha"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "size   = $($exe.Length)"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```'
+
+      - name: 上传到 Release
+        if: inputs.tag != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          DRAFT: ${{ inputs.draft }}
+        run: |
+          $draftArgs = @()
+          if ($env:DRAFT -eq 'true') { $draftArgs = @('--draft') }
+
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Release $env:TAG 不存在，创建"
+            gh release create $env:TAG @draftArgs --title $env:TAG `
+              --notes '由 GitHub Actions 从本仓库源码构建。指纹见 SHA256SUMS.txt。'
+            if ($LASTEXITCODE -ne 0) { throw "创建 Release 失败" }
+          } else {
+            Write-Host "Release $env:TAG 已存在，追加/覆盖附件"
+          }
+
+          $files = @(Get-ChildItem -File -Path 'dist-staging\*' | ForEach-Object { $_.FullName })
+          gh release upload $env:TAG @files --clobber
+          if ($LASTEXITCODE -ne 0) { throw "上传附件失败" }
+
+          Write-Host '===== Release 现有附件 ====='
+          gh release view $env:TAG --json assets --jq '.assets[] | "\(.name)  \(.size) B"'
+
+      - name: 上传产物（不发布时也能取）
+        uses: actions/upload-artifact@v4
+        with:
+          name: ms-wallpaper-assistant-build-${{ github.sha }}
+          path: dist-staging/
+          if-no-files-found: error
+          retention-days: 30
