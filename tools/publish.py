@@ -39,6 +39,7 @@ import time
 import shutil
 import zipfile
 import io
+import socket
 import hashlib
 import subprocess
 import urllib.error
@@ -350,12 +351,31 @@ def _cred_args():
     return []
 
 
+def _proxy_alive(proxy_url, timeout=1.0):
+    """本地代理端口是否真的在监听。
+
+    2026-11-14 下午的坑：代理进程没起，`push github` 被派去 8787 → 2081 ms 后
+    `Could not connect to server`，这条日志被读成「GitHub 线路断了」，于是绕去 API 复刻，
+    平白造出两平台 head 分歧。代理没在监听就不该派过去。
+    """
+    try:
+        u = urllib.parse.urlparse(proxy_url)
+        host, port = u.hostname, (u.port or 80)
+        if not host or not port:
+            return False
+        socket.create_connection((host, port), timeout=timeout).close()
+        return True
+    except OSError:
+        return False
+
+
 def _push(remote, ref):
     """推一个 ref，推完一律 ls-remote 复核远端 sha。
 
-    线路规则（2026-11-09 实测、会随网络漂移，故做成「代理优先、失败回退直连」）：
+    线路规则（2026-11-09 实测，2026-11-14 修正）：
       · GitCode(origin) 直连稳，经本地代理反而 Proxy CONNECT aborted —— 只走直连；
-      · GitHub(github) 直连时通时断，本地代理更稳 —— 先代理、失败回退直连。
+      · GitHub(github) **直连优先**（11-14 实测直推一次就成，不必先绕代理）；
+        本地代理只在该端口**真的在监听**时作为回退线路，没起就不派。
     代理只在「这次推送」上用 -c 传进去（不落 git config）。退出码只说明「命令没崩」，
     说明不了「远端变了」（管道会把真实状态吞掉，踩过），所以最后一定用 ls-remote 复核。
     """
@@ -363,7 +383,14 @@ def _push(remote, ref):
         print('   跳过 %s：本仓库没有这个 remote' % remote)
         return False
     want = _git_raw(['git', 'rev-parse', 'HEAD' if ref == BRANCH else ref])[1].split()[-1]
-    attempts = [''] if remote == 'origin' else [GIT_PROXY, '']
+    if remote == 'origin':
+        attempts = ['']
+    else:
+        attempts = ['']
+        if GIT_PROXY and _proxy_alive(GIT_PROXY):
+            attempts.append(GIT_PROXY)
+        elif GIT_PROXY:
+            print('   %s 端口没在监听，跳过代理线路（不派过去空等）' % GIT_PROXY)
     cred = _cred_args()
     pushed = False
     for px in attempts:
@@ -596,7 +623,7 @@ def _download(url, timeout=SOCK_TMO, tries=2, headers=None, deadline=None, expec
     边下边攒、每 15 秒报一次进度；超过 deadline **整条放弃**（重试只会再扔进去十分钟）。
     """
     ops = [_rq.build_opener(_rq.ProxyHandler({}))]
-    if GIT_PROXY and 'github' in url:
+    if GIT_PROXY and 'github' in url and _proxy_alive(GIT_PROXY):
         ops.append(_rq.build_opener(_rq.ProxyHandler(
             {'http': GIT_PROXY, 'https': GIT_PROXY})))
     hd = {'User-Agent': 'mwa-verify', 'Accept-Encoding': 'identity'}
