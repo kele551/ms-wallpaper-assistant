@@ -191,6 +191,35 @@ def _wait_url(d, proc):
     return None
 
 
+def _webview2_runtime():
+    """本机是否装了 WebView2 运行时。
+
+    2026-11-14 用户反馈（Issue #1）：「还要下载 EdgeWebView」。
+    根因：pywebview 是打包进 exe 的，`import webview` 必然成功，真正缺的是**系统的
+    WebView2 运行时**；一路走到 create_window 才报错，pywebview 顺手弹出安装提示。
+    所以这里提前查一遍目录：缺运行时就直接走浏览器，用户永远不用为一块壁纸面板去装组件。
+    """
+    roots = [
+        os.path.join(os.environ.get('ProgramFiles(x86)') or r'C:\Program Files (x86)',
+                     'Microsoft', 'EdgeWebView', 'Application'),
+        os.path.join(os.environ.get('ProgramFiles') or r'C:\Program Files',
+                     'Microsoft', 'EdgeWebView', 'Application'),
+    ]
+    local = os.environ.get('LOCALAPPDATA')
+    if local:
+        roots.append(os.path.join(local, 'Microsoft', 'EdgeWebView', 'Application'))
+    for r in roots:
+        if not os.path.isdir(r):
+            continue
+        try:
+            for name in os.listdir(r):
+                if os.path.isfile(os.path.join(r, name, 'msedgewebview2.exe')):
+                    return True
+        except OSError:
+            continue
+    return False
+
+
 def run(d, fallback, note, clean_env, ps_exe, flags):
     """打开控制面板。
 
@@ -205,6 +234,12 @@ def run(d, fallback, note, clean_env, ps_exe, flags):
         import webview
     except Exception as e:
         note(d, 'GUI: 独立窗口组件不可用(%s)，改用浏览器打开' % e)
+        return fallback(d)
+    # 2026-11-14: 先确认系统真的有 WebView2 运行时再开窗口。
+    # 不查这一步的话，import 成功但运行时缺失，pywebview 会弹「下载 EdgeWebView」——
+    # 用户反馈最烦的就是这一条（只想换个壁纸，不想装组件）。
+    if not _webview2_runtime():
+        note(d, 'GUI: 本机没有 WebView2 运行时，直接用浏览器打开（不提示下载组件）')
         return fallback(d)
 
     t0 = time.time()

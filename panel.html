@@ -670,10 +670,10 @@
           <div class="set col">
             <div class="txt"><b>更换模式</b><span id="modeHint">—</span></div>
             <div class="ctl">
-              <span class="chip" id="modeFocus" data-mode="focus">聚焦模式</span>
-              <span class="chip" id="modeBing" data-mode="bing">必应模式</span>
-              <span class="chip" id="modeCommons" data-mode="commons">万象模式</span>
-              <span class="chip" id="modePicsum" data-mode="picsum">随拍模式</span>
+              <span class="chip" id="modeFocus" data-mode="focus" title="只换 Windows 聚焦图，不掺必应、万象、随拍">只换聚焦</span>
+              <span class="chip" id="modeBing" data-mode="bing" title="只换必应每日一图，一天一张">只换必应</span>
+              <span class="chip" id="modeCommons" data-mode="commons" title="只在万象图库里循环">只换万象</span>
+              <span class="chip" id="modePicsum" data-mode="picsum" title="只在随拍图库里循环">只换随拍</span>
             </div>
           </div>
           <div class="set">
@@ -685,6 +685,13 @@
               <!-- 同上：这句「抓到尽头 / 进入老图循环」最长有四五十字，
                    以前挤在右列里两边都变形，改成标题下面整行铺开。 -->
               <div class="muted xs" id="poolLine" style="margin-top:4px;overflow-wrap:anywhere">—</div>
+            </div>
+          </div>
+          <div class="set col">
+            <div class="txt"><b>安全软件弹窗</b>
+              <span>火绒等安全软件弹提示是误报：本程序只改壁纸、只写系统「个性化」同一个位置
+                （HKCU\Control Panel\Desktop），不装服务、不写开机启动注册表项、不要管理员权限。
+                弹窗里选「允许 / 放行」即可，也可以把 桌面壁纸.exe 加进软件的白名单。</span>
             </div>
           </div>
           <div class="set col">
@@ -1696,7 +1703,7 @@ function render(s){
     if (el) el.classList.toggle("on", mode === m);
   });
   var modeHintTxt = {
-    focus:   "当前是聚焦模式：按间隔自动轮换，后台补的也是本模式的图",
+    focus:   "当前是「只换聚焦」：只换 Windows 聚焦图，不掺必应、万象、随拍；按间隔自动轮换",
     bing:    "当前是必应模式：只换必应每日一图，一天一张；不抓聚焦、不按间隔轮换",
     commons: "当前是万象模式：只在万象图库里独立循环，按间隔自动轮换",
     picsum:  "当前是随拍模式：只在随拍图库里独立循环，按间隔自动轮换"
@@ -2319,7 +2326,7 @@ bindNum("numRecycle", "recycle_min_days");
    而服务端只会钉回 1440 —— 前端要是还弹一句"间隔已改成 10 分", 就是骗人。 */
 function bingLocked(){
   if (curMode() !== "bing") return false;
-  toast("必应模式固定 24 小时（每天一张），先切回聚焦模式才能改间隔", true);
+  toast("必应模式固定 24 小时（每天一张），先切回「只换聚焦」才能改间隔", true);
   refresh(false);
   return true;
 }
@@ -2346,7 +2353,7 @@ function curMode(){
   }
   return cfg.bing_only ? "bing" : "focus";
 }
-var MODE_NAME = { focus:"聚焦模式", bing:"必应模式", commons:"万象模式", picsum:"随拍模式" };
+var MODE_NAME = { focus:"只换聚焦", bing:"只换必应", commons:"只换万象", picsum:"只换随拍" };
 /* 更换模式: 切过去后端会清空旧队列、按新模式重洗, 并当场换一张 */
 function setMode(m){
   var cur = curMode();

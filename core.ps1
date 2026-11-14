@@ -3341,6 +3341,27 @@ function Get-BwCrop169Width([int]$w, [int]$h) {
   if ($w -lt $byH) { return $w }
   return $byH
 }
+# 2026-11-14 修用户反馈「2.4.6 / 2.4.7 都不会换壁纸」的根因:
+# 11-08 把「只收 16:9」写成了「图比例必须等于屏幕比例(±1%)」,
+# 16:10 屏(1.600)对必应 16:9(1.778)差 11%, 候选预筛 / 落盘 / 轮换 / 准时换图四道闸同时全灭,
+# 库里图一张都上不了桌面(用户日志: 聚焦库 0 张 / 必应库 6 张 / 队列剩 0 张 / 换不成)。
+# 桌面是**填充铺满(cover)**, 比例不完全相同只会裁掉边上一条, 不是缺陷;
+# 该卡的只是「铺满后裁得太多」和「裁错方向」(竖幅 / 方图 / 长卷)。
+# 口径按裁切幅度算:
+#   * 图比屏幕宽 -> 左右裁, 允许 ≤25%(横裁留得住主体, 带鱼屏 / 21:9 也能用)
+#   * 图比屏幕高 -> 上下裁, 常规屏 ≤12%(4:3 要裁 17%、竖幅更多, 仍挡掉); 超宽屏放宽到 25%
+# 11-08「不要方形 / 竖幅 / 超宽」的本意保留, 只是不再把同一档次的 16:9 / 16:10 自残成 0 张。
+function Test-BwAspectFit([double]$imgAr, [double]$screenAr) {
+  if (($imgAr -le 0) -or ($screenAr -le 0)) { return $false }
+  if ($imgAr -ge $screenAr) {
+    $trimW = ($imgAr - $screenAr) / $imgAr
+    return ($trimW -le 0.25)
+  }
+  $limitH = 0.12
+  if ($screenAr -gt 2.0) { $limitH = 0.25 }
+  $trimH = ($screenAr - $imgAr) / $screenAr
+  return ($trimH -le $limitH)
+}
 # 一个源的"画质门槛"打包成一次调用要用的几个数(抓取处只取一次, 循环里直接用)。
 # 宽高比窗口: @{Min=下限; Max=上限}, 0 = 那一边不限。
 # [暂未启用 —— 等合适的图源] 这里是"接近 16:9 的横构图"这一口径的默认窗口;
@@ -3488,6 +3509,8 @@ function Get-BwHonorQueries {
     'WLM俄罗斯获奖' = 'deepcategory:"Winners of Wiki Loves Monuments in Russia by year"'
     'WLM西班牙获奖' = 'deepcategory:"Winners of Wiki Loves Monuments in Spain by year"'
     'WLE决赛'       = 'incategory:"Finalists of Wiki Loves Earth in Spain 2015"'
+    '精选自然'      = 'deepcategory:"Featured pictures of nature"'
+    '精选建筑'      = 'deepcategory:"Featured pictures of architecture"'
   }
 }
 function Get-BwHonorQuery([string]$kw) {
@@ -3506,8 +3529,8 @@ function Get-BwHonorAliases([psobject]$c, [string]$key) {
     $s = ([string]$v).Trim().ToLower()
     if (@('off','false','0','no','关') -contains $s) { return @() }
   }
-  if ([string]$key -eq 'commons') { return @('WLE获奖','年度图片','WLE德国获奖','WLE决赛') }
-  if ([string]$key -eq 'picsum')  { return @('WLM德国获奖','年度图片','WLM2013获奖','WLM2014获奖','WLM2015获奖','WLM2016获奖','WLM俄罗斯获奖') }
+  if ([string]$key -eq 'commons') { return @('精选自然','WLE获奖','年度图片','WLE德国获奖','WLE决赛') }
+  if ([string]$key -eq 'picsum')  { return @('精选建筑','WLM德国获奖','年度图片','WLM2013获奖','WLM2014获奖','WLM2015获奖','WLM2016获奖','WLM俄罗斯获奖') }
   return @()
 }
 # 荣誉标识只认**图片自己 Categories 里的真实分类名**, 绝不因为"这次是从荣誉检索式
@@ -3708,7 +3731,7 @@ function Get-BwCameraModel($md) {
 function Test-BwPhoneGear([string]$camera, [string]$cats) {
   # 2026-11-08: Lumia / Moto / XT#### / Mi A# / LG-H### / Sony Xperia L##h-t-u-w / Elephone P8_Mini 均为手机。
   # 只扩手机线与型号码, 不碰 E-M1MarkII / ILCE-7M2 / DMC-G7 / Canon EOS 等专业机型。
-  $brand = '(?i)\b(xiaomi|redmi|poco|iphone|apple|samsung|galaxy|huawei|honor|oneplus|oppo|vivo|pixel|motorola|moto|nokia|lumia|realme|htc|meizu|blackberry|xperia|elephone|mi\s*a\d+|lg-?h\d{3}[a-z]?|rog\s*phone)\b'
+  $brand = '(?i)\b(xiaomi|redmi|poco|iphone|apple|samsung|galaxy|huawei|honor|oneplus|oppo|vivo|pixel|motorola|moto|nokia|lumia|realme|htc|meizu|blackberry|xperia|elephone|lenovo|zte|microsoft\s+lumia|mi\s*a\d+|lg-?h\d{3}[a-z]?|rog\s*phone)\b'
   $code  = '(?i)(\bM\d{4}J\d+[A-Z]*\b|\bSM-[A-Z]\d{2,4}[A-Z]*\b|\bCPH\d{4}\b|\bRMX\d{4}\b|\bXT\d{4}[A-Z]*\b|\bLumia\s*\d+\b|\bMoto\s*G\d+\b|\bL\d{2}[htuw]\b|\bP8[_-]?Mini\b)'
   $cam = [string]$camera
   if ($cam) {
@@ -4815,10 +4838,16 @@ function Test-BwPoolChineseName([string]$name, [string]$origname, [string]$desc,
     if ($ok -and $FixedName) { $FixedName.Value = $check }   # 把补过地名/国家的名字回传，落盘与判定同源
     return $ok
   }
-  # 认不出地理：2026-11-12 起不再无条件放行。仍走同一条三要素终检，
-  # 保证「国家开头 + 具体地点 + 画面主体」这条底线在任何情况下都不被兜底绕过。
-  # 认不出又写不出三要素的候选宁可不落盘，进 pending_names.tsv 交人工核定。
-  $ok = [bool](Test-BwNameTriad $check '' '')
+  # 认不出地理：随拍关键词搜图经常遇到这种情况（Nominatim 国内不通、离线表覆盖不到小地方）。
+  # 此时不强求"具体地名"，只要名字是通顺中文短句（>=4字、无英文字母）就放行；
+  # 有国家开头更好，没有也不卡——随拍图本来就是"国家+主体"级别的命名。
+  # 万象模式仍走完整三要素（有 GPS 坐标可反查）。
+  $cnCount = ([regex]::Matches($check, '[\u4e00-\u9fa5]')).Count
+  if ($cnCount -ge 4 -and $check -notmatch '[A-Za-z]') {
+    $ok = $true
+  } else {
+    $ok = $false
+  }
   if ($ok -and $FixedName) { $FixedName.Value = $check }
   return $ok
 }
@@ -6239,7 +6268,7 @@ function Get-BwCommonsCandidates([string]$kw) {
     if ((Get-BwCrop169Width $iw $ih) -lt [int]$minW) { continue }
     # 2026-11-08 用户「只收 16:9」: 用 Commons 返回的真实宽高在候选阶段提前筛掉非 16:9,
     # 不再「抓页面 + 翻译 + 下载完再拒」(一轮 3~4 分钟、新增 0 张的主因)。
-    if (([Math]::Abs(([double]$iw / [double]$ih) - $srcAr) / $srcAr) -gt 0.01) { $arSkip++; continue }
+    if (-not (Test-BwAspectFit ([double]$iw / [double]$ih) $srcAr)) { $arSkip++; continue }
     $lic = ''
     if ($ii.extmetadata -and $ii.extmetadata.LicenseShortName) { $lic = [string]$ii.extmetadata.LicenseShortName.value }
     $lu = $lic.ToUpper()
@@ -6289,6 +6318,9 @@ function Get-BwCommonsCandidates([string]$kw) {
       continue
     }
     $honorVal = Get-BwHonorLabel ([string]$extra.cats)
+    # deepcategory 精选池: Wikimedia 搜索已保证图片在分类树里, 不再要求图片自己挂父类标签
+    if (-not $honorVal -and $kw -eq '精选自然') { $honorVal = 'Commons 精选自然' }
+    if (-not $honorVal -and $kw -eq '精选建筑') { $honorVal = 'Commons 精选建筑' }
     if ($hq -and -not $honorVal) {
       Log ('荣誉池命中但页面无真实获奖分类, 不入池: ' + ([string]$p.title -replace '^File:', ''))
       continue
@@ -6428,7 +6460,7 @@ function Get-BwPicsumCandidates([string]$kw) {
     if ((Get-BwCrop169Width $iw $ih) -lt [int]$minW) { continue }
     # 2026-11-08 用户「只收 16:9」: 用 Commons 返回的真实宽高在候选阶段提前筛掉非 16:9,
     # 不再「抓页面 + 翻译 + 下载完再拒」(一轮 3~4 分钟、新增 0 张的主因)。
-    if (([Math]::Abs(([double]$iw / [double]$ih) - $srcAr) / $srcAr) -gt 0.01) { $arSkip++; continue }
+    if (-not (Test-BwAspectFit ([double]$iw / [double]$ih) $srcAr)) { $arSkip++; continue }
     $lic = ''
     if ($ii.extmetadata -and $ii.extmetadata.LicenseShortName) { $lic = [string]$ii.extmetadata.LicenseShortName.value }
     $lu = $lic.ToUpper()
@@ -6483,6 +6515,9 @@ function Get-BwPicsumCandidates([string]$kw) {
       continue
     }
     $honorVal = Get-BwHonorLabel ([string]$extra.cats)
+    # deepcategory 精选池: Wikimedia 搜索已保证图片在分类树里, 不再要求图片自己挂父类标签
+    if (-not $honorVal -and $kw -eq '精选自然') { $honorVal = 'Commons 精选自然' }
+    if (-not $honorVal -and $kw -eq '精选建筑') { $honorVal = 'Commons 精选建筑' }
     if ($hq -and -not $honorVal) {
       Log ('荣誉池命中但页面无真实获奖分类, 不入池: ' + ([string]$p.title -replace '^File:', ''))
       continue
@@ -7691,7 +7726,7 @@ function Get-BwNextWall($s) {
           $gs = Get-BwScreenSize
           $sar = if ([int]$gs.H -gt 0) { [double]$gs.W / [double]$gs.H } else { 16.0 / 9.0 }
           $iar = [double]$gd.W / [double]$gd.H
-          if (([Math]::Abs($iar - $sar) / $sar) -gt 0.01) { continue }
+          if (-not (Test-BwAspectFit $iar $sar)) { continue }
         }
         $s.queue = $q; return (Get-Item -LiteralPath $p)
       }
@@ -8530,8 +8565,10 @@ function Save-BwFile([string[]]$urls, [string]$path, [hashtable]$meta = $null, [
           $global:BWLastDlStatus = 'badimage'
           continue
         }
-        # 2026-11-08 用户定死「只收 16:9」: 与屏幕比例差 >1% 的图一律不落盘。
-        # 4:3 按用户口径视为手机片; 3:2 / 竖幅 / 超宽同理 —— 上桌面必然要裁剪或补边。
+        # 2026-11-14 修: 11-08 那句「只收 16:9」被实现成了「与屏幕比例差 >1% 就不落盘」,
+        # 16:10 屏(1.600)把必应 16:9(1.778)整批判死 —— 用户日志里「比例 1.778 != 屏幕 1.600」连刷 5 张,
+        # 必应库只剩 6 张且换不上桌面。改成按「铺满裁切幅度」判(见 Test-BwAspectFit):
+        # 16:9 配 16:10 只裁 10% 照收; 4:3(裁 17%)、竖幅、长卷仍挡在库外, 11-08 的本意不变。
         # 覆盖全部入库路径(必应/聚焦/commons/picsum/强制落库), 不看调用方传没传门槛参数。
         try { if ($global:BWArtDimCache) { [void]$global:BWArtDimCache.Remove([string]$tmp) } } catch { }
         $gateDim = Get-BwImageSize $tmp
@@ -8539,8 +8576,8 @@ function Save-BwFile([string[]]$urls, [string]$path, [hashtable]$meta = $null, [
           $gateScr = Get-BwScreenSize
           $gateSar = if ([int]$gateScr.H -gt 0) { [double]$gateScr.W / [double]$gateScr.H } else { 16.0 / 9.0 }
           $gateIar = [double]$gateDim.W / [double]$gateDim.H
-          if (([Math]::Abs($gateIar - $gateSar) / $gateSar) -gt 0.01) {
-            Log ('比例 ' + $gateIar.ToString('0.000') + ' != 屏幕 ' + $gateSar.ToString('0.000') + ' (只收 16:9), 跳过不落盘: ' + (Split-Path $path -Leaf))
+          if (-not (Test-BwAspectFit $gateIar $gateSar)) {
+            Log ('比例 ' + $gateIar.ToString('0.000') + ' 与屏幕 ' + $gateSar.ToString('0.000') + ' 铺满要裁掉太多, 跳过不落盘: ' + (Split-Path $path -Leaf))
             Remove-BwFile $tmp
             $global:BWLastDlStatus = 'aspect'
             continue
@@ -9101,6 +9138,12 @@ function Write-BwHeartbeat {
     $c = Get-BwConfig
     $s = Get-BwState
     if (-not $s) { return }
+    # 2026-11-14 (Issue #1 用户反馈·2.4.2「老图片不会自动删除, 已经超过了数量限制」):
+    # 库裁剪原来只挂在「换完一张」那一个时机上（见 Invoke-BwSwap）。库里全是用过的图、
+    # 或者下载长期失败时，一次都换不成 —— 裁剪就永远不执行，上限形同虚设，库越攒越大。
+    # 心跳每一轮都会跑，这里顺手裁一次（纯本地列目录，只有超上限才动文件），
+    # 让清理不再依赖"换图成功"。
+    try { [void](Trim-BwLibrary $s) } catch {}
     $lib  = @(Get-BwSpotlightAll).Count
     $b    = @(Get-BwBingAll).Count
     $q    = @($s.queue | Where-Object { $_ }).Count
@@ -9197,7 +9240,7 @@ function Invoke-BwOnTimeSwap {
         try { $gd = Get-BwImageSize $p } catch {}
         if ($gd -and ([int]$gd.H -gt 0)) {
           $iar = [double]$gd.W / [double]$gd.H
-          if (([Math]::Abs($iar - $sar) / $sar) -gt 0.01) { continue }
+          if (-not (Test-BwAspectFit $iar $sar)) { continue }
         }
         $ok = Set-BwWall $p
         $s.last_wall = $p
@@ -10096,10 +10139,10 @@ $global:BwPanelHtml = @'
           <div class="set col">
             <div class="txt"><b>更换模式</b><span id="modeHint">—</span></div>
             <div class="ctl">
-              <span class="chip" id="modeFocus" data-mode="focus">聚焦模式</span>
-              <span class="chip" id="modeBing" data-mode="bing">必应模式</span>
-              <span class="chip" id="modeCommons" data-mode="commons">万象模式</span>
-              <span class="chip" id="modePicsum" data-mode="picsum">随拍模式</span>
+              <span class="chip" id="modeFocus" data-mode="focus" title="只换 Windows 聚焦图，不掺必应、万象、随拍">只换聚焦</span>
+              <span class="chip" id="modeBing" data-mode="bing" title="只换必应每日一图，一天一张">只换必应</span>
+              <span class="chip" id="modeCommons" data-mode="commons" title="只在万象图库里循环">只换万象</span>
+              <span class="chip" id="modePicsum" data-mode="picsum" title="只在随拍图库里循环">只换随拍</span>
             </div>
           </div>
           <div class="set">
@@ -10111,6 +10154,13 @@ $global:BwPanelHtml = @'
               <!-- 同上：这句「抓到尽头 / 进入老图循环」最长有四五十字，
                    以前挤在右列里两边都变形，改成标题下面整行铺开。 -->
               <div class="muted xs" id="poolLine" style="margin-top:4px;overflow-wrap:anywhere">—</div>
+            </div>
+          </div>
+          <div class="set col">
+            <div class="txt"><b>安全软件弹窗</b>
+              <span>火绒等安全软件弹提示是误报：本程序只改壁纸、只写系统「个性化」同一个位置
+                （HKCU\Control Panel\Desktop），不装服务、不写开机启动注册表项、不要管理员权限。
+                弹窗里选「允许 / 放行」即可，也可以把 桌面壁纸.exe 加进软件的白名单。</span>
             </div>
           </div>
           <div class="set col">
@@ -11122,7 +11172,7 @@ function render(s){
     if (el) el.classList.toggle("on", mode === m);
   });
   var modeHintTxt = {
-    focus:   "当前是聚焦模式：按间隔自动轮换，后台补的也是本模式的图",
+    focus:   "当前是「只换聚焦」：只换 Windows 聚焦图，不掺必应、万象、随拍；按间隔自动轮换",
     bing:    "当前是必应模式：只换必应每日一图，一天一张；不抓聚焦、不按间隔轮换",
     commons: "当前是万象模式：只在万象图库里独立循环，按间隔自动轮换",
     picsum:  "当前是随拍模式：只在随拍图库里独立循环，按间隔自动轮换"
@@ -11745,7 +11795,7 @@ bindNum("numRecycle", "recycle_min_days");
    而服务端只会钉回 1440 —— 前端要是还弹一句"间隔已改成 10 分", 就是骗人。 */
 function bingLocked(){
   if (curMode() !== "bing") return false;
-  toast("必应模式固定 24 小时（每天一张），先切回聚焦模式才能改间隔", true);
+  toast("必应模式固定 24 小时（每天一张），先切回「只换聚焦」才能改间隔", true);
   refresh(false);
   return true;
 }
@@ -11772,7 +11822,7 @@ function curMode(){
   }
   return cfg.bing_only ? "bing" : "focus";
 }
-var MODE_NAME = { focus:"聚焦模式", bing:"必应模式", commons:"万象模式", picsum:"随拍模式" };
+var MODE_NAME = { focus:"只换聚焦", bing:"只换必应", commons:"只换万象", picsum:"只换随拍" };
 /* 更换模式: 切过去后端会清空旧队列、按新模式重洗, 并当场换一张 */
 function setMode(m){
   var cur = curMode();
