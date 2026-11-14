@@ -372,10 +372,11 @@ def _proxy_alive(proxy_url, timeout=1.0):
 def _push(remote, ref):
     """推一个 ref，推完一律 ls-remote 复核远端 sha。
 
-    线路规则（2026-11-09 实测，2026-11-14 修正）：
+    线路规则（2026-11-09 实测，2026-11-14 补「中转得先活着才派」）：
       · GitCode(origin) 直连稳，经本地代理反而 Proxy CONNECT aborted —— 只走直连；
-      · GitHub(github) **直连优先**（11-14 实测直推一次就成，不必先绕代理）；
-        本地代理只在该端口**真的在监听**时作为回退线路，没起就不派。
+      · GitHub(github) **中转优先**（狐径 8787），失败回退直连 —— 这是既定口径，别改；
+        但中转只有在端口真的 LISTEN 时才派：被占着却没监听时直接连，不白等 2 秒，
+        也不留下一条会被误读成「GitHub 断了」的假故障日志。
     代理只在「这次推送」上用 -c 传进去（不落 git config）。退出码只说明「命令没崩」，
     说明不了「远端变了」（管道会把真实状态吞掉，踩过），所以最后一定用 ls-remote 复核。
     """
@@ -386,11 +387,12 @@ def _push(remote, ref):
     if remote == 'origin':
         attempts = ['']
     else:
-        attempts = ['']
         if GIT_PROXY and _proxy_alive(GIT_PROXY):
-            attempts.append(GIT_PROXY)
-        elif GIT_PROXY:
-            print('   %s 端口没在监听，跳过代理线路（不派过去空等）' % GIT_PROXY)
+            attempts = [GIT_PROXY, '']          # 中转优先，失败回退直连
+        else:
+            attempts = ['']
+            if GIT_PROXY:
+                print('   %s 端口没在监听，跳过中转、直接连（不派给死代理空等）' % GIT_PROXY)
     cred = _cred_args()
     pushed = False
     for px in attempts:
@@ -404,16 +406,27 @@ def _push(remote, ref):
     if not pushed:
         raise RuntimeError('推送 %s -> %s 所有线路均失败' % (ref, remote))
     got = ''
-    for px in attempts:
-        got = pick_remote_sha(_git_raw(['git'] + (['-c', 'http.proxy=' + px] if px else []) + cred
-                                       + ['ls-remote', remote, ref])[1], ref)
+    for _round in range(3):
+        for px in attempts:
+            got = pick_remote_sha(_git_raw(['git'] + (['-c', 'http.proxy=' + px] if px else []) + cred
+                                           + ['ls-remote', remote, ref])[1], ref)
+            if got:
+                break
         if got:
             break
+        if _round < 2:
+            print('   复核 %s 的远端 sha 取不到（线路抖动），2 秒后重试' % remote)
+            time.sleep(2)
     if got and got == want:
         print('   pushed %s -> %s（远端 sha %s… 与本地一致）' % (ref, remote, want[:10]))
         return True
-    raise RuntimeError('推送 %s -> %s 没生效：本地 %s，远端 %s'
-                       % (ref, remote, want[:10], (got or '(取不到)')[:10]))
+    if got:
+        raise RuntimeError('推送 %s -> %s 远端 sha 与本地不同：本地 %s，远端 %s'
+                           % (ref, remote, want[:10], got[:10]))
+    raise RuntimeError('推送 %s -> %s 的 push 已返回成功，但 ls-remote 连续三次取不到远端 sha'
+                       '（线路抖动，**不代表失败**）：本地 %s\n'
+                       '请先 `git ls-remote %s %s` 人工核对，核对通过再宣布发版成功。'
+                       % (ref, remote, want[:10], remote, ref))
 
 
 def git_commit_and_tag(ver, files):
