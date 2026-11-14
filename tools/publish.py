@@ -113,6 +113,11 @@ GIT_EXE = (GIT_EXEC_PATH + '/git.exe') if GIT_EXEC_PATH else 'git'
 GH = os.environ.get('MWA_GH') or _CFG.get('gh') or shutil.which('gh') or 'gh'
 # GitHub 的 git 端口在这台机器上时通时断，失败时借本地代理重试（只在命令行 -c 上带，不改 config）
 GIT_PROXY = os.environ.get('MWA_GIT_PROXY') or _CFG.get('git_proxy') or 'http://127.0.0.1:8787'
+# 2026-11-14 事故：git 的 credential.helper 里挂着 helper-selector，后台推 GitHub 时
+# 弹出一个「Select a credential helper」窗口，进程就一直等在那儿，没人点就永远不结束。
+# 规矩见 F:\Harness\rules\01-发版规程.md §0.1 A：清空 helper 后改成只读这个凭据文件。
+# 文件不存在时退回原样（其它机器上不该因为这个参数直接失败）。
+DEFAULT_CRED_FILE = 'F:/Harness/secrets/git-credentials'
 ZIP_TPL = 'MSWallpaperAssistant-v%s.zip'          # zip 的 ASCII 名不改(仓库英文标识稳定)
 
 
@@ -266,6 +271,9 @@ GIT_ID = ['-c', 'user.name=海风（kele551）',
 def _git_raw(args):
     """跑一条 git，返回 (退出码, 输出)。推送成败只信退出码 + 远端 sha。"""
     e = os.environ.copy()
+    # 缺了这两条，git 在后台遇到需要凭据时可能弹 GUI，一直等到有人点（见 §0.1 A）。
+    e['GIT_TERMINAL_PROMPT'] = '0'
+    e['GCM_INTERACTIVE'] = 'never'
     if GIT_EXEC_PATH:
         e['GIT_EXEC_PATH'] = GIT_EXEC_PATH
         e['PATH'] = GIT_EXEC_PATH.replace('/', os.sep) + os.pathsep + e.get('PATH', '')
@@ -316,6 +324,19 @@ def pick_remote_sha(ls_remote_output, ref):
     return peeled
 
 
+def _cred_args():
+    """把 git 的凭据来源钉死成「清空 helper + 只读凭据文件」，绝不弹 GUI 选择框。
+
+    helper-selector 会弹「Select a credential helper」窗口，后台进程就卡在那里等点击
+    （2026-11-14 实测：GitHub tag 推不出去、日志停在 push 之后没有任何输出）。
+    """
+    p = os.environ.get('MWA_GIT_CRED') or DEFAULT_CRED_FILE
+    if p and os.path.exists(p):
+        return ['-c', 'credential.helper=', '-c',
+                'credential.helper=store --file=%s' % p.replace('\\', '/')]
+    return []
+
+
 def _push(remote, ref):
     """推一个 ref，推完一律 ls-remote 复核远端 sha。
 
@@ -330,9 +351,10 @@ def _push(remote, ref):
         return False
     want = _git_raw(['git', 'rev-parse', 'HEAD' if ref == BRANCH else ref])[1].split()[-1]
     attempts = [''] if remote == 'origin' else [GIT_PROXY, '']
+    cred = _cred_args()
     pushed = False
     for px in attempts:
-        code, out = _git_raw(['git'] + (['-c', 'http.proxy=' + px] if px else [])
+        code, out = _git_raw(['git'] + (['-c', 'http.proxy=' + px] if px else []) + cred
                              + ['push', remote, ref])
         if code == 0:
             pushed = True
@@ -343,7 +365,7 @@ def _push(remote, ref):
         raise RuntimeError('推送 %s -> %s 所有线路均失败' % (ref, remote))
     got = ''
     for px in attempts:
-        got = pick_remote_sha(_git_raw(['git'] + (['-c', 'http.proxy=' + px] if px else [])
+        got = pick_remote_sha(_git_raw(['git'] + (['-c', 'http.proxy=' + px] if px else []) + cred
                                        + ['ls-remote', remote, ref])[1], ref)
         if got:
             break
