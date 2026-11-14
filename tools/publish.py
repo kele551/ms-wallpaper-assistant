@@ -187,25 +187,35 @@ def api(method, path, token, payload=None, timeout=120, extra=None, headers=None
     """GitCode v5 接口：令牌走 access_token 查询参数；HTTP 层只用标准库（本机没装第三方库）。
 
     2026-10-26 实测：GitCode 建发行版的响应里**没有 id 字段**，所以一切都按 tag 寻址；
-    它也没有老平台那套 attach_files 接口（一律 404/405），附件要走 upload_url + PUT。
+    二进制附件**上传**走 upload_url + PUT 两步（`POST .../attach_files` 不存在，一律 404/405）。
+    但 attach_files 的**列表与 DELETE 是有的**：`DELETE /releases/{tag}/attach_files/{asset_id}` → 204，
+    删同名旧附件、清理旧版本都靠它（asset 对象里有 `id`）。
+    2026-11-14 实测：GitCode 限流 **25 次/用户/分钟**，超限返回 **HTTP 500 包 `error_code=429`**
+    （不是 429 状态码，别按状态码判）——这里统一退避重试，别让限流把发版打断。
     """
-    p = {'access_token': token}
-    p.update(extra or {})
-    url = GC_API + path + '?' + urllib.parse.urlencode(p)
-    hd = {'User-Agent': 'mwa-publish'}
-    hd.update(headers or {})
-    data = None
-    if payload is not None:
-        data = json.dumps(payload).encode('utf-8')
-        hd['Content-Type'] = 'application/json'
-    req = _rq.Request(url, data=data, headers=hd, method=method)
-    try:
-        with _rq.urlopen(req, timeout=timeout) as r:
-            body = r.read()
-    except urllib.error.HTTPError as e:
-        raise RuntimeError('API %s %s -> %s %s'
-                           % (method, path, e.code, e.read()[:300].decode('utf-8', 'replace')))
-    return json.loads(body.decode('utf-8', 'replace')) if body.strip() else {}
+    for _attempt in range(tries):
+        p = {'access_token': token}
+        p.update(extra or {})
+        url = GC_API + path + '?' + urllib.parse.urlencode(p)
+        hd = {'User-Agent': 'mwa-publish'}
+        hd.update(headers or {})
+        data = None
+        if payload is not None:
+            data = json.dumps(payload).encode('utf-8')
+            hd['Content-Type'] = 'application/json'
+        req = _rq.Request(url, data=data, headers=hd, method=method)
+        try:
+            with _rq.urlopen(req, timeout=timeout) as r:
+                body = r.read()
+            return json.loads(body.decode('utf-8', 'replace')) if body.strip() else {}
+        except urllib.error.HTTPError as e:
+            txt = e.read()[:300].decode('utf-8', 'replace')
+            if '429' in txt and _attempt < tries - 1:
+                wait = 20 * (_attempt + 1)
+                print('   GitCode 限流(429)，等 %d 秒重试: %s %s' % (wait, method, path))
+                time.sleep(wait)
+                continue
+            raise RuntimeError('API %s %s -> %s %s' % (method, path, e.code, txt))
 
 
 # ---------- 本地改动 ----------
@@ -458,9 +468,11 @@ def _gc_get_release(tag, token):
 def gitcode_release(ver, token, assets, notes):
     """GitCode：建发行版 + 逐个附件走"取上传地址 → PUT 原始字节"两步（2026-10-26 实测）。
 
-    老平台那套 attach_files 接口在 GitCode 一律 404/405，别再试。
-    同名附件：大小一致就当已传好跳过；**大小不同必须人工到网页上删掉旧的** ——
-    GitCode 没有可靠的删除附件接口，宁可停下来也不能让线上留两份不同字节的同名包。
+    附件**上传**只能走 upload_url + PUT（`POST .../attach_files` 不存在）。
+    同名附件：大小一致就当已传好跳过；**大小不同就自动删掉线上旧附件再传**
+    （`DELETE /releases/{tag}/attach_files/{asset_id}` → 204，2026-11-14 实测）——
+    以前这里会停下来要求人工上网页删，属于可以自动化的弯路。
+    只有在旧附件拿不到 `id`（即自动生成的源码包）时才停手。
     """
     tag = 'v%s' % ver
     rel = _gc_get_release(tag, token)
@@ -487,9 +499,15 @@ def gitcode_release(ver, token, assets, notes):
             print('   附件已在（同名同大小，跳过）:', name, size, 'B')
             continue
         if old:
-            raise RuntimeError('GitCode 上同名附件字节不同（线上 %s B / 本地 %d B）：%s\n'
-                               '请到 %s/%s/%s/releases/tag/%s 删掉旧附件再重发。'
-                               % (old.get('size'), size, name, GC_WEB, OWNER, REPO, tag))
+            aid = old.get('id')
+            if aid:
+                api('DELETE', '/repos/%s/%s/releases/%s/attach_files/%s'
+                    % (OWNER, REPO, quote(tag), aid), token)
+                print('   同名附件字节不同，已自动删掉线上旧附件:', name, old.get('size'), 'B')
+            else:
+                raise RuntimeError('GitCode 上同名附件字节不同且没有 id 可删（线上 %s B / 本地 %d B）：%s\n'
+                                   '请到 %s/%s/%s/releases/tag/%s 手工处理后再重发。'
+                                   % (old.get('size'), size, name, GC_WEB, OWNER, REPO, tag))
         j = api('GET', '/repos/%s/%s/releases/%s/upload_url' % (OWNER, REPO, quote(tag)),
                 token, extra={'file_name': name}, timeout=120)
         up = (j or {}).get('url') or ((j or {}).get('data') or {}).get('url')
