@@ -64,6 +64,27 @@ try:
 except Exception:
     pass
 
+
+def _sign_key_path():
+    """签名私钥在哪：环境变量 → 本机私有配置 → 本机默认路径。
+
+    2026-11-16 改：以前只认环境变量，没设就把两项演练 SKIP 掉 —— 于是「每次发版
+    都要人先在会话里 set 一遍」成了隐式前提。现在三处任一存在就算就位。
+    """
+    p = os.environ.get('MWA_ED25519_KEY')
+    if p and os.path.isfile(p):
+        return p
+    cfg = os.path.join(os.path.expanduser('~'), '.mwa-publish.json')
+    try:
+        with io.open(cfg, encoding='utf-8') as f:
+            p = (json.load(f) or {}).get('ed25519_key')
+        if p and os.path.isfile(p):
+            return p
+    except Exception:
+        pass
+    p = r'F:\Harness\secrets\raw\mwa-ed25519.key'
+    return p if os.path.isfile(p) else ''
+
 # 仓库根：本脚本既可能躺在**仓库**里的 <仓库>\tools\（随仓库入库的那份，源码就在上一级），
 # 也可能躺在**维护者工作区**的 <项目>\tools\（源码在旁边 <项目>\repo）。
 # 判据用 launcher.py 这个只在仓库根才有的文件 —— 两种布局都自己认出来。
@@ -956,14 +977,25 @@ if not os.path.exists(_drill2):
     skip('主程序自动替换演练', '找不到 tools/drill_launcher_update.ps1')
 elif not _oldexe:
     skip('主程序自动替换演练', '仓库里没有 v2.3.3 的旧 exe（演练要用它当"老客户端"）')
-elif not os.environ.get('MWA_ED25519_KEY'):
-    skip('主程序自动替换演练', '没设 MWA_ED25519_KEY（演练源要签名）')
+elif not _sign_key_path():
+    skip('主程序自动替换演练', '找不到签名私钥（环境变量 / ~/.mwa-publish.json / 默认路径三处都没有）')
 else:
     import subprocess
+    import shutil as _shutil
+    # 2026-11-16 同批修: 这一处原来也是裸调 'powershell' + 只认环境变量里的私钥，
+    # 与 ⑫ 段同一套问题。统一给绝对路径兜底、注入私钥、收敛模块路径。
+    _ps2 = _shutil.which('powershell') or r'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+    _env2 = dict(os.environ)
+    _env2['MWA_ED25519_KEY'] = _sign_key_path()
+    _env2['PSModulePath'] = ('C:\\Windows\\system32\\WindowsPowerShell\\v1.0\\Modules'
+                             ';C:\\Program Files\\WindowsPowerShell\\Modules')
+    _env2['PATH'] = os.pathsep.join([r'C:\Windows\System32\WindowsPowerShell\v1.0',
+                                     r'C:\Windows\System32', r'C:\Windows\System32\Wbem']) \
+        + os.pathsep + _env2.get('PATH', '')
     try:
         _p2 = subprocess.run(
-            ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', _drill2, '-Repo', REPO],
-            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=900)
+            [_ps2, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', _drill2, '-Repo', REPO],
+            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=900, env=_env2)
         _o2 = (_p2.stdout or '') + (_p2.stderr or '')
         _bad2 = [ln.strip() for ln in _o2.splitlines() if '[FAIL]' in ln]
         check('主程序自动替换演练：老客户端能连 exe 一起升级、升后控制台可用', _p2.returncode == 0 and not _bad2,
@@ -980,8 +1012,8 @@ say('⑫ 升级演练：旧版客户端真升到当前版本（含"坏指纹必�
 _drill = os.path.join(REPO, 'tools', 'drill_upgrade.ps1')
 if not os.path.exists(_drill):
     skip('升级演练', '找不到 tools/drill_upgrade.ps1')
-elif not os.environ.get('MWA_ED25519_KEY'):
-    skip('升级演练', '没设 MWA_ED25519_KEY（演练用的升级源要签名，老客户端才认）')
+elif not _sign_key_path():
+    skip('升级演练', '找不到签名私钥（环境变量 / ~/.mwa-publish.json / 默认路径三处都没有）')
 else:
     import subprocess
     import shutil as _shutil
@@ -1002,6 +1034,9 @@ else:
     # 子进程 PATH 里没有 System32 时同样报"不是命令"。这里把系统目录补到最前面。
     _sys_dirs = [r'C:\Windows\System32\WindowsPowerShell\v1.0', r'C:\Windows\System32', r'C:\Windows\System32\Wbem']
     _env['PATH'] = os.pathsep.join(_sys_dirs) + os.pathsep + _env.get('PATH', '')
+    # 2026-11-16 同批修: 演练脚本只认环境变量里的签名私钥；这里从本机配置/默认路径
+    # 解析出来后注入子进程，免得"每次发版都要人先在会话里 set 一遍"。
+    _env['MWA_ED25519_KEY'] = _sign_key_path()
     if not _shutil.which('git'):
         for _d in (r'F:\Harness\toolchain\PortableGit\versions\1.2.0\mingw64\bin',
                    r'C:\Program Files\Git\cmd'):

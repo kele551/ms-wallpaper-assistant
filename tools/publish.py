@@ -449,6 +449,55 @@ def _push_github_via_api(ref):
     return False
 
 
+def _same_sha(a, b, limit=16 * 1024 * 1024):
+    """两个文件内容是否逐字节相同（按块比，13 MB 文件也只花几十毫秒）。"""
+    try:
+        if a.stat().st_size != b.stat().st_size:
+            return False
+        with open(str(a), 'rb') as fa, open(str(b), 'rb') as fb:
+            while True:
+                ca = fa.read(1048576)
+                cb = fb.read(1048576)
+                if ca != cb:
+                    return False
+                if not ca:
+                    return True
+    except Exception:
+        return False
+
+
+def _https_alive(host, timeout=3.0):
+    """HTTPS 探活：拿得到响应才算这条线能用。
+
+    只用 TCP 会误判 —— 2026-11-16 实测 github.com:443 能建连（TCP 通），
+    但 git push 一次要空转 21 秒才报 Connection was reset。所以改成真发一个
+    HTTPS 请求（robots.txt，最轻），3 秒内拿不到响应就认定不能走。
+    """
+    try:
+        req = _rq.Request('https://%s/robots.txt' % host,
+                          headers={'User-Agent': 'mwa-doctor'})
+        opener = _rq.build_opener(_rq.ProxyHandler({}))
+        with opener.open(req, timeout=timeout) as r:
+            return 200 <= r.status < 500
+    except Exception:
+        return False
+
+
+def _tcp_alive(host, port=443, timeout=3.0):
+    """TCP 探活：3 秒内连不上就认定这条线不能走，别让 git 自己空等 21 秒。
+
+    2026-11-16 实测：这台机器上 github.com:443 基本连不上，git push 每次先在
+    这里空转 21~22 秒才报错；api.github.com 一直是通的。先探一下，不通就直接走 API。
+    """
+    import socket as _sock
+    try:
+        s = _sock.create_connection((host, port), timeout=timeout)
+        s.close()
+        return True
+    except Exception:
+        return False
+
+
 def _push(remote, ref):
     """推一个 ref，推完一律 ls-remote 复核远端 sha。
 
@@ -466,6 +515,9 @@ def _push(remote, ref):
     want = _git_raw(['git', 'rev-parse', 'HEAD' if ref == BRANCH else ref])[1].split()[-1]
     if remote == 'origin':
         attempts = ['']
+    elif not _https_alive('github.com'):
+        attempts = []
+        print('   github.com HTTPS 3 秒没响应，不派 git（省掉 21 秒空等），直接走 api.github.com')
     else:
         relay = _relay_proxy()
         if relay:
@@ -851,8 +903,45 @@ def _github_assets_meta(ver):
     return out
 
 
+def _gitcode_assets_meta(ver):
+    """取 GitCode 发行版附件的「文件名 -> (大小, sha256)」。
+
+    2026-11-16 实测：GitCode 的 assets 里同样给 digest=sha256:...（与 GitHub 一致），
+    所以 26 MB 附件不必再下载回来算指纹。公开仓库可匿名取，取不到返回空字典回退下载。
+    """
+    try:
+        rel = _api_json('https://api.gitcode.com/api/v5/repos/%s/%s/releases/tags/v%s'
+                        % (OWNER, REPO, ver), {'User-Agent': 'mwa-verify'})
+    except Exception:
+        return {}
+    out = {}
+    for a in rel.get('assets', []):
+        if a.get('type') != 'attach':
+            continue
+        d = (a.get('digest') or '').lower()
+        if d.startswith('sha256:'):
+            out[a.get('name')] = (a.get('size'), d.split(':', 1)[1])
+    return out
+
+
+def _pick_meta(meta, name, size):
+    """在平台附件表里找本地文件对应项：先按名字，名字被平台改过就按大小唯一匹配。
+
+    GitHub 会把中文名 ASCII 化成 `MSWallpaperAssistant-v2.5.0.exe`，本地名是
+    `桌面壁纸.exe`，只按名字找必然 miss，进而回退下载、在断网时误报 FAIL。
+    返回 (平台侧文件名, (大小, sha256))。
+    """
+    hit = meta.get(name)
+    if hit and (hit[0] in (None, size)):
+        return (name, hit)
+    cands = [(k, v) for k, v in meta.items() if v[0] == size]
+    if len(cands) == 1:
+        return cands[0]
+    return None
+
+
 def verify(ver, assets, gh_assets=None):
-    """逐个附件核对 SHA256：GitHub 优先用平台指纹，其余仍下载回来算。
+    """逐个附件核对 SHA256：两个平台都优先用平台指纹，取不到才下载回来算。
 
     两平台的**附件名可以不一样**（GitHub 会把中文名削成 ASCII/空名），
     所以两边分别按各自的名字核对：GitCode 用 assets，GitHub 用 gh_assets。
@@ -860,6 +949,7 @@ def verify(ver, assets, gh_assets=None):
     if gh_assets is None:
         gh_assets = assets
     ok = True
+    gc_meta = _gitcode_assets_meta(ver)
     gh_meta = _github_assets_meta(ver)
     targets = []
     for p in assets:
@@ -869,12 +959,13 @@ def verify(ver, assets, gh_assets=None):
     for label, name, p, is_gc in targets:
         size = os.path.getsize(p)
         want = hashlib.sha256(open(p, 'rb').read()).hexdigest()
-        if not is_gc and name in gh_meta:
-            msize, msha = gh_meta[name]
+        hit = _pick_meta(gc_meta if is_gc else gh_meta, name, size)
+        if hit:
+            pname, (msize, msha) = hit
             same = msha == want and (msize in (None, size))
             ok = ok and same
             print('  [%s] %s %-32s %9d B  一致=%s（平台指纹比对，未下载）'
-                  % ('PASS' if same else 'FAIL', label, name, size, same))
+                  % ('PASS' if same else 'FAIL', label, pname, size, same))
             continue
         if is_gc:
             url = '%s/%s/%s/releases/download/v%s/%s' % (GC_WEB, OWNER, REPO, ver,
@@ -912,6 +1003,29 @@ def _client_pubkey():
     return m.group(1)
 
 
+def _github_contents(path):
+    """走 api.github.com 取仓库文件原文（raw 域名慢/不通时的兜底，0.5 秒级）。"""
+    import base64
+    try:
+        tok = gh_token()
+    except Exception:
+        return None
+    h = {'Authorization': 'Bearer ' + tok, 'Accept': 'application/vnd.github+json',
+         'User-Agent': 'mwa-verify'}
+    try:
+        j = _api_json('https://api.github.com/repos/%s/%s/contents/%s?ref=%s'
+                      % (OWNER, REPO, path, BRANCH), h, timeout=20)
+    except Exception:
+        return None
+    c = (j.get('content') or '').replace('\n', '').replace('\r', '')
+    if not c:
+        return None
+    try:
+        return base64.b64decode(c)
+    except Exception:
+        return None
+
+
 def verify_signature(vj, vsig):
     """回读两平台线上的 version.json + version.json.sig，用客户端内置公钥**真验一遍**。
 
@@ -935,15 +1049,35 @@ def verify_signature(vj, vsig):
     bust = int(time.time())
     gc_base = GC_API + '/repos/%s/%s/raw' % (OWNER, REPO)
     gh_base = 'https://raw.githubusercontent.com/%s/%s/%s' % (OWNER, REPO, BRANCH)
+
+    def _gh_get(f):
+        """GitHub 线上文件：直接走 api.github.com（0.5 秒级），API 不通才回退 raw 域名。
+
+        2026-11-16 实测：raw.githubusercontent.com 在这条线路上时而 20 秒才出结果，
+        一轮验真光等它就 20 秒；api.github.com 同一时刻 0.5 秒回，内容是同一份。
+        raw 是否可达另有一条 3 秒探活提示（只提示，不判 FAIL）。
+        """
+        data = _github_contents(f)
+        if data is None:
+            data = _download('%s/%s?v=%d' % (gh_base, f, bust), 10, 1,
+                             label='GitHub %s(回退 raw)' % f)
+        return data
+
+    # raw 域名单独探一次（最多 3 秒），只作提示：客户端升级读的就是它
+    _rt = time.time()
+    _rp = _https_alive('raw.githubusercontent.com')
+    print('  … GitHub raw 域名探活：%s（%.1f s，只提示不改结论）'
+          % ('通' if _rp else '3 秒未通，客户端升级可能取不到', time.time() - _rt))
+
     for label, mk in (
-            ('GitCode', lambda f: '%s/%s?ref=%s&t=%d' % (gc_base, f, BRANCH, bust)),
-            ('GitHub', lambda f: '%s/%s?v=%d' % (gh_base, f, bust))):
+            ('GitCode', lambda f: _download('%s/%s?ref=%s&t=%d' % (gc_base, f, BRANCH, bust),
+                                            SOCK_TMO, 3, deadline=120,
+                                            label='GitCode %s' % f)),
+            ('GitHub', _gh_get)):
         # 两个小文件（清单 806 B / 签名 128 B）：单次 recv 60 s、总预算 120 s、最多 3 轮，
         # 最坏三分钟出头就出结论，不会再把整轮验真拖到看不看在跑还是卡住。
-        raw = _download(mk('version.json'), SOCK_TMO, 3, deadline=120,
-                        label='%s version.json' % label)
-        sig_raw = _download(mk('version.json.sig'), SOCK_TMO, 3, deadline=120,
-                            label='%s version.json.sig' % label)
+        raw = mk('version.json')
+        sig_raw = mk('version.json.sig')
         if raw is None or sig_raw is None:
             print('  [FAIL] %s 线上 version.json / .sig 取不到（GitCode 与 GitHub 都必须能取到）' % label)
             ok = False
@@ -971,6 +1105,11 @@ def cmd_set_token(tok):
 
 
 def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
+    # 第 0 项：先问清这次能不能上传（3~5 秒），不通立刻停，不往下跑十几步再返工
+    if '--skip-doctor' not in sys.argv:
+        if not cmd_doctor():
+            sys.exit('❌ 第 0 项通道体检没过：先修上面的项再发版'
+                     '（急用可 --skip-doctor，但要在 logs\\ 写明原因）')
     token = load_token()
     if not token:
         sys.exit('没有令牌, 先跑: python tools/publish.py set-token <令牌>')
@@ -1006,7 +1145,13 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
     if not skip_build and not plain_exe.exists():
         sys.exit('找不到 %s' % plain_exe)
     vj, vsig = make_version_json()
-    assets = [zip_path, vj, vsig] + [p for p in (plain_exe, tagged_exe) if p.exists()]
+    # 2026-11-16 改：GitCode 只挂**固定名** exe。带版本号那份（桌面壁纸-v2.5.0.exe）
+    # 与固定名同字节（SHA384C… 逐位一致），README 也没有任何地方引用它 ——
+    # 以前两平台各传一遍 = 白传 26 MB。少传一份，附件清单也更清爽。
+    assets = [zip_path, vj, vsig] + ([plain_exe] if plain_exe.exists() else [])
+    if tagged_exe.exists() and not _same_sha(tagged_exe, plain_exe):
+        assets.append(tagged_exe)   # 万一某次真的不一样，仍要把两份都挂上
+        print('   ! 带版本号 exe 与固定名 exe 内容不同，两份都上传（别让用户下到旧包）')
 
     # 2026-10-05 踩的坑: GitHub 会把中文附件名里的汉字**直接削掉** ——
     #   微软壁纸助手.exe      -> default.exe
@@ -1084,6 +1229,94 @@ def cmd_release(ver, skip_build=False, notes_file=None, with_github=False):
     print('全部完成, 用时 %.0f 秒, 验真通过' % (time.time() - t0))
 
 
+def cmd_doctor():
+    """发版第 0 项：3~5 秒先问清「这次能不能上传」，不通就别往下跑。
+
+    2026-11-16 定：以前发版中途卡在「找不到 powershell / git / gh 没登录 / 令牌没设」
+    这类环境问题上，重试五六轮；这些全都能在动手前 5 秒内测出来。
+    """
+    import socket
+    rows = []
+
+    def chk(label, fn, fix='', fatal=True):
+        try:
+            rows.append((True, label, fn(), fix, fatal))
+        except Exception as e:
+            rows.append((False, label, '%s: %s' % (type(e).__name__, str(e)[:110]), fix, fatal))
+
+    def _git_ver():
+        code, out = _git_raw(['git', '--version'])
+        if code != 0 or not out.strip():
+            raise RuntimeError('git 调不起来（本机配置里 git_dir 没指对？）')
+        return out.strip().splitlines()[0]
+
+    def _gh():
+        exe = GH
+        if not exe or not os.path.isfile(exe):
+            raise RuntimeError('gh 找不到')
+        return gh_token()[:8] + '…（%s）' % os.path.basename(exe)
+
+    def _gc_token():
+        t = load_token()
+        if not t:
+            raise RuntimeError('GitCode 令牌没存（publish.py set-token <PAT>）')
+        return '已存 %d 位' % len(t)
+
+    def _key():
+        p = os.environ.get('MWA_ED25519_KEY') or r'F:\Harness\secrets\raw\mwa-ed25519.key'
+        if not os.path.isfile(p):
+            raise RuntimeError('签名钥匙不在 %s' % p)
+        return '就位'
+
+    def _gh_api():
+        tok = gh_token()
+        j = _api_json('https://api.github.com/rate_limit',
+                      {'Authorization': 'Bearer ' + tok, 'User-Agent': 'mwa-doctor'}, timeout=15)
+        core = j['resources']['core']
+        return '剩余 %d/%d 次' % (core['remaining'], core['limit'])
+
+    def _gc_api():
+        j = _api_json('https://api.gitcode.com/api/v5/repos/%s/%s/releases' % (OWNER, REPO),
+                      {'User-Agent': 'mwa-doctor'}, timeout=15)
+        return '发行版列表 %d 条' % (len(j) if isinstance(j, list) else 1)
+
+    def _gh_tcp():
+        if not _https_alive('github.com'):
+            raise RuntimeError('github.com 3 秒内没响应 → 走 api.github.com（不用手改）')
+        return '通（git 直连可用）'
+
+    def _gc_git():
+        code, out = _git_raw(['git', 'ls-remote', 'origin', 'main'])
+        if code != 0:
+            raise RuntimeError('origin 拉不动：%s' % (out.strip()[-120:] or '超时'))
+        return out.strip()[:12] + '…'
+
+    chk('git', _git_ver, '把 PortableGit 的 mingw64\\bin 写进 ~/.mwa-publish.json 的 git_dir')
+    chk('gh + 令牌', _gh, '在 ~/.mwa-publish.json 填 gh 绝对路径，并 gh auth login')
+    chk('GitCode 令牌', _gc_token, '跑 publish.py set-token <PAT>')
+    chk('签名钥匙', _key, '把 Ed25519 私钥放回 secrets\\raw\\mwa-ed25519.key，或设 MWA_ED25519_KEY')
+    chk('api.github.com', _gh_api, '检查网络 / 令牌权限')
+    chk('api.gitcode.com', _gc_api, '检查网络；GitCode 偶发抖动重跑一次')
+    chk('github.com:443', _gh_tcp, '不通没关系：脚本自动走 api.github.com', fatal=False)
+    chk('origin git', _gc_git, '检查 GitCode 网络')
+
+    print('=== 发版通道体检（第 0 项）===')
+    bad = 0
+    for ok, label, info, fix, fatal in rows:
+        tag = 'OK ' if ok else ('提示' if not fatal else 'FAIL')
+        print('  [%4s] %-16s %s' % (tag, label, info))
+        if not ok:
+            if fatal:
+                bad += 1
+            if fix:
+                print('        修法: %s' % fix)
+    if bad:
+        print('结论: %d 项不通 —— 先修上面的，别往下跑（这一步只为省掉中途返工）' % bad)
+        return False
+    print('结论: 全部通 —— 可以发布')
+    return True
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -1097,6 +1330,8 @@ def main():
             sys.exit('没有存过令牌')
         u = api('GET', '/user', t)
         print('用户 =', u.get('login') or u.get('name'))
+    elif a == 'doctor':
+        sys.exit(0 if cmd_doctor() else 1)
     elif a == 'verify' and len(sys.argv) > 2:
         cmd_verify(sys.argv[2])
     elif a == 'release' and len(sys.argv) > 2:
