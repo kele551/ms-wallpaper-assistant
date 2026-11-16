@@ -91,8 +91,8 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 > 境外仓库国内时常连不通（附件在 `release-assets.githubusercontent.com`，实测这台机器直连 21 秒握不上手），
 > 所以**下载请走 GitCode**：上面这个链接点下去就是 `桌面壁纸.exe`，双击即用，不用解压。
 > 想要 zip（exe + `使用说明.txt`）或 GitHub 那份的，在 [GitHub v2.5.1 发行页](https://github.com/kele551/ms-wallpaper-assistant/releases/tag/v2.5.1)。
-> 两处的 `桌面壁纸.exe` / `MSWallpaperAssistant-v2.5.1.exe` 是同一个文件（13,116,016 B），SHA256 都是
-> `7884C9AA8495866F8B329F2C917688A529585E95AF772829EA3AFDB307AEA296`（2026-11-16 从两个平台各取一次逐个比对，字节一致）。
+> 两处的 `桌面壁纸.exe` / `MSWallpaperAssistant-v2.5.1.exe` 是同一个文件（13,123,787 B），SHA256 都是
+> `F4D4148EBD5005B28E2936AA597F2FC5E4DE8A18E80A2D0DA544022D6A242A2D`（2026-11-16 从两个平台各取一次逐个比对，字节一致）。
 
 > **下载主源：[GitCode](https://gitcode.com/kele551/ms-wallpaper-assistant)**（与热点 / 狐径同一口径）—— 境内直连快，
 > **发行版附件与 GitHub 同版本同字节**，三个平台都收 Issue / PR。
