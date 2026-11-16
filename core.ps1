@@ -3355,12 +3355,28 @@ function Test-BwAspectFit([double]$imgAr, [double]$screenAr) {
   if (($imgAr -le 0) -or ($screenAr -le 0)) { return $false }
   if ($imgAr -ge $screenAr) {
     $trimW = ($imgAr - $screenAr) / $imgAr
-    return ($trimW -le 0.25)
+    # 2026-11-16: 25% -> 30%。用户反馈(issue #1)那台 16:10 屏已由 25% 救回,
+    # 但实测 4:3(1.333) / 5:4(1280x1024=1.25) 老显示器对 16:9 图要裁 25.03% / 29.7%,
+    # 卡在 25% 边上照样全灭 -> 必应当日图(永远 16:9)一张也进不来, 又回到"库空不换图"。
+    # 30% 能覆盖 4:3 与 5:4, 同时仍挡住 21:9(2.333) 铺 16:10 的 31.4% 超宽裁切。
+    return ($trimW -le 0.30)
   }
-  $limitH = 0.12
+  # 2026-11-16: 12% -> 20%, 与上面同口径。4:3 图铺 16:10 屏要裁 16.7% 高度,
+  # 原 12% 会把它判死; 20% 仍挡住方图(16:10 屏裁 37.5%)与竖幅。
+  $limitH = 0.20
   if ($screenAr -gt 2.0) { $limitH = 0.25 }
   $trimH = ($screenAr - $imgAr) / $screenAr
   return ($trimH -le $limitH)
+}
+# 2026-11-16: 兜底口径用的「铺满要裁掉多少」。
+# 严格闸（Test-BwAspectFit）全灭时（怪比例屏、或库里只剩不合闸的图），
+# 与其让桌面一动不动，不如挑一张裁得最少的横图换上 —— 用户反馈 issue #1 里
+# 那台机器就是「库里有图但一张都不合闸」，结果壁纸卡住不换。
+# 兜底上限 40%：方图铺 16:9 要裁 43.75%、竖幅更多，仍然排除；4:3 图铺 16:9 裁 25% 可以上。
+function Get-BwTrimRatio([double]$imgAr, [double]$screenAr) {
+  if (($imgAr -le 0) -or ($screenAr -le 0)) { return 1.0 }
+  if ($imgAr -ge $screenAr) { return (($imgAr - $screenAr) / $imgAr) }
+  return (($screenAr - $imgAr) / $screenAr)
 }
 # 一个源的"画质门槛"打包成一次调用要用的几个数(抓取处只取一次, 循环里直接用)。
 # 宽高比窗口: @{Min=下限; Max=上限}, 0 = 那一边不限。
@@ -9059,7 +9075,18 @@ function Invoke-SpotlightFetch([int]$count, [switch]$SetWall, [switch]$Quiet, [s
       if (-not $first) { $first = $path }
       if (-not $Quiet) { Write-Host ('    OK  ' + (Split-Path $path -Leaf)) }
       elseif ($Counter) { Show-BwDashedCounter $ok $frame }
-    } else { $fail++ }
+    } else {
+      # 2026-11-16: 被「比例 / 画质」闸筛掉的**不算下载失败**。
+      # 用户日志(issue #1)里 20 张必应图全被比例闸挡下, 却打成「聚焦抓取: 新增0 跳过0 失败20」,
+      # 看上去像网络坏了、图源挂了, 实际是闸门把一个屏都筛空了 —— 计数口径必须分得清,
+      # 否则下次还是照着"失败"去查网络, 方向全错。
+      $dlSt = [string]$global:BWLastDlStatus
+      if (($dlSt -eq 'aspect') -or ($dlSt -eq 'toosmall') -or ($dlSt -eq 'toobig') -or ($dlSt -eq 'blur')) {
+        $skip++
+      } else {
+        $fail++
+      }
+    }
     if ($Counter) { Wait-BwFlow 600 $ok ([ref]$frame) } else { Start-Sleep -Milliseconds 600 }
   }
   # 计数器那行是 -NoNewline 写的, 先把这一行收掉再打总结, 免得总结接在数字后面。
@@ -9258,7 +9285,42 @@ function Invoke-BwOnTimeSwap {
         return $true
       }
     }
-    Log '准时换图失败: 本地所有库都没有可用的 16:9 图' 'WARN'
+    # 2026-11-16 兜底（issue #1 固化）: 严格闸全灭时，桌面不能一动不动。
+    # 从本模式库里挑「铺满裁得最少」的一张，只要求裁切 ≤40%
+    # （方图铺 16:9 要裁 43.75%、竖幅更多，仍然排除；4:3 图铺 16:9 裁 25% 可以用）。
+    $best = $null; $bestTrim = 1.0
+    foreach ($pool in $pools) {
+      foreach ($f in @($pool.Files)) {
+        try {
+          $p = [string]$f.FullName
+          if ((-not $p) -or ($p -ieq $cur) -or (-not (Test-Path -LiteralPath $p))) { continue }
+          if (-not (Test-BwImageOk $p)) { continue }
+          if ($used.ContainsKey((Get-BwNameKey $f.Name))) { continue }
+          $gd = Get-BwImageSize $p
+          if (-not $gd -or ([int]$gd.H -le 0)) { continue }
+          $tr = Get-BwTrimRatio ([double]$gd.W / [double]$gd.H) $sar
+          if (($tr -le 0.40) -and ($tr -lt $bestTrim)) {
+            $bestTrim = $tr
+            $best = [PSCustomObject]@{ File = $f; Path = $p }
+          }
+        } catch {}
+      }
+    }
+    if ($best) {
+      $okBest = Set-BwWall $best.Path
+      if ($okBest) {
+        $s.last_wall = $best.Path
+        $s.shown = [int]$s.shown + 1
+        $s.last_swap = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+        Add-BwHist $s $best.File.Name
+        Add-BwSrcRot $best.Path
+        if ($global:BWNoRepeat) { [void](Sync-BwQueue $s) }
+        Save-BwStateKeepFav $s
+        Log ('准时换图(兜底: 比例不是最理想, 铺满裁 ' + [math]::Round($bestTrim * 100, 1) + '%) -> ' + $best.File.Name)
+        return $true
+      }
+    }
+    Log '准时换图失败: 本地所有库没有可换的图（也没有一张铺满裁切 ≤40% 的横图）' 'WARN'
     return $false
   } catch {
     Log ('准时换图异常: ' + $_.Exception.Message) 'WARN'
@@ -9360,7 +9422,15 @@ function Invoke-BwCycle {
             # 这里必须直接 return 且不记账。以前下载失败也照样把 last_bing_date 写成今天,
             # 而 15 分钟后要不要重试恰恰是看这个字段 —— 当天就再也不会重试了,
             # 上面那句"15 分钟后再试"的日志其实是假的。
-            Log '必应当日壁纸下载失败, 15 分钟后再试'
+            # 2026-11-16: 分清"网络没下到"和"下到了但不合闸(比例/画质)"。
+            # 以前一律报「下载失败」, 用户(issue #1)那台 16:10 屏就是被比例闸整批判死,
+            # 日志却写"下载失败", 排查方向直接被带偏到网络上。
+            $dlSt = [string]$global:BWLastDlStatus
+            if (($dlSt -eq 'aspect') -or ($dlSt -eq 'toosmall') -or ($dlSt -eq 'toobig') -or ($dlSt -eq 'blur')) {
+              Log ('必应当日壁纸没通过画质/比例闸(' + $dlSt + '), 15 分钟后重试')
+            } else {
+              Log '必应当日壁纸下载失败, 15 分钟后再试'
+            }
             # 2026-10-09 (审查 H-11): 这里以前是全份覆盖写。$s 是 40 多行前读的快照,
             # 中间还跑过 Invoke-BwBackfill(可能几分钟), 用户这期间按 [F] 收藏的图
             # 会被无声抹掉。同函数下面的规则 2/3 早就是 KeepFav, 这一条漏改。

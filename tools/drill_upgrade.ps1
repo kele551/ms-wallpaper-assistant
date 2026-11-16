@@ -136,7 +136,12 @@ $ok = Invoke-BwScriptUpdate -Quiet -Force
 '@
   $drvFile = Join-Path $root 'drive_update.ps1'
   [System.IO.File]::WriteAllText($drvFile, $drv, (New-Object System.Text.UTF8Encoding($true)))
-  & powershell -NoProfile -ExecutionPolicy Bypass -File $drvFile $old $base 2>&1 | ForEach-Object { "    $_" }
+  # 2026-11-16: 原来裸调 `powershell`，在 PATH 里没有它的环境（本机豆包沙箱、精简环境）
+  # 会报"不是命令"，演练直接判红。这里改用它自己的绝对路径（$PSHOME 就是当前这个 PowerShell 所在目录）。
+  # 注意：仍然只用 Windows PowerShell，不换 pwsh（安全软件会拦 python/脚本拉起 pwsh 跑脚本）。
+  $psExe = Join-Path $PSHOME 'powershell.exe'
+  if (-not (Test-Path -LiteralPath $psExe)) { $psExe = 'powershell' }
+  & $psExe -NoProfile -ExecutionPolicy Bypass -File $drvFile $old $base 2>&1 | ForEach-Object { "    $_" }
 
   if (((Get-Content (Join-Path $old '.version') -Raw -Encoding ASCII).Trim()) -ne $ver) {
     $lg = Join-Path $old 'wallpaper.log'
@@ -212,7 +217,7 @@ try { $r = Invoke-BwScriptUpdate -Quiet -Force; "返回: $r" } catch { "抛错: 
   [System.IO.File]::WriteAllText($drvFile2, $drv2, (New-Object System.Text.UTF8Encoding($true)))
   # 把坏掉的 version.json 放到同一个升级源上（脚本文件不动），再来一次升级
   Copy-Item (Join-Path $bad 'version.json') (Join-Path $web 'version.json') -Force
-  & powershell -NoProfile -ExecutionPolicy Bypass -File $drvFile2 $old $base 2>&1 | ForEach-Object { "    $_" }
+  & $psExe -NoProfile -ExecutionPolicy Bypass -File $drvFile2 $old $base 2>&1 | ForEach-Object { "    $_" }
   $shaAfter = (Get-FileHash (Join-Path $old 'core.ps1') -Algorithm SHA256).Hash
   $verAfter = (Get-Content (Join-Path $old '.version') -Raw -Encoding ASCII).Trim()
   Assert ($shaAfter -eq $shaBefore) "指纹对不上时 core.ps1 一个字节都没被改"

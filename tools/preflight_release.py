@@ -195,14 +195,23 @@ def ver_tuple(v):
 
 
 def ps(cmd, timeout=120):
-    """跑一句 PowerShell 并把输出取回来；环境没有 powershell 时返回 None。"""
-    try:
-        r = subprocess.run(['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass',
-                            '-Command', cmd], capture_output=True, text=True,
-                           encoding='utf-8', errors='replace', timeout=timeout)
-        return (r.stdout or '').strip()
-    except Exception:
-        return None
+    """跑一句 PowerShell 并把输出取回来；环境没有 powershell 时返回 None。
+
+    2026-11-16: Path 上的 `powershell` 在部分环境（含本机豆包的沙箱）取不到，
+    于是所有 PowerShell 检查被误判成「没有可用的 powershell」一律 SKIP，
+    该跑的闸门没跑。这里补上系统自带的绝对路径兜底。
+    **不要**改去调 `pwsh`：安全软件会把「python 拉起 pwsh 执行脚本」当敏感动作拦下来。
+    """
+    for _exe in ('powershell', r'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'):
+        try:
+            r = subprocess.run([_exe, '-NoProfile', '-ExecutionPolicy', 'Bypass',
+                                '-Command', cmd], capture_output=True, text=True,
+                               encoding='utf-8', errors='replace', timeout=timeout)
+            if (r.stdout or '').strip():
+                return r.stdout.strip()
+        except Exception:
+            continue
+    return None
 
 
 HAVE_PS = False      # 有没有可用的 powershell（非 Windows / 精简系统可能没有）；下面解析开关后再探
@@ -975,15 +984,46 @@ elif not os.environ.get('MWA_ED25519_KEY'):
     skip('升级演练', '没设 MWA_ED25519_KEY（演练用的升级源要签名，老客户端才认）')
 else:
     import subprocess
+    import shutil as _shutil
+    # 2026-11-16: 这里原来裸调 `powershell`，在 Path 里取不到它时（本机豆包的沙箱、
+    # 精简过的环境）直接 FileNotFoundError，演练被误判成红项、整个发版被拦。
+    # 与 ps() 同一套兜底：先 Path，再系统绝对路径。**不许**换成 pwsh（安全软件会拦）。
+    _ps_exe = _shutil.which('powershell') or r'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+    # 2026-11-16 同批修: 演练脚本要用 git 取 tag 里的 v2.3.3 老客户端，
+    # 本机 git 不在 Path（PortableGit）时演练会直接报「git 不是命令」并判红。
+    # 这里把它补进子进程的 PATH，不动系统 PATH。
+    _env = dict(os.environ)
+    # 2026-11-16 同批修: 继承来的 PSModulePath 里混着 pwsh 的 Modules 目录时，
+    # Windows PowerShell 5.1 在子进程里连 Get-FileHash 都加载不出来（演练第 94 行直接报
+    # "The term 'Get-FileHash' is not recognized"）。这里把模块路径收敛成系统自带的两条。
+    _env['PSModulePath'] = ('C:\\Windows\\system32\\WindowsPowerShell\\v1.0\\Modules'
+                            ';C:\\Program Files\\WindowsPowerShell\\Modules')
+    # 2026-11-16 同批修: 演练脚本内部还会裸调 `powershell` 去起老客户端（第 139 行），
+    # 子进程 PATH 里没有 System32 时同样报"不是命令"。这里把系统目录补到最前面。
+    _sys_dirs = [r'C:\Windows\System32\WindowsPowerShell\v1.0', r'C:\Windows\System32', r'C:\Windows\System32\Wbem']
+    _env['PATH'] = os.pathsep.join(_sys_dirs) + os.pathsep + _env.get('PATH', '')
+    if not _shutil.which('git'):
+        for _d in (r'F:\Harness\toolchain\PortableGit\versions\1.2.0\mingw64\bin',
+                   r'C:\Program Files\Git\cmd'):
+            if os.path.isdir(_d):
+                _env['PATH'] = _d + os.pathsep + _env.get('PATH', '')
+                break
     try:
         _p = subprocess.run(
-            ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', _drill, '-Repo', REPO],
-            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=900)
+            [_ps_exe, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', _drill, '-Repo', REPO],
+            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=900, env=_env)
         _out = (_p.stdout or '') + (_p.stderr or '')
         _bad = [ln.strip() for ln in _out.splitlines() if '[FAIL]' in ln]
+        _why = '；'.join(_bad[:4]) if _bad else ('退出码 %s' % _p.returncode)
+        if not _bad and _p.returncode != 0:
+            # 2026-11-16: 演练自己抛错（不是 [FAIL] 断言）时原来只报「退出码 1」，
+            # 真正的病根（哪个命令没找到）全丢在输出里，还得人工重跑一遍才看得见。
+            _lines = [ln.strip() for ln in _out.splitlines() if ln.strip()]
+            if _lines:
+                _why += '；输出尾: ' + ' | '.join(_lines[-4:])[:400]
         check('升级演练：v2.3.3 能升到当前版本、升上来的控制台可用、坏指纹会被拒绝',
               _p.returncode == 0 and not _bad,
-              '；'.join(_bad[:4]) if _bad else ('退出码 %s' % _p.returncode))
+              _why)
     except Exception as e:
         check('升级演练：v2.3.3 能升到当前版本、升上来的控制台可用、坏指纹会被拒绝', False,
               '%s: %s' % (type(e).__name__, e))
@@ -1033,5 +1073,101 @@ check('控制台打开时复用已在跑的服务（不再每点一次多一个�
       ('Open-BwExistingPanel' in _p_core) and ('Open-BwExistingPanel' in _p_m)
       and ('panel.serve.json' in _p_core),
       'core.ps1 / menu.ps1 里缺少面板复用逻辑')
+
+# ══════════════════════════════════════════════════════════════════════════
+# ⑯ 屏幕比例适配闸（2026-11-16 由用户反馈 issue #1 固化）
+#   2.4.6 / 2.4.7 把「只收 16:9」实现成了「图比例必须等于屏幕比例(±1%)」：
+#   用户的 2560×1600（16:10）屏把必应当日图（永远 16:9）整批判死，
+#   聚焦库 0 张 / 队列 0 张，表现为「这两个版本都不会换壁纸」。
+#   修完 16:10 后实测又发现 4:3 / 5:4 老屏卡在 25% 边界上同样全灭。
+#   这一节把「常见屏幕 × 常见图片比例」矩阵真跑一遍：
+#   * 常见横构图（16:9 / 16:10 / 4:3 / 2:1）在常见屏上必须有图可换；
+#   * 方图 / 竖图 / 21:9 超宽仍必须被挡（11-08「不要方形/竖幅/超宽」不许回退）。
+# ══════════════════════════════════════════════════════════════════════════
+say()
+say('⑯ 屏幕比例适配闸：16:9 / 16:10 / 4:3 / 5:4 屏都必须有图可换，方图竖图超宽仍要挡')
+_p_core2 = read(os.path.join(REPO, 'core.ps1')) or ''
+_gates = _p_core2.count('Test-BwAspectFit')
+_strict = '- $srcAr) / $srcAr)' in _p_core2
+check('四道闸（候选预筛/落盘/轮换/准时换图）统一走 Test-BwAspectFit',
+      _gates >= 4 and not _strict,
+      (('core.ps1 里 Test-BwAspectFit 只出现 %d 次（应 ≥4）' % _gates) if _gates < 4 else
+       ('core.ps1 里还留着旧的「与屏幕比例差 ±1%」硬判，那会把 16:10 / 4:3 屏的 16:9 图全判死'
+        if _strict else '')))
+
+_AR_CASES = [
+    # (名字, 图比例, 屏比例, 期望通过)
+    ('16:9 图 -> 16:9 屏', 1.778, 1.778, True),
+    ('16:9 图 -> 16:10 屏(2560x1600)', 1.778, 1.600, True),
+    ('16:9 图 -> 4:3 屏(1024x768)', 1.778, 1.333, True),
+    ('16:9 图 -> 5:4 屏(1280x1024)', 1.778, 1.250, True),
+    ('16:10 图 -> 16:10 屏', 1.600, 1.600, True),
+    ('4:3 图 -> 16:10 屏', 1.333, 1.600, True),
+    ('2:1 图 -> 16:10 屏', 2.000, 1.600, True),
+    ('带鱼屏 2.37 图 -> 2.37 屏', 2.370, 2.370, True),
+    ('21:9 图 -> 16:10 屏', 2.333, 1.600, False),
+    ('方图 -> 16:9 屏', 1.000, 1.778, False),
+    ('方图 -> 16:10 屏', 1.000, 1.600, False),
+    ('竖图 -> 16:9 屏', 0.667, 1.778, False),
+    ('竖图 -> 16:10 屏', 0.667, 1.600, False),
+]
+
+_ar_body = ''
+_m = re.search(r'function Test-BwAspectFit\s*\([^)]*\)\s*\{', _p_core2)
+if _m:
+    _j = _p_core2.find('\n}', _m.end())
+    _ar_body = _p_core2[_m.end():(_j if _j > 0 else len(_p_core2))]
+
+CAP_W = re.search(r'\$trimW -le ([0-9.]+)', _ar_body)
+CAP_H = re.search(r'\$limitH = ([0-9.]+)', _ar_body)
+CAP_H_WIDE = re.search(r'\$screenAr -gt ([0-9.]+)\)?\s*\{?\s*\$limitH = ([0-9.]+)', _ar_body)
+_alg_ok = ('($imgAr -ge $screenAr)' in _ar_body) and ('($imgAr - $screenAr) / $imgAr' in _ar_body) \
+          and ('($screenAr - $imgAr) / $screenAr' in _ar_body)
+check('core.ps1 里找得到 Test-BwAspectFit，且算法结构没被悄悄改掉',
+      bool(_m) and bool(CAP_W) and bool(CAP_H) and _alg_ok,
+      ('找不到 Test-BwAspectFit 函数' if not _m else
+       '函数体结构变了（找不到 $trimW -le / $limitH = / 铺满裁切两段公式），'
+       '这一节的矩阵是照原结构算的，请人工复核并同步本检查'))
+
+if bool(_m) and bool(CAP_W) and bool(CAP_H) and _alg_ok:
+    _cap_w = float(CAP_W.group(1))
+    _cap_h = float(CAP_H.group(1))
+    _wide_th = float(CAP_H_WIDE.group(1)) if CAP_H_WIDE else 2.0
+    _cap_h_wide = float(CAP_H_WIDE.group(2)) if CAP_H_WIDE else _cap_h
+
+    def _ar_fit(img, scr):
+        """照 core.ps1 Test-BwAspectFit 的口径算：铺满(cover)后裁掉的比例。"""
+        if img <= 0 or scr <= 0:
+            return False
+        if img >= scr:
+            return ((img - scr) / img) <= _cap_w
+        limit = _cap_h_wide if scr > _wide_th else _cap_h
+        return ((scr - img) / scr) <= limit
+
+    _badw = []
+    _badl = []
+    for (_n, _i, _s, _w) in _AR_CASES:
+        _got = _ar_fit(_i, _s)
+        if _w and not _got:
+            _badw.append('%s（该放行却挡住了，库会变空 → 不换图）' % _n)
+        elif (not _w) and _got:
+            _badl.append('%s（该挡住却放行了）' % _n)
+    check('常见屏都换得动图（16:9 图在 16:9 / 16:10 / 4:3 / 5:4 屏上都要放行）',
+          not _badw, '；'.join(_badw))
+    check('方图 / 竖图 / 21:9 超宽仍然被挡（11-08 口径没回退）',
+          not _badl, '；'.join(_badl))
+    say('  当前口径: 左右裁 ≤%.0f%% / 上下裁 ≤%.0f%%（屏比例 >%.1f 放宽到 %.0f%%）'
+        % (_cap_w * 100, _cap_h * 100, _wide_th, _cap_h_wide * 100))
+
+# 2026-11-16 同批固化的两条（也来自 issue #1 那一场）：
+# ① 库全灭时不能干等 —— 要有「挑裁切最少的一张」兜底，且方图/竖幅仍排除；
+# ② 闸门筛掉的图不许记成「下载失败」—— 否则下次照"失败"去查网络，方向全错。
+check('库全灭时有兜底换图（挑铺满裁切最少的一张，方图竖幅仍排除）',
+      ('Get-BwTrimRatio' in _p_core2) and ('$bestTrim' in _p_core2)
+      and ('-le 0.40' in _p_core2) and ('准时换图(兜底' in _p_core2),
+      'core.ps1 里没找到兜底换图逻辑 —— 严格闸全灭时桌面会一动不动')
+check('比例/画质闸筛掉的图不算「下载失败」（计数与必应日志都分得清）',
+      ('没通过画质/比例闸' in _p_core2) and ("$dlSt -eq 'aspect'" in _p_core2),
+      'core.ps1 里还把闸门筛掉记成失败 —— 下次排查会被带偏到网络上')
 
 finish()
