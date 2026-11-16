@@ -11329,22 +11329,28 @@ function render(s){
        角标一律写**这张图真正来自哪个库**；是程序自动切过去的，再补一句"自动切换 · 明天回XX"，
        用户手动切的就不带这句。 */
     var _cs = (s && s.curSrc) ? String(s.curSrc) : "";
-    var _asw = (s && s.autoSwitch && String(s.autoSwitch.by || "") === "auto") ? s.autoSwitch : null;
+    /* 2026-11-16 用户「聚焦的图片，面板还是显示自动切换」：这句只在**当前模式仍是被
+       自动切过去的那个源**时才成立。用户手动切回原模式、或手动点图设壁纸之后，标记
+       就算残留在 config 里，也不能再挂"自动切换 · 明天回XX"——那是给用户看错状态。 */
+    var _asw = (s && s.autoSwitch && String(s.autoSwitch.by || "") === "auto"
+                && String(s.autoSwitch.to || "") === String(mode || "")) ? s.autoSwitch : null;
     /* 2026-11-16 体检截图抓到：直接拿 MODE_NAME 拼会出「只换随拍 · 自动切换（明天回只换聚焦）」，
        读起来绕。角标一律用短名（聚焦/必应/万象/随拍）。 */
     function _srcShort(k) {
       if (!k) { return ""; }
-      var n = String(MODE_NAME[k] || k);
-      return n.replace(/^只换/, "");
+      var n = String(MODE_NAME[k] || k).replace(/^只换/, "");
+      /* 2026-11-16 用户「不是只换万象，应该是万象模式」：角标一律叫"XX模式"。 */
+      return n ? n + "模式" : "";
     }
     var _srcName = _srcShort(_cs) || _srcShort(mode);
     if (_asw && _srcName) {
       var _back = _srcShort(String(_asw.from || ""));
       setText("heroBadge", _srcName + " · 自动切换" + (_back ? "（明天回" + _back + "）" : ""));
     } else if (_cs && _cs !== mode && MODE_NAME[_cs]) {
-      setText("heroBadge", _srcShort(_cs) + "源 · 自动换源");
+      setText("heroBadge", _srcShort(_cs) + " · 自动换源");
     } else {
-      setText("heroBadge", MODE_NAME[mode] + " · 当前壁纸");
+      /* 角标一律短名：这里原来直接用 MODE_NAME，会显示"只换万象 · 当前壁纸"，读着绕（2026-11-16）。 */
+      setText("heroBadge", (_srcShort(mode) || MODE_NAME[mode]) + " · 当前壁纸");
     }
     $("btnOpenImg").style.display = "";
   } else {
@@ -14308,7 +14314,9 @@ function Get-BwPanelState {
   # 所以这里不再用"聚焦模式却放着万象图"的写法, 而是给一句人话交代"为什么当前是这个源"。
   try {
     $aswLine = ''
-    if ($c.PSObject.Properties['auto_switch'] -and $c.auto_switch -and ([string]$c.auto_switch.by -eq 'auto')) {
+    # 只有**当前模式仍是被自动切过去的那个源**时才讲这句话；用户手动切走 / 手动选图后
+    # 即便标记残留也不能再说"已自动切到XX库"，否则面板文案和实际模式对不上（2026-11-16）。
+    if ($c.PSObject.Properties['auto_switch'] -and $c.auto_switch -and ([string]$c.auto_switch.by -eq 'auto') -and ([string]$c.auto_switch.to -eq (Get-BwMode))) {
       $fr = switch ([string]$c.auto_switch.from) { 'focus' {'聚焦'} 'bing' {'必应'} 'commons' {'万象'} 'picsum' {'随拍'} default {''} }
       $to = switch ([string]$c.auto_switch.to) { 'focus' {'聚焦'} 'bing' {'必应'} 'commons' {'万象'} 'picsum' {'随拍'} default {''} }
       if ($fr -and $to) {
@@ -14881,26 +14889,40 @@ function Invoke-BwPanelAction($req) {
         'commons'   { $want2 = 'commons' }
         'picsum'    { $want2 = 'picsum' }
       }
-      if ($want2 -and ($want2 -ne (Get-BwMode))) {
+      if ($want2) {
         $c2 = Get-BwConfig
-        $c2 | Add-Member -NotePropertyName wallpaper_mode -NotePropertyValue $want2 -Force
-        $c2 | Add-Member -NotePropertyName bing_only -NotePropertyValue ([bool]($want2 -eq 'bing')) -Force
-        # 必应模式固定 24 小时、离开时还原 —— 与面板上点模式切换同一口径
-        if ($want2 -eq 'bing') {
-          $prevCycle = 30
-          try { if ($c2.PSObject.Properties['cycle_minutes']) { $prevCycle = [int]$c2.cycle_minutes } } catch {}
-          if (($prevCycle -ne 1440) -and -not $c2.PSObject.Properties['cycle_before_bing']) {
-            $c2 | Add-Member -NotePropertyName cycle_before_bing -NotePropertyValue $prevCycle -Force
+        if ($want2 -ne (Get-BwMode)) {
+          $c2 | Add-Member -NotePropertyName wallpaper_mode -NotePropertyValue $want2 -Force
+          $c2 | Add-Member -NotePropertyName bing_only -NotePropertyValue ([bool]($want2 -eq 'bing')) -Force
+          # 必应模式固定 24 小时、离开时还原 —— 与面板上点模式切换同一口径
+          if ($want2 -eq 'bing') {
+            $prevCycle = 30
+            try { if ($c2.PSObject.Properties['cycle_minutes']) { $prevCycle = [int]$c2.cycle_minutes } } catch {}
+            if (($prevCycle -ne 1440) -and -not $c2.PSObject.Properties['cycle_before_bing']) {
+              $c2 | Add-Member -NotePropertyName cycle_before_bing -NotePropertyValue $prevCycle -Force
+            }
+            $c2 | Add-Member -NotePropertyName cycle_minutes -NotePropertyValue 1440 -Force
+          } elseif (([int]$c2.cycle_minutes -eq 1440) -and $c2.PSObject.Properties['cycle_before_bing']) {
+            $restoreCycle = 30
+            try { $rc = [int]$c2.cycle_before_bing; if ($rc -ge 5 -and $rc -le 1440) { $restoreCycle = $rc } } catch {}
+            $c2 | Add-Member -NotePropertyName cycle_minutes -NotePropertyValue $restoreCycle -Force
           }
-          $c2 | Add-Member -NotePropertyName cycle_minutes -NotePropertyValue 1440 -Force
-        } elseif (([int]$c2.cycle_minutes -eq 1440) -and $c2.PSObject.Properties['cycle_before_bing']) {
-          $restoreCycle = 30
-          try { $rc = [int]$c2.cycle_before_bing; if ($rc -ge 5 -and $rc -le 1440) { $restoreCycle = $rc } } catch {}
-          $c2 | Add-Member -NotePropertyName cycle_minutes -NotePropertyValue $restoreCycle -Force
+          $switched = $want2
         }
+        # 2026-11-16 用户「聚焦的图片，面板还是显示自动切换，还是问题一堆」：
+        # 图库点图设壁纸同样是**手动意愿**，不管模式变没变，一律清掉"程序自动换源"标记。
+        # 之前只在模式变化时清，模式碰巧相同（用户手点聚焦图）就漏了 → 面板一直挂着
+        # "自动切换（明天回聚焦）"。清标记 + 前端再判 to==当前模式，双保险。
+        try {
+          if ($c2.PSObject.Properties['auto_switch'] -and $c2.auto_switch) {
+            $c2 | Add-Member -NotePropertyName auto_switch -NotePropertyValue $null -Force
+            Log ('面板: 你手动用了 ' + $src2 + ' 的图, 已取消"自动换源明天回原模式", 按你的意愿走')
+          }
+        } catch {}
         Save-BwConfig $c2
-        $switched = $want2
-        Log ('面板: 图库选了 ' + $src2 + ' 的图, 轮换模式自动归到 ' + $want2)
+        if ($switched) {
+          Log ('面板: 图库选了 ' + $src2 + ' 的图, 轮换模式自动归到 ' + $want2)
+        }
       }
     } catch { Log ('面板: 自动归模式没成(不影响设壁纸): ' + $_.Exception.Message) 'WARN' }
     $ok = Set-BwWall $p

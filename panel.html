@@ -1624,22 +1624,28 @@ function render(s){
        角标一律写**这张图真正来自哪个库**；是程序自动切过去的，再补一句"自动切换 · 明天回XX"，
        用户手动切的就不带这句。 */
     var _cs = (s && s.curSrc) ? String(s.curSrc) : "";
-    var _asw = (s && s.autoSwitch && String(s.autoSwitch.by || "") === "auto") ? s.autoSwitch : null;
+    /* 2026-11-16 用户「聚焦的图片，面板还是显示自动切换」：这句只在**当前模式仍是被
+       自动切过去的那个源**时才成立。用户手动切回原模式、或手动点图设壁纸之后，标记
+       就算残留在 config 里，也不能再挂"自动切换 · 明天回XX"——那是给用户看错状态。 */
+    var _asw = (s && s.autoSwitch && String(s.autoSwitch.by || "") === "auto"
+                && String(s.autoSwitch.to || "") === String(mode || "")) ? s.autoSwitch : null;
     /* 2026-11-16 体检截图抓到：直接拿 MODE_NAME 拼会出「只换随拍 · 自动切换（明天回只换聚焦）」，
        读起来绕。角标一律用短名（聚焦/必应/万象/随拍）。 */
     function _srcShort(k) {
       if (!k) { return ""; }
-      var n = String(MODE_NAME[k] || k);
-      return n.replace(/^只换/, "");
+      var n = String(MODE_NAME[k] || k).replace(/^只换/, "");
+      /* 2026-11-16 用户「不是只换万象，应该是万象模式」：角标一律叫"XX模式"。 */
+      return n ? n + "模式" : "";
     }
     var _srcName = _srcShort(_cs) || _srcShort(mode);
     if (_asw && _srcName) {
       var _back = _srcShort(String(_asw.from || ""));
       setText("heroBadge", _srcName + " · 自动切换" + (_back ? "（明天回" + _back + "）" : ""));
     } else if (_cs && _cs !== mode && MODE_NAME[_cs]) {
-      setText("heroBadge", _srcShort(_cs) + "源 · 自动换源");
+      setText("heroBadge", _srcShort(_cs) + " · 自动换源");
     } else {
-      setText("heroBadge", MODE_NAME[mode] + " · 当前壁纸");
+      /* 角标一律短名：这里原来直接用 MODE_NAME，会显示"只换万象 · 当前壁纸"，读着绕（2026-11-16）。 */
+      setText("heroBadge", (_srcShort(mode) || MODE_NAME[mode]) + " · 当前壁纸");
     }
     $("btnOpenImg").style.display = "";
   } else {
