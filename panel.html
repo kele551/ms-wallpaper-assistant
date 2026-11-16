@@ -1510,12 +1510,20 @@ function render(s){
     var _ht = $("heroTitle");
     if (_ht) { _ht.title = "图片名字：" + _fname; }
     /* 日期始终叠在图片底部：万象/随拍是 EXIF 拍摄日期写「摄于」，必应/聚焦是原生日期只写日期。 */
-    var _shotMode = (mode === "commons" || mode === "picsum");
+    /* 2026-11-16 用户「该有的图片信息一样不能少」: 判断依据改成**这张图实际来自哪个库**，
+       自动换源后模式还写着聚焦时也能正确写「摄于」；同时把图片真实像素一并显示出来。 */
+    var _csrcNow = (s && s.curSrc) ? String(s.curSrc) : "";
+    var _shotMode = (_csrcNow === "commons" || _csrcNow === "picsum") || ((!_csrcNow) && (mode === "commons" || mode === "picsum"));
+    var _imgInfo = (s && s.img) ? s.img : {};
+    var _pxTxt = (Number(_imgInfo.w) > 0 && Number(_imgInfo.h) > 0) ? (Number(_imgInfo.w) + "×" + Number(_imgInfo.h)) : "";
     var _imgDay = bn.date ? (_shotMode ? ("摄于 " + bn.date) : bn.date) : "";
     /* 2026-11-06 用户「把图片上时间安排在更换节奏卡」：换上时间归「更换节奏」卡,
        副行只写图片自己的日期; 没有日期就整行隐藏, 不再挂一个孤零零的「—」。 */
     var _sub = $("heroSub");
-    if (_imgDay) { setText("heroSub", _imgDay); _sub.style.display = ""; }
+    var _subTxt = [];
+    if (_imgDay) { _subTxt.push(_imgDay); }
+    if (_pxTxt) { _subTxt.push(_pxTxt); }
+    if (_subTxt.length) { setText("heroSub", _subTxt.join(" · ")); _sub.style.display = ""; }
     else { setText("heroSub", ""); _sub.style.display = "none"; }
     /* 2026-11-06 用户「尊重作者」: 完整作者名 + 拍摄日 + 许可 + 来源链接, 一行小字。
        不用首字母缩写 —— CC BY / CC BY-SA 要求完整署名标识; 来源只认 Commons 官方域名。
@@ -1580,15 +1588,19 @@ function render(s){
            坐标走 DIN 读数、带虚线可点、点一下复制到剪贴板（纯本地，不联网、不跳地图）。
            大部分照片没有 GPS（库里 47/72），这时退回页面原文里的「国家·城市」，
            别让这一项凭空消失；两样都没有才不显示。 */
+        /* 2026-11-16 用户「该有的图片信息一样不能少」：有中文地名就**先写地名**，坐标跟在后面
+           （可点击复制）。以前是 if(gps)…else if(place)，只有坐标的照片会把"瑞典·斯德哥尔摩"
+           这种地名整条吞掉，界面上只剩一串经纬度。 */
+        if (_cr.place) { _add(_r2, _ci("位置", _cr.place)); }
         if (_cr.gps) {
           var _ciG = document.createElement("span"); _ciG.className = "ci";
-          var _gl = document.createElement("span"); _gl.className = "cl"; _gl.textContent = "位置";
+          var _gl = document.createElement("span"); _gl.className = "cl"; _gl.textContent = "坐标";
           var _gv = document.createElement("span"); _gv.className = "cv coordm"; _gv.textContent = _cr.gps;
           _gv.title = "点击复制坐标：" + _cr.gps;
           _gv.addEventListener("click", function(){ copyText(String(_cr.gps).replace(/^\s*≈\s*/, "")); });
           _ciG.appendChild(_gl); _ciG.appendChild(_gv);
           _add(_r2, _ciG);
-        } else if (_cr.place) { _add(_r2, _ci("位置", _cr.place)); }
+        }
         _cel.appendChild(_r2);
       }
       _cel.style.display = "";
@@ -1608,7 +1620,27 @@ function render(s){
     }
     /* 2026-11-06 用户「留着吧，有些介绍的蛮详细的」：只保留页面介绍（中文译文），
        没有译文就不显示这块。 */
-    setText("heroBadge", MODE_NAME[mode] + " · 当前壁纸");
+    /* 2026-11-16 用户「既然切换到万象，就还是按万象模式走」+「该有的图片信息一样不能少」：
+       角标一律写**这张图真正来自哪个库**；是程序自动切过去的，再补一句"自动切换 · 明天回XX"，
+       用户手动切的就不带这句。 */
+    var _cs = (s && s.curSrc) ? String(s.curSrc) : "";
+    var _asw = (s && s.autoSwitch && String(s.autoSwitch.by || "") === "auto") ? s.autoSwitch : null;
+    /* 2026-11-16 体检截图抓到：直接拿 MODE_NAME 拼会出「只换随拍 · 自动切换（明天回只换聚焦）」，
+       读起来绕。角标一律用短名（聚焦/必应/万象/随拍）。 */
+    function _srcShort(k) {
+      if (!k) { return ""; }
+      var n = String(MODE_NAME[k] || k);
+      return n.replace(/^只换/, "");
+    }
+    var _srcName = _srcShort(_cs) || _srcShort(mode);
+    if (_asw && _srcName) {
+      var _back = _srcShort(String(_asw.from || ""));
+      setText("heroBadge", _srcName + " · 自动切换" + (_back ? "（明天回" + _back + "）" : ""));
+    } else if (_cs && _cs !== mode && MODE_NAME[_cs]) {
+      setText("heroBadge", _srcShort(_cs) + "源 · 自动换源");
+    } else {
+      setText("heroBadge", MODE_NAME[mode] + " · 当前壁纸");
+    }
     $("btnOpenImg").style.display = "";
   } else {
     img.classList.remove("ready");

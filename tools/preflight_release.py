@@ -825,13 +825,33 @@ else:
         say('     （README 共 %d 条链接，本次按"先普通链接、后徽章"的上限查 %d 条）'
             % (_total_urls, len(_urls)))
     _dead, _netfail = [], []
+    # 2026-11-16：README 里的下载链接/发行页天然指向**本版** tag，发布之前一定 404，
+    # 每版都被这条判死、发完再复跑才变绿 —— 属于"检查顺序"问题，不是真死链。
+    # 判据：① URL 是本版 tag 的发行附件或发行页；② 线上 version.json 的版本 **不是** 本版
+    #（= 还没发）。两条都满足就只打印"尚未发布"，不计红；一旦线上已是本版，404 照旧算死链。
+    _remote_pub = None
+    try:
+        _rv = urllib.request.Request(
+            'https://raw.githubusercontent.com/kele551/ms-wallpaper-assistant/main/version.json',
+            headers={'User-Agent': UA})
+        with urllib.request.urlopen(_rv, timeout=20) as _rr:
+            _remote_pub = (json.loads(_rr.read().decode('utf-8', 'replace')) or {}).get('version')
+    except Exception:
+        _remote_pub = None
+    _pending_n = 0
     for _i, _u in enumerate(_urls):
         _st, _note = http_status(_u)
         # GitHub 对**脚本请求**的这几个页面一律回 404（实测连 torvalds/linux/stargazers
         # 都是 404），浏览器里其实打得开 —— 拿它判死链会假红，只打印、不计红。
         _bot404 = bool(re.search(r'github\.com/[^/]+/[^/]+/(stargazers|watchers|graphs/.*)$', _u))
+        _pending = (bool(re.search(r'(releases/download|releases/tag)/v%s' % re.escape(VER), _u))
+                    and _remote_pub != VER)
         if _st in (404, 410) and _bot404:
             say('     · HTTP %s  %s（GitHub 对脚本请求的已知 404）' % (_st, _u))
+        elif _st in (404, 410) and _pending:
+            _pending_n += 1
+            say('     · HTTP %s  %s（本版 v%s 尚未发布：附件/发行页要等发布才有，不计死链）'
+                % (_st, _u, VER))
         elif _st in (404, 410):
             _dead.append('%s -> HTTP %s' % (_u, _st))
             say('     · HTTP %s  %s' % (_st, _u))
@@ -843,6 +863,9 @@ else:
         # 平台限速：Gitee 侧间隔拉到 3 秒（2026-10-08 密集抓 Gitee 自己抓出过 451）
         if _i < len(_urls) - 1:
             time.sleep(3.0 if 'gitee.com' in _u else 0.5)
+    if _pending_n:
+        check_warn('本版 v%s 的发行链接待发布（%d 条 404，发布后自动转 200）' % (VER, _pending_n), True,
+                   '线上 version.json=%s，本地=%s' % (_remote_pub or '取不到', VER))
     check('README 里 %d 条链接都不存在 404/410（这些才是死链）' % len(_urls), not _dead,
           '；'.join(_dead[:3]))
     check_warn('README 里的链接主机都连得上（有没有 DNS/连接层面的失效）', not _netfail,

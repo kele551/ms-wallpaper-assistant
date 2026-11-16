@@ -605,7 +605,21 @@ function Get-BwConfig {
   # fetch_day_cap   : 每天最多抓几张(跨菜单/后台/向导统一算, 换天归零)
   # recycle_min_days: 老图回收的最小间隔(同一张图至少这么多天不再出现)
   if (-not $c.PSObject.Properties['fetch_round_cap'])  { Add-Member -InputObject $c NoteProperty fetch_round_cap 6 -Force }
-  if (-not $c.PSObject.Properties['fetch_day_cap'])    { Add-Member -InputObject $c NoteProperty fetch_day_cap 20 -Force }
+  if (-not $c.PSObject.Properties['fetch_day_cap'])    { Add-Member -InputObject $c NoteProperty fetch_day_cap 80 -Force }
+  # 2026-11-16 新增: 聚焦接口按区域轮换取图。原来没有这个字段时退化成**只有 cn 一个区域** ——
+  # 官方每个区域一天只推 1 张，单区域意味着一整天只有那几张可下，抽 24 次也只成 1 张，
+  # 队列永远补不满、每轮都得救急。实测 10 个区域 7 秒能拿到 9 张不重复的 4K 图。
+  # 2026-11-16 再扩到 40 个区域: 实测 40 区域 27.9 秒 0 失败、37 张不重复 slug，
+  # 是把"官方在推的素材"尽量一次捞全的唯一办法(同一批素材全球复用, 区域越多捞得越全)。
+  # 字段缺失 = 用这份默认(老用户也会被补上)；想只留某几个区域就手改 config.json 的数组。
+  if (-not $c.PSObject.Properties['spotlight_regions']) {
+    Add-Member -InputObject $c NoteProperty spotlight_regions @(
+      'cn|zh-CN','us|en-US','jp|ja-JP','gb|en-GB','de|de-DE','fr|fr-FR','ca|en-CA','au|en-AU','nz|en-NZ','it|it-IT',
+      'es|es-ES','nl|nl-NL','se|sv-SE','no|nb-NO','dk|da-DK','fi|fi-FI','pl|pl-PL','pt|pt-PT','gr|el-GR','tr|tr-TR',
+      'in|en-IN','sg|en-SG','hk|zh-HK','tw|zh-TW','kr|ko-KR','br|pt-BR','mx|es-MX','za|en-ZA','ae|en-AE','th|th-TH',
+      'my|en-MY','id|id-ID','ph|en-PH','vn|vi-VN','ie|en-IE','ch|de-CH','at|de-AT','be|nl-BE','cz|cs-CZ','hu|hu-HU'
+    ) -Force
+  }
   if (-not $c.PSObject.Properties['recycle_min_days']) { Add-Member -InputObject $c NoteProperty recycle_min_days 30 -Force }
   # 2026-10-09: 两个试过的图源因"出的图不适合当壁纸"已按用户决定摘除, 上面这些配置键
   # (各自的开关 / 关键词 / 库容上限 / 画质线 / 只收横图)不再补默认值。
@@ -714,6 +728,8 @@ function Save-BwConfig([psobject]$c) {
 $global:BwLimit = @{
   # 换图间隔(分钟)。太快看着晃眼、也没人看得清一张图; 超过一天就不叫换壁纸了。
   cycle_minutes       = @{ Min = 5; Max = 1440; Def = 30;  Zero = $false }
+  # 2026-11-16: 用户不在(空闲超过这个分钟数)就不换图, 0 = 关掉这个判断(老行为)。
+  idle_skip_minutes   = @{ Min = 0; Max = 240;  Def = 10;  Zero = $true }
   # 一轮补几张聚焦图。太多了会让一轮补图跑很久, 像卡死。
   spotlight_per_cycle = @{ Min = 1; Max = 50;   Def = 6;   Zero = $false }
   # 图库上限(张)。0 = 不限; 上限卡在 2000, 再多就不是壁纸库而是冷备份了。
@@ -723,7 +739,7 @@ $global:BwLimit = @{
   bing_cap            = @{ Min = 5; Max = 2000; Def = 200; Zero = $true  }
   # 聚焦源池保护(2026-10-09): 单轮上限 / 单日上限 / 老图回收间隔。都允许用户手改, 但有范围。
   fetch_round_cap     = @{ Min = 1; Max = 50;   Def = 6;   Zero = $false }
-  fetch_day_cap       = @{ Min = 1; Max = 200;  Def = 20;  Zero = $false }
+  fetch_day_cap       = @{ Min = 1; Max = 200;  Def = 80;  Zero = $false }
   recycle_min_days    = @{ Min = 1; Max = 3650; Def = 30;  Zero = $false }
   # 每个图源自己的库容上限 / 两道画质宽度线(像素), 由各源的静态定义给键名与默认值
   # (见 Get-BwSourceDefs / Get-BwSrcWidthCfg); 这里只留各源共用的一项。
@@ -750,6 +766,35 @@ function Limit-BwNum($v, [string]$kind) {
 # 以及算出来的"下次几点换", 三者永远是同一个 —— 不出现两套口径。
 function Get-BwCycleMinutes($c) {
   return (Limit-BwNum $c.cycle_minutes 'cycle_minutes')
+}
+
+# 用户有多久没动键盘鼠标(分钟)。2026-11-16 用户要求: 电脑不是 24 小时开着,
+# 休眠/息屏/人不在的时段**不许切壁纸** —— 那时换了也看不见, 白白消耗库里的图。
+# 取不到就返回 0(当成在用电脑), 宁可多换一次, 也不许因为一个 API 拿不到就永久不换。
+function Test-BwUserIdleMinutes {
+  try {
+    if (-not ('BwIdle' -as [type])) {
+      Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public class BwIdle {
+  [StructLayout(LayoutKind.Sequential)]
+  private struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
+  [DllImport("user32.dll")] private static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
+  [DllImport("kernel32.dll")] private static extern uint GetTickCount();
+  public static uint IdleMs() {
+    LASTINPUTINFO li = new LASTINPUTINFO();
+    li.cbSize = (uint)Marshal.SizeOf(li);
+    if (!GetLastInputInfo(ref li)) return 0;
+    uint now = GetTickCount();
+    // GetTickCount 是 32 位, 49.7 天翻一次; 翻转时 now 会小于 dwTime, 那种情况按 0 处理
+    return (now >= li.dwTime) ? (now - li.dwTime) : 0;
+  }
+}
+'@ -ErrorAction Stop
+    }
+    return [math]::Round(([double]([BwIdle]::IdleMs()) / 60000.0), 1)
+  } catch { return 0 }
 }
 
 # 把 config 里那几个数字一次性夹回范围并落盘, 返回改了哪些(没改就是空数组)。
@@ -2876,9 +2921,12 @@ function Get-BwRecycleMinDays($c) {
 }
 # 今天还能抓几张(单日额度, 换天自动归零)。
 function Get-BwFetchBudget([psobject]$c, $st) {
-  $dayCap = 20
-  try { if ($c -and $c.PSObject.Properties['fetch_day_cap']) { $dayCap = [int]$c.fetch_day_cap } } catch { $dayCap = 20 }
-  if ($dayCap -le 0) { $dayCap = 20 }
+  # 2026-11-16: 默认 20 -> 80。30 分钟一张 = 48 张/天，20 张只够换 10 小时，中午后就断供；
+  # 一个模式的库全用过、又只能靠新图续命时，日额度就是"能不能继续换"的生死线。
+  # 80 = 48 张/天 + 约 60% 余量（后台补货/救急重试都要吃额度）；上限仍受 $global:BwLimit 的 Max 200 约束。
+  $dayCap = 80
+  try { if ($c -and $c.PSObject.Properties['fetch_day_cap']) { $dayCap = [int]$c.fetch_day_cap } } catch { $dayCap = 80 }
+  if ($dayCap -le 0) { $dayCap = 80 }
   $used = 0
   if ($st -and ([string]$st.day -eq (Get-Date).ToString('yyyy-MM-dd'))) {
     try { $used = [int]$st.day_used } catch { $used = 0 }
@@ -2952,7 +3000,7 @@ function Write-BwPoolEndLine($st, [bool]$Quiet) {
   if ([string]$st.low_log_day -eq $today) { return }
   $st.low_log_day = $today
   Save-BwFetchStats $st
-  $line = '聚焦源池已抓到尽头（本地区 ' + @(Get-BwSpotlightAll).Count + ' 张），等官方更新；下次尝试 ' + (Format-BwTryTime ([string]$st.next_try))
+  $line = '聚焦库已全部看过（库里 ' + @(Get-BwSpotlightAll).Count + ' 张），新图靠补货下；常规下次尝试 ' + (Format-BwTryTime ([string]$st.next_try))
   Log $line
   if (-not $Quiet) { Write-Host ('  ' + $line) -ForegroundColor DarkGray }
 }
@@ -3079,9 +3127,12 @@ function Get-BwSourcePoolStatus($s) {
   $line = ''
   if ([string]$st.mode -eq 'pool_end') {
     $mode = 'pool_end'
-    $line = '源池已抓到尽头（本地区 ' + $lib + ' 张 / 未看过 ' + $fresh + ' 张），等官方更新'
+    # 2026-11-16 口径修正: 这句原来写「源池已抓到尽头（本地区 29 张…）」，看着像"微软那边没图了"，
+    # 实际是**本地库这 29 张全看过了**，远程接口还在正常出图。措辞必须分得清，
+    # 否则下次又照"源池/网络"去查，方向全错（issue #1 同一个教训）。
+    $line = '本地库已全部看过（库里 ' + $lib + ' 张 / 未看过 ' + $fresh + ' 张），新图靠补货下'
     $nx = Get-BwTime ([string]$st.next_try)
-    if ($nx) { $line += '；下次尝试 ' + $nx.ToString('MM-dd HH:mm') }
+    if ($nx) { $line += '；常规下一次尝试 ' + $nx.ToString('MM-dd HH:mm') + '（库全用过时会救急穿透）' }
   } elseif ($fresh -lt $global:BWRecycleBelow) {
     $mode = 'recycle'
     $oldest = 0
@@ -3164,7 +3215,7 @@ $global:BWSrcRotMax   = 50000
 $global:BWSrcMaxBytes = 40MB   # 2026-11-08 原图直出: 原图常 15~30 MB, 12 MB 会把好图全挡掉     # 单张图大小上限: 超过就跳过(有的源条目挂着几十 MB 的原图)
 # 2026-11-09 修: 库低于这个水位线(张数)时, 这一轮绕过「每日抓取额度」紧急补货。
 # 否则像随拍那样历史上 day_used 已超过上限、或库被掏空后, 会被每日额度卡在 0、永远补不回来。
-$global:BWSrcLowWater = 12
+$global:BWSrcLowWater = 24       # 万象/随拍库低于这个数就绕过日额度紧急补货(2026-11-16 由 12 提到 24: 半天缓冲)
 # 图源下载用的 UA。必须带版本 + 可公开联系的仓库地址: Wikimedia 等图床对"无标识/伪装成浏览器的 UA"
 # 直接返回 429(图床反爬)。早期写的伪 Chrome UA 让万象图片下载 100% 被限流; 改成下面这个合规 UA
 # 之后才正常。不含任何私人邮箱/令牌(仓库红线)。
@@ -6787,7 +6838,7 @@ function Invoke-BwSrcFetch([string]$key, [int]$count, [switch]$Quiet, [switch]$F
     # 单轮 / 单日闸门(与聚焦共用同一组配置与同一段函数)
     $allow = Get-BwFetchAllow $c $rec $count -IgnoreDailyCap:$bypassDay
     if ($allow -le 0) {
-      $capTxt = '20'
+      $capTxt = '80'
       try { $capTxt = [string][int]$c.fetch_day_cap } catch {}
       Log ([string]$def.Name + ' 抓取: 今天的额度已经用完(' + [int]$rec.day_used + '/' + $capTxt + ' 张), 这一轮不下载(源池留着慢慢用)')
       if (-not $Quiet) { Write-Host ('  ' + [string]$def.Name + ' 今天已经抓过 ' + [int]$rec.day_used + ' 张了(每日上限 ' + $capTxt + ' 张), 源池留着慢慢用。') -ForegroundColor DarkGray }
@@ -7597,7 +7648,7 @@ function Sync-BwQueue($s) {
 # 后台补货 (v1.6.5): 把新图下到库里, 并重洗队列让下一张就能轮到。
 # 在隐藏进程里由 Start-BwBackfill 调用, 前台换图不干等。
 # (名字带 Spot: 1295 行附近那个不带参数的 Invoke-BwBackfill 是必应补漏, 别混)
-function Invoke-BwSpotBackfill([int]$count, [switch]$Force, [string]$Mode) {
+function Invoke-BwSpotBackfill([int]$count, [switch]$Force, [string]$Mode, [switch]$ForceDue) {
   try {
     if ($count -le 0) { return }
     # 试运行: 后台补货什么都不做 —— 它要联网下载, 还要重洗队列并落盘(H-8 的口径:
@@ -7645,7 +7696,7 @@ function Invoke-BwSpotBackfill([int]$count, [switch]$Force, [string]$Mode) {
     # -Force = 恢复模式: 库被清空过, 前台先下 1 张之后库就不空了,
     # 光靠"库是空的"这个判断后台就再也不肯下(实测只补回 1 张), 所以显式穿透开关。
     if ($c.auto_fetch -or $Force -or ($libN -eq 0)) {
-      $one = @(Invoke-SpotlightFetch -count $count -Quiet)
+      $one = @(Invoke-SpotlightFetch -count $count -Quiet -ForceDue:$ForceDue)
     }
     # 2026-11-05 用户定死: 「选中哪个模式, 哪个模式就下载图片」。聚焦模式下**不再**
     # 顺手抓万象/随拍 —— 那两个库只在各自被选中时由 Invoke-BwPanelRefill /
@@ -7673,7 +7724,7 @@ function Invoke-BwSpotBackfill([int]$count, [switch]$Force, [string]$Mode) {
 # 起一个脱离的隐藏 powershell 进程去跑 Invoke-BwSpotBackfill。
 # 锁文件防止菜单和后台 daemon 同时各起一个补货进程; 锁 15 分钟自动过期,
 # 进程崩了也不会把补货永久卡死。
-function Start-BwBackfill([int]$count, [switch]$Force, [string]$Mode) {
+function Start-BwBackfill([int]$count, [switch]$Force, [string]$Mode, [switch]$ForceDue) {
   if ($count -le 0) { return }
   if (-not $Mode) { $Mode = Get-BwMode }
   if ($global:BWDry) { Log ('试运行: 本应后台补货 ' + $count + ' 张壁纸(' + $Mode + ' 模式)'); return }
@@ -7688,6 +7739,8 @@ function Start-BwBackfill([int]$count, [switch]$Force, [string]$Mode) {
     $core = Join-Path $global:BWRoot 'core.ps1'
     $forceTxt = ''
     if ($Force) { $forceTxt = ' -Force' }
+    # 救命补货: 库里全用过时, 后台也要能穿透低频闸门, 否则库永远只剩刚下的那一张。
+    if ($ForceDue) { $forceTxt += ' -ForceDue' }
     # 用 -EncodedCommand 传命令: Start-Process 拼 -Command 参数时不给带空格的
     # 值加引号, 长命令会被拆碎 —— 实测子进程"删了锁却什么都没干"。base64 免疫。
     $modeTxt = ''
@@ -7793,7 +7846,7 @@ function Get-BwNextWall($s) {
       Log ($mode + ' 库空或全用过, 自动补救 (不等用户手动), 先下 1 张立刻换, 其余后台补')
       $one = @()
       if (-not $global:BWDry) {
-        if ($mode -eq 'focus') { $one = @(Invoke-SpotlightFetch -count 1 -Quiet -IgnoreDailyCap:$recover) }
+        if ($mode -eq 'focus') { $one = @(Invoke-SpotlightFetch -count 1 -Quiet -IgnoreDailyCap:$recover -ForceDue) }
         else { $one = @(Invoke-BwSrcFetch -key $mode -count 1 -Quiet -Force -IgnoreCap) }
       }
       if ($one.Count -gt 0) {
@@ -7803,7 +7856,7 @@ function Get-BwNextWall($s) {
         # 其余的照常洗牌排成新队列
         $s.queue = @(Get-BwFreshQueue $s | Where-Object { (Get-BwNameKey $_) -ne $newKey })
         # 恢复模式下前台这一张让库"不空"了, 后台必须穿透 auto_fetch 开关才肯继续补
-        if ($recover) { Start-BwBackfill ($want - 1) -Force }
+        if ($recover) { Start-BwBackfill ($want - 1) -Force -ForceDue }
         else { Start-BwBackfill ($want - 1) }
         # 补到了新图才允许淘汰旧图，且 Clear-BwUsedOldest 会守住「至少留 6 张」。
         if ($global:BWNoRepeat) {
@@ -7813,7 +7866,9 @@ function Get-BwNextWall($s) {
         return (Get-Item -LiteralPath $one[0])
       }
       # 1 张都没下到 (网络不通/接口的图收干了) -> 不硬等整批, 直接重洗现有库
-      Log ('先下的 1 张没下到, 不再硬等, 直接重洗现有库')
+      $whyTxt = ''
+      try { $whyTxt = [string]$global:BWLastDlStatus } catch {}
+      Log ('先下的 1 张没下到 (最近状态=' + $whyTxt + '), 不再硬等, 直接重洗现有库')
     } elseif ($c.auto_fetch -and (-not $recover)) {
       # 有新鲜图但 auto_fetch 开着: 不阻塞前台下载, 后台补新图, 新鲜图直接排队
       Log ('有新鲜图可换, 后台补新图不阻塞')
@@ -8973,7 +9028,11 @@ function Wait-BwFlow([int]$ms, [int]$ok, [ref]$frame) {
   }
 }
 
-function Invoke-SpotlightFetch([int]$count, [switch]$SetWall, [switch]$Quiet, [switch]$Counter, [switch]$IgnoreDailyCap) {
+function Invoke-SpotlightFetch([int]$count, [switch]$SetWall, [switch]$Quiet, [switch]$Counter, [switch]$IgnoreDailyCap, [switch]$ForceDue) {
+  # -ForceDue: 「库全用过、队列洗不出来」的救急专用 —— 允许穿透低频模式(pool_end)闸门。
+  # 2026-11-16 事故: 本地库 29 张全看过, 低频闸门把 next_try 锁到次日 08:00,
+  # 期间一次请求都不发, 日志却写"先下的 1 张没下到" -> 桌面一整天换不了图,
+  # 而源接口实测 0.6 秒就能返回全新 4K 图。省流量的闸门不能把"没图可换"钉死。
   # $Counter: 菜单 [2] 手动下载时开 —— 每下成一张就在同一行把数字加一,
   # 并用「虚线增长 + 游标流动」的动效显示进度 (Show-BwDashedCounter / Wait-BwFlow),
   # 不然联网这几秒屏幕上一点动静都没有, 像卡住了。
@@ -9004,9 +9063,14 @@ function Invoke-SpotlightFetch([int]$count, [switch]$SetWall, [switch]$Quiet, [s
   $st = Get-BwFetchStats
   $s0 = Get-BwState
   if (-not (Test-BwFetchDue $st $now)) {
-    # 低频模式: 源池抓到尽头了, 今天已经试过 -> 只留一行聚合日志, 不再每轮刷"新增0 跳过N"
-    Write-BwPoolEndLine $st $Quiet.IsPresent
-    return @()
+    if ($ForceDue) {
+      # 救急穿透: 日额度(fetch_day_cap)照样收口(下面 $allow 会算), 只是不再"等到明天"。
+      Log ('低频闸门拦着(原定下次 ' + (Format-BwTryTime ([string]$st.next_try)) + '), 但库里全用过了: 救急放行本次抓取')
+    } else {
+      # 低频模式: 源池抓到尽头了, 今天已经试过 -> 只留一行聚合日志, 不再每轮刷"新增0 跳过N"
+      Write-BwPoolEndLine $st $Quiet.IsPresent
+      return @()
+    }
   }
   $minDays = Get-BwRecycleMinDays $c
   $libNow = @(Get-BwSpotlightAll).Count
@@ -9016,7 +9080,7 @@ function Invoke-SpotlightFetch([int]$count, [switch]$SetWall, [switch]$Quiet, [s
   $anyAge = ($libNow -eq 0)      # 库空了: 有图最重要, 老图门槛放宽
   $allow = Get-BwFetchAllow $c $st $count -IgnoreDailyCap:$IgnoreDailyCap
   if ($allow -le 0) {
-    $capTxt = '20'
+    $capTxt = '80'
     try { $capTxt = [string][int]$c.fetch_day_cap } catch {}
     Log ('聚焦抓取: 今天的额度已经用完 (' + [int]$st.day_used + '/' + $capTxt + ' 张), 这一轮不下载(源池留着慢慢用)')
     if (-not $Quiet) { Write-Host ('  今天已经抓过 ' + [int]$st.day_used + ' 张了(每日上限 ' + $capTxt + ' 张), 源池留着慢慢用, 明天再抓。') -ForegroundColor DarkGray }
@@ -9029,7 +9093,10 @@ function Invoke-SpotlightFetch([int]$count, [switch]$SetWall, [switch]$Quiet, [s
   }
   $count = $allow
   $ran = $true
-  $maxTries = [Math]::Max($count * 5, 20)
+  # 2026-11-16: 原来 maxTries = count*5 且下限 20，碰上"源只返回当天那几张"时
+  # 抽 20 次只成 1 张，队列永远补不满、每轮都得走救急。多区域打开后单张成本约 0.6s，
+  # 给到 count*8 / 下限 24，一轮就能把队列补够（后台跑，不挡换图）。
+  $maxTries = [Math]::Max($count * 8, 24)
   # 循环只看**真的新增了几张**。以前把"已存在"也算进配额, 于是库一大(几十张),
   # 连着抽到的全是库里已有的图, 配额被"已存在"耗尽 -> 一张新图都不下,
   # 客户就一直轮换那批老图, 越用越觉得"怎么老是这几张"。
@@ -9320,6 +9387,72 @@ function Invoke-BwOnTimeSwap {
         return $true
       }
     }
+    # 2026-11-16 用户要求「聚焦的图换完了，只能自动切换图源」+「面板显示也要跟着变」：
+    # 本模式库全看过时，自动从别的库（万象 -> 随拍 -> 必应 -> 聚焦）借一张**没看过的**图换上，照样守「绝不重复」。
+    # 用户后来又定「既然切换到万象，就还是按万象模式走」：借成功就把 wallpaper_mode 真切过去，
+    # 面板、换图节奏、补货都按新源走，不留"聚焦模式放着万象图"的混合态；
+    # 同时记 auto_switch（by=auto），第二天程序自己回原模式；用户手动切的会清掉这个标记，按用户来。
+    $fbSrcs = @()
+    try { if (Get-BwSrcEnabled $c 'commons') { $fbSrcs += 'commons' } } catch {}
+    try { if (Get-BwSrcEnabled $c 'picsum')  { $fbSrcs += 'picsum' } } catch {}
+    $fbSrcs += 'bing'
+    $fbSrcs += 'focus'
+    $fbSrcs = @($fbSrcs | Where-Object { $_ -ne $mode })
+    if (@($fbSrcs).Count -gt 0) {
+      foreach ($fk in $fbSrcs) {
+        $fbName = '必应'
+        try { $d2 = Get-BwSrcDef $fk; if ($d2) { $fbName = [string]$d2.Name } } catch {}
+        if ($fk -eq 'focus') { $fbName = '聚焦' }
+        $fbFiles = @()
+        try {
+          if ($fk -eq 'bing') { $fbFiles = @(Get-ChildItem -LiteralPath ([string]$c.bing_save_dir) -Filter *.jpg -ErrorAction SilentlyContinue) }
+          elseif ($fk -eq 'focus') { $fbFiles = @(Get-ChildItem -LiteralPath ([string]$c.spotlight_save_dir) -Filter *.jpg -ErrorAction SilentlyContinue) }
+          else { $fbFiles = @(Get-BwSrcFiles (Get-BwSrcDir $c $fk)) }
+        } catch { $fbFiles = @() }
+        $freshF = @($fbFiles | Where-Object { -not $used.ContainsKey((Get-BwNameKey $_.Name)) } | Sort-Object { Get-Random })
+        foreach ($f in $freshF) {
+          try {
+            $p = [string]$f.FullName
+            if ((-not $p) -or ($p -ieq $cur) -or (-not (Test-Path -LiteralPath $p))) { continue }
+            if (-not (Test-BwImageOk $p)) { continue }
+            $gd = Get-BwImageSize $p
+            if (-not $gd -or ([int]$gd.H -le 0)) { continue }
+            if (-not (Test-BwAspectFit ([double]$gd.W / [double]$gd.H) $sar)) { continue }
+            if (Set-BwWall $p) {
+              $s.last_wall = $p
+              $s.shown = [int]$s.shown + 1
+              $s.last_swap = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+              Add-BwHist $s $f.Name
+              Add-BwSrcRot $p
+              if ($global:BWNoRepeat) { [void](Sync-BwQueue $s) }
+              Save-BwStateKeepFav $s
+              # 真切模式（用户 2026-11-16 定），并记"这是程序自动切的"
+              try {
+                $rc = Get-Content $global:CfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $rc | Add-Member -NotePropertyName wallpaper_mode -NotePropertyValue $fk -Force
+                # 链式借用（聚焦->万象->随拍->必应）时，from 必须始终指向**用户原本选的模式**，
+                # 否则借第二级后"明天回哪里"就会漂到上一级去。已有 by=auto 标记就沿用它。
+                $oldFrom = $mode
+                try {
+                  if ($rc.PSObject.Properties['auto_switch'] -and $rc.auto_switch) {
+                    $oa = $rc.auto_switch
+                    if (([string]$oa.by -eq 'auto') -and ([string]$oa.from)) { $oldFrom = [string]$oa.from }
+                  }
+                } catch {}
+                $rc | Add-Member -NotePropertyName auto_switch -NotePropertyValue ([PSCustomObject]@{
+                  date = (Get-Date).ToString('yyyy-MM-dd'); from = $oldFrom; to = $fk; by = 'auto'; at = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+                }) -Force
+                Save-BwConfig $rc
+                $fromName = switch ($oldFrom) { 'focus' {'聚焦'} 'bing' {'必应'} 'commons' {'万象'} 'picsum' {'随拍'} default {[string]$oldFrom} }
+                Log ('自动换源: 模式已切到' + $fbName + '（明天自动回' + $fromName + '；你手动切换则以你的为准）')
+              } catch { Log ('自动换源写模式失败(这张图已换上, 不影响使用): ' + $_.Exception.Message) 'WARN' }
+              Log ('准时换图(' + $mode + '库已全部看过 -> 自动换图源: 借用' + $fbName + '库) -> ' + $f.Name)
+              return $true
+            }
+          } catch {}
+        }
+      }
+    }
     Log '准时换图失败: 本地所有库没有可换的图（也没有一张铺满裁切 ≤40% 的横图）' 'WARN'
     return $false
   } catch {
@@ -9363,6 +9496,25 @@ function Invoke-BwCycle {
     $s = Get-BwState
     $now = Get-Date
     $today = $now.ToString('yyyy-MM-dd')
+    # 2026-11-16 用户「第二天又自动切换到聚焦；命令里手动切换的按用户来」：
+    # auto_switch 是**程序自动**换源时留的标记，跨天就回原模式；
+    # 用户手动切模式会把标记清空（见 Invoke-BwPanelSet），所以手动选的不会被拽回去。
+    try {
+      $asw = $null
+      if ($c.PSObject.Properties['auto_switch']) { $asw = $c.auto_switch }
+      if ($asw -and ([string]$asw.by -eq 'auto') -and ([string]$asw.from) -and ([string]$asw.date -ne $today)) {
+        $fromK = [string]$asw.from
+        if (@('focus','bing','commons','picsum') -contains $fromK) {
+          $rc = Get-Content $global:CfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
+          $rc | Add-Member -NotePropertyName wallpaper_mode -NotePropertyValue $fromK -Force
+          $rc | Add-Member -NotePropertyName bing_only -NotePropertyValue ([bool]($fromK -eq 'bing')) -Force
+          $rc | Add-Member -NotePropertyName auto_switch -NotePropertyValue $null -Force
+          Save-BwConfig $rc
+          Log ('新的一天: 昨天是自动借用的' + [string]$asw.to + '库, 今天回到 ' + $fromK + ' 模式')
+          $c = Get-BwConfig
+        }
+      }
+    } catch { Log ('跨天回原模式失败(不影响换图): ' + $_.Exception.Message) 'WARN' }
     # 换图间隔走护栏: 就算 config.json 被手改成离谱的值(比如一亿分钟),
     # 这里也只会拿到 1440, AddMinutes 不会溢出, 后台不会崩。
     $gap = Get-BwCycleMinutes $c
@@ -9384,6 +9536,20 @@ function Invoke-BwCycle {
     $last = Get-BwTime $s.last_swap
     $due = $true
     if ($last) { $due = ((($now - $last).TotalMinutes) -ge $gap) }
+    # 2026-11-16 用户要求: 电脑不是 24 小时开着, 休眠 / 息屏 / 人离开的时段就是"非工作时间",
+    # 这时**不许换图**(换了也看不见, 还白耗库存)。$due 不清零, 人一回来第一轮就立刻补换一张。
+    $userAway = $false
+    $idleMin = 0
+    if ($due) {
+      $idleMin = Test-BwUserIdleMinutes
+      $skipIdle = 10
+      try { $skipIdle = Limit-BwNum $c.idle_skip_minutes 'idle_skip_minutes' } catch { $skipIdle = 10 }
+      if (($skipIdle -gt 0) -and ($idleMin -ge $skipIdle)) {
+        $userAway = $true
+        $due = $false
+        Log ('到点但不换图: 你已 ' + $idleMin + ' 分钟没动电脑(休眠/息屏/离开), 回来第一轮再换(不消耗库存)')
+      }
+    }
 
     # ---- 补漏: 错过日子的必应壁纸 (只下载, 不切壁纸) ----
     Invoke-BwBackfill $s
@@ -9395,7 +9561,7 @@ function Invoke-BwCycle {
     # 否则"独立循环"每天都会被一张必应图打断(用户要求每个源自己轮自己的)。
     # 补漏 Invoke-BwBackfill 照旧跑 —— 它只下载入库, 不切桌面。
     $cycMode = Get-BwMode
-    if (($cycMode -ne 'commons') -and ($cycMode -ne 'picsum') -and ($s.last_bing_date -ne $today)) {
+    if (($cycMode -ne 'commons') -and ($cycMode -ne 'picsum') -and ($s.last_bing_date -ne $today) -and (-not $userAway)) {
       $meta = $null
       for ($i = 1; $i -le 4; $i++) {
         $meta = Get-BwMeta 0
@@ -11049,12 +11215,20 @@ function render(s){
     var _ht = $("heroTitle");
     if (_ht) { _ht.title = "图片名字：" + _fname; }
     /* 日期始终叠在图片底部：万象/随拍是 EXIF 拍摄日期写「摄于」，必应/聚焦是原生日期只写日期。 */
-    var _shotMode = (mode === "commons" || mode === "picsum");
+    /* 2026-11-16 用户「该有的图片信息一样不能少」: 判断依据改成**这张图实际来自哪个库**，
+       自动换源后模式还写着聚焦时也能正确写「摄于」；同时把图片真实像素一并显示出来。 */
+    var _csrcNow = (s && s.curSrc) ? String(s.curSrc) : "";
+    var _shotMode = (_csrcNow === "commons" || _csrcNow === "picsum") || ((!_csrcNow) && (mode === "commons" || mode === "picsum"));
+    var _imgInfo = (s && s.img) ? s.img : {};
+    var _pxTxt = (Number(_imgInfo.w) > 0 && Number(_imgInfo.h) > 0) ? (Number(_imgInfo.w) + "×" + Number(_imgInfo.h)) : "";
     var _imgDay = bn.date ? (_shotMode ? ("摄于 " + bn.date) : bn.date) : "";
     /* 2026-11-06 用户「把图片上时间安排在更换节奏卡」：换上时间归「更换节奏」卡,
        副行只写图片自己的日期; 没有日期就整行隐藏, 不再挂一个孤零零的「—」。 */
     var _sub = $("heroSub");
-    if (_imgDay) { setText("heroSub", _imgDay); _sub.style.display = ""; }
+    var _subTxt = [];
+    if (_imgDay) { _subTxt.push(_imgDay); }
+    if (_pxTxt) { _subTxt.push(_pxTxt); }
+    if (_subTxt.length) { setText("heroSub", _subTxt.join(" · ")); _sub.style.display = ""; }
     else { setText("heroSub", ""); _sub.style.display = "none"; }
     /* 2026-11-06 用户「尊重作者」: 完整作者名 + 拍摄日 + 许可 + 来源链接, 一行小字。
        不用首字母缩写 —— CC BY / CC BY-SA 要求完整署名标识; 来源只认 Commons 官方域名。
@@ -11119,15 +11293,19 @@ function render(s){
            坐标走 DIN 读数、带虚线可点、点一下复制到剪贴板（纯本地，不联网、不跳地图）。
            大部分照片没有 GPS（库里 47/72），这时退回页面原文里的「国家·城市」，
            别让这一项凭空消失；两样都没有才不显示。 */
+        /* 2026-11-16 用户「该有的图片信息一样不能少」：有中文地名就**先写地名**，坐标跟在后面
+           （可点击复制）。以前是 if(gps)…else if(place)，只有坐标的照片会把"瑞典·斯德哥尔摩"
+           这种地名整条吞掉，界面上只剩一串经纬度。 */
+        if (_cr.place) { _add(_r2, _ci("位置", _cr.place)); }
         if (_cr.gps) {
           var _ciG = document.createElement("span"); _ciG.className = "ci";
-          var _gl = document.createElement("span"); _gl.className = "cl"; _gl.textContent = "位置";
+          var _gl = document.createElement("span"); _gl.className = "cl"; _gl.textContent = "坐标";
           var _gv = document.createElement("span"); _gv.className = "cv coordm"; _gv.textContent = _cr.gps;
           _gv.title = "点击复制坐标：" + _cr.gps;
           _gv.addEventListener("click", function(){ copyText(String(_cr.gps).replace(/^\s*≈\s*/, "")); });
           _ciG.appendChild(_gl); _ciG.appendChild(_gv);
           _add(_r2, _ciG);
-        } else if (_cr.place) { _add(_r2, _ci("位置", _cr.place)); }
+        }
         _cel.appendChild(_r2);
       }
       _cel.style.display = "";
@@ -11147,7 +11325,27 @@ function render(s){
     }
     /* 2026-11-06 用户「留着吧，有些介绍的蛮详细的」：只保留页面介绍（中文译文），
        没有译文就不显示这块。 */
-    setText("heroBadge", MODE_NAME[mode] + " · 当前壁纸");
+    /* 2026-11-16 用户「既然切换到万象，就还是按万象模式走」+「该有的图片信息一样不能少」：
+       角标一律写**这张图真正来自哪个库**；是程序自动切过去的，再补一句"自动切换 · 明天回XX"，
+       用户手动切的就不带这句。 */
+    var _cs = (s && s.curSrc) ? String(s.curSrc) : "";
+    var _asw = (s && s.autoSwitch && String(s.autoSwitch.by || "") === "auto") ? s.autoSwitch : null;
+    /* 2026-11-16 体检截图抓到：直接拿 MODE_NAME 拼会出「只换随拍 · 自动切换（明天回只换聚焦）」，
+       读起来绕。角标一律用短名（聚焦/必应/万象/随拍）。 */
+    function _srcShort(k) {
+      if (!k) { return ""; }
+      var n = String(MODE_NAME[k] || k);
+      return n.replace(/^只换/, "");
+    }
+    var _srcName = _srcShort(_cs) || _srcShort(mode);
+    if (_asw && _srcName) {
+      var _back = _srcShort(String(_asw.from || ""));
+      setText("heroBadge", _srcName + " · 自动切换" + (_back ? "（明天回" + _back + "）" : ""));
+    } else if (_cs && _cs !== mode && MODE_NAME[_cs]) {
+      setText("heroBadge", _srcShort(_cs) + "源 · 自动换源");
+    } else {
+      setText("heroBadge", MODE_NAME[mode] + " · 当前壁纸");
+    }
     $("btnOpenImg").style.display = "";
   } else {
     img.classList.remove("ready");
@@ -14073,6 +14271,27 @@ function Get-BwPanelState {
   try { $strangers = @($s.strangers | Where-Object { $_ }).Count } catch {}
 
   $poolLine = ''; $poolMode = ''
+  # 2026-11-16 用户要求「聚焦换完自动切图源，面板显示也要跟着变」：当前壁纸实际出自哪个库，
+  # 按 last_wall 的绝对路径反推 —— 不依赖记账字段，手工挑图 / 自动换源都不会显示错。
+  $curSrc = ''
+  try {
+    $lw = [string]$s.last_wall
+    if ($lw) {
+      $fullWall = [IO.Path]::GetFullPath($lw)
+      $srcMap = @(
+        [PSCustomObject]@{ K = 'focus';   D = [string]$c.spotlight_save_dir },
+        [PSCustomObject]@{ K = 'bing';    D = [string]$c.bing_save_dir },
+        [PSCustomObject]@{ K = 'commons'; D = [string](Get-BwSrcDir $c 'commons') },
+        [PSCustomObject]@{ K = 'picsum';  D = [string](Get-BwSrcDir $c 'picsum') }
+      )
+      foreach ($mm in $srcMap) {
+        if ($mm.D) {
+          $dd = [IO.Path]::GetFullPath($mm.D)
+          if ($fullWall.StartsWith($dd, [StringComparison]::OrdinalIgnoreCase)) { $curSrc = $mm.K; break }
+        }
+      }
+    }
+  } catch { $curSrc = '' }
   # 独立模式: 源池那一行要说自己那个库, 别报聚焦源池的"还有新图/老图循环"。
   $psMode = Get-BwMode
   if ($psMode -eq 'commons' -or $psMode -eq 'picsum') {
@@ -14085,6 +14304,19 @@ function Get-BwPanelState {
   } else {
     try { $ps1 = Get-BwSourcePoolStatus $s; $poolLine = [string]$ps1.Line; $poolMode = [string]$ps1.Mode } catch {}
   }
+  # 自动换源的说明: 现在模式是真的切过去了(用户 2026-11-16「既然切换到万象，就按万象模式走」),
+  # 所以这里不再用"聚焦模式却放着万象图"的写法, 而是给一句人话交代"为什么当前是这个源"。
+  try {
+    $aswLine = ''
+    if ($c.PSObject.Properties['auto_switch'] -and $c.auto_switch -and ([string]$c.auto_switch.by -eq 'auto')) {
+      $fr = switch ([string]$c.auto_switch.from) { 'focus' {'聚焦'} 'bing' {'必应'} 'commons' {'万象'} 'picsum' {'随拍'} default {''} }
+      $to = switch ([string]$c.auto_switch.to) { 'focus' {'聚焦'} 'bing' {'必应'} 'commons' {'万象'} 'picsum' {'随拍'} default {''} }
+      if ($fr -and $to) {
+        $aswLine = $fr + '库已用完 · 已自动切到' + $to + '库（明天自动回' + $fr + '，你手动切换则以你的为准）'
+      }
+    }
+    if ($aswLine) { if ($poolLine) { $poolLine = $aswLine + '（' + $poolLine + '）' } else { $poolLine = $aswLine } }
+  } catch {}
   # 2026-10-24: 面板上的「显示器」只显示主屏(多屏这一步不做), 分辨率当场量一次
   $scrW = 0; $scrH = 0
   try { $scr = Get-BwScreenSize; $scrW = [int]$scr.W; $scrH = [int]$scr.H } catch { $scrW = 0; $scrH = 0 }
@@ -14112,8 +14344,11 @@ function Get-BwPanelState {
   # 回给面板, 用一行小字单独显示; 中文短句命名一个字不动, 也不缩写成首字母
   # (CC BY / CC BY-SA 要求完整署名标识, 缩写不构成合规署名)。
   # 只在这两个模式返回 —— 必应/聚焦的 copyright 是微软版权串, 混进来会驴唇不对马嘴。
+  # 2026-11-16 用户「该有的图片信息一样不能少」: 自动换源后模式可能还写着聚焦,
+  # 但当前这张确实是万象/随拍的图 —— 按**实际来源**($curSrc) 也放开, 否则作者/机型/位置全空。
   $credit = [ordered]@{ author = ''; shot = ''; lic = ''; link = ''; cam = ''; origname = ''; desc = ''; cats = ''; gps = ''; place = ''; expo = ''; uploaded = ''; zhname = ''; zhdesc = ''; caption_version = ''; honor = '' }
-  if ($psMode -eq 'commons' -or $psMode -eq 'picsum') {
+  $isRichSrc = ($psMode -eq 'commons') -or ($psMode -eq 'picsum') -or ($curSrc -eq 'commons') -or ($curSrc -eq 'picsum')
+  if ($isRichSrc) {
     try {
       if ($lastWall -and (Test-Path -LiteralPath $lastWall)) {
         $cm = Read-BwImageMeta $lastWall
@@ -14163,7 +14398,16 @@ function Get-BwPanelState {
 
   # 当前壁纸的中文显示名: 与图库/出处/最近换过同一个读法(只认 caption_version=2)。
   $lastDisplay = ''
-  try { if ($lastWall -and (($psMode -eq 'commons') -or ($psMode -eq 'picsum'))) { $lastDisplay = Get-BwDisplayMeta $lastWall } } catch {}
+  try { if ($lastWall -and $isRichSrc) { $lastDisplay = Get-BwDisplayMeta $lastWall } } catch {}
+
+  # 2026-11-16 用户「该有的图片信息一样不能少」: 当前这张的真实像素尺寸也回给面板
+  # (以前只显示"显示器 2560x1440", 图片自己是多大的根本看不到)。
+  $wallW = 0; $wallH = 0
+  try { if ($lastWall -and (Test-Path -LiteralPath $lastWall)) { $sz = Get-BwImageSize $lastWall; if ($sz) { $wallW = [int]$sz.W; $wallH = [int]$sz.H } } } catch {}
+
+  # 自动换源标记(程序切的/用户手动切的在前端区分显示)
+  $autoSw = $null
+  try { if ($c.PSObject.Properties['auto_switch']) { $autoSw = $c.auto_switch } } catch { $autoSw = $null }
 
   return [ordered]@{
     ok          = $true
@@ -14191,6 +14435,12 @@ function Get-BwPanelState {
     favorites   = $favOut
     favCount    = @($favs).Count
     pool        = [ordered]@{ line = $poolLine; mode = $poolMode }
+    # 当前壁纸实际出自哪个库(focus/bing/commons/picsum/空) —— 前端据此把角标写成"万象源 · 自动换源"
+    curSrc      = $curSrc
+    curMode     = $psMode
+    # 2026-11-16: 当前图片真实像素 + 自动换源标记（by=auto 说明是程序切的，明天会回原模式）
+    img         = [ordered]@{ w = $wallW; h = $wallH }
+    autoSwitch  = $autoSw
     screen      = [ordered]@{ w = $scrW; h = $scrH }
     local       = [ordered]@{ dir = $localDir; count = $localCount }
     auto        = [ordered]@{ startup = $autoOn; daemon = $daemonOn; dlTotal = $dlTotal; strangers = $strangers }
@@ -14257,6 +14507,14 @@ function Invoke-BwPanelSet([string]$key, $value) {
     if (@('focus','bing','commons','picsum') -notcontains $v2) { throw ('轮换模式不支持: ' + $v2) }
     $c | Add-Member -NotePropertyName wallpaper_mode -NotePropertyValue $v2 -Force
     $c | Add-Member -NotePropertyName bing_only -NotePropertyValue ([bool]($v2 -eq 'bing')) -Force
+    # 2026-11-16 用户「如果是手动切换的，说明是用户的意愿，按用户来」：
+    # 手动切模式一律清掉"程序自动换源"的标记，第二天就不会被拽回聚焦。
+    try {
+      if ($c.PSObject.Properties['auto_switch'] -and $c.auto_switch) {
+        $c | Add-Member -NotePropertyName auto_switch -NotePropertyValue $null -Force
+        Log ('面板: 你手动切到 ' + $v2 + ' 模式, 已取消"自动换源明天回原模式"，按你的意愿走')
+      }
+    } catch {}
   } elseif ($key -eq 'auto_fetch' -or $key -eq 'fav_only' -or $key -eq 'bing_only') {
     # 注意: [bool]"false" 在 PowerShell 里是 $true(非空字符串), 直接转会把开关"关不掉"。
     # 面板传来的都是字符串, 必须按白名单判。
