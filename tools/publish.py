@@ -114,7 +114,8 @@ GIT_EXEC_PATH = _find_git_dir()
 GIT_EXE = (GIT_EXEC_PATH + '/git.exe') if GIT_EXEC_PATH else 'git'
 # GitHub 侧走本机登录态的 gh.exe(2026-10-26 起): 它自己会挑直连/端口, 比手搓 REST 稳,
 # 也不依赖那个从没入库过的 tools/github_push.py。
-GH = os.environ.get('MWA_GH') or _CFG.get('gh') or shutil.which('gh') or 'gh'
+GH = (os.environ.get('MWA_GH') or _CFG.get('gh') or shutil.which('gh')
+      or (r'F:\Harness\toolchain\gh\bin\gh.exe' if os.path.exists(r'F:\Harness\toolchain\gh\bin\gh.exe') else 'gh'))  # 2026-11-16: 本机 gh 不在 Path（以前走到 gh release create 就 FileNotFoundError）
 # GitHub 的 git 端口在这台机器上时通时断，失败时借本地代理重试（只在命令行 -c 上带，不改 config）
 GIT_PROXY = os.environ.get('MWA_GIT_PROXY') or _CFG.get('git_proxy') or 'http://127.0.0.1:8787'
 # 2026-11-14 事故：git 的 credential.helper 里挂着 helper-selector，后台推 GitHub 时
@@ -194,6 +195,9 @@ def api(method, path, token, payload=None, timeout=120, extra=None, headers=None
     2026-11-14 实测：GitCode 限流 **25 次/用户/分钟**，超限返回 **HTTP 500 包 `error_code=429`**
     （不是 429 状态码，别按状态码判）——这里统一退避重试，别让限流把发版打断。
     """
+    # 2026-11-16 修: 退避重试的循环变量 `tries` 一直没定义（2026-11-14 加限流退避时漏了），
+    # 走到 POST /releases 就 NameError，发版直接被自己的脚本打断。限流是 25 次/分钟，4 次够。
+    tries = 4
     for _attempt in range(tries):
         p = {'access_token': token}
         p.update(extra or {})
@@ -407,6 +411,31 @@ def _push_github_via_api(ref):
         return False
     repo = '%s/%s' % (m.group(1), m.group(2))
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # 2026-11-16: 以前这里一律把 ref 当**分支**去推（写死 /git/refs/heads/<ref>），
+    # 发 v2.5.0 时 GitCode 推成了、GitHub 传输线被掐，兜底把 tag 当分支查 → 404 → 整版中止。
+    # 现在先看本地这个 ref 是什么类型：annotated tag 走专门的 tag 推送工具（refs/tags）。
+    kind = ''
+    try:
+        kind = _git_raw(['git', 'cat-file', '-t', ref])[1].strip()
+    except Exception:
+        kind = ''
+    if kind == 'tag':
+        tool = r'F:\Harness\tools\github_push_tag_exact.py'
+        if not os.path.exists(tool):
+            print('   没有 F:\\Harness\\tools\\github_push_tag_exact.py，无法按 tag 走 API 通道')
+            return False
+        print('   git 传输两条线路都断 —— 改走 api.github.com 精确推 tag（%s @ refs/tags/%s）'
+              % (repo, ref))
+        p = subprocess.run([sys.executable, tool, '--dir', root, '--repo', repo, '--tag', ref],
+                           capture_output=True)
+        out = (p.stdout or b'').decode('utf-8', 'replace')
+        err = (p.stderr or b'').decode('utf-8', 'replace')
+        for line in out.strip().splitlines()[-6:]:
+            print('   ' + line)
+        if p.returncode == 0 and ('与本地一致' in out or '不用动' in out):
+            return True
+        print('   API 通道失败: %s' % (err.strip()[-300:] or out.strip()[-300:]))
+        return False
     print('   git 传输两条线路都断 —— 改走 api.github.com 精确推送（%s @ %s）' % (repo, ref))
     p = subprocess.run([sys.executable, tool, '--dir', root, '--repo', repo, '--branch', ref],
                        capture_output=True)
