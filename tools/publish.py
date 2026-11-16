@@ -728,7 +728,16 @@ def make_version_json():
 def _gh(args):
     cmd = [GH] + args
     print('   $', ' '.join(cmd[:7]), '...' if len(cmd) > 7 else '')
-    r = subprocess.run(cmd, cwd=str(REPO_DIR), capture_output=True, text=True,
+    # 2026-11-16：本机 gh 的登录态只存在 keyring 里，`gh auth status` 报"未登录"，
+    # 但 `gh auth token` 能取到令牌 —— 子进程不带 GH_TOKEN 就会被 gh 当未登录拒掉
+    # （v2.5.1 发版时 GitHub Release 就卡在这一步）。这里显式把令牌注入子进程环境。
+    env = dict(os.environ)
+    if not (env.get('GH_TOKEN') or env.get('GITHUB_TOKEN')):
+        try:
+            env['GH_TOKEN'] = gh_token()
+        except Exception:
+            pass
+    r = subprocess.run(cmd, cwd=str(REPO_DIR), capture_output=True, text=True, env=env,
                        encoding='utf-8', errors='replace', timeout=1800)
     return r.returncode, ((r.stdout or '') + (r.stderr or ''))
 
