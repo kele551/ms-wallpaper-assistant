@@ -423,3 +423,9 @@ python tools/preflight_release.py        # 发版前自检：全绿才算可用
 ---
 
 <p align="center"><sub>© 2026 海风（kele551） · MIT License · <a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub 主仓库</a> · <a href="https://gitcode.com/kele551/ms-wallpaper-assistant">GitCode 镜像</a></sub></p>
+
+## 检索关键词 / Search keywords
+
+**中文**：桌面壁纸、自动换壁纸、壁纸轮换、必应每日一图、必应壁纸、Windows 聚焦、4K 壁纸、高清壁纸、桌面美化、免安装、开机自动
+
+**English**: wallpaper changer, wallpaper rotator, desktop wallpaper, bing wallpaper, bing daily image, windows spotlight, 4k wallpaper, automatic wallpaper, portable wallpaper app
