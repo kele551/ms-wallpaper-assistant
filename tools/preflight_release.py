@@ -426,6 +426,10 @@ APP_NAME = _m.group(1) if _m else ''
 _m = re.search(r"^EXE_STEM\s*=\s*'([^']+)'", _src_launcher, re.M)
 EXE_STEM = _m.group(1) if _m else ''
 EXE_NAME = (EXE_STEM + '.exe') if EXE_STEM else ((APP_NAME + '.exe') if APP_NAME else '桌面壁纸.exe')
+# GitHub 会把中文附件名削坏（汉字被去掉 → default.exe），实际上传的 exe 是 ASCII 名
+# MSWallpaperAssistant-v<ver>.exe（与 publish.py / make_version_json.py 同一口径）。
+# version.json.launcher.url 指的是 GitHub 附件名；本地中文 exe 只用于指纹 / 大小校验。
+EXE_ASCII_NAME = 'MSWallpaperAssistant-v%s.exe' % VER
 check('能读出 launcher.py 的 APP_NAME', bool(APP_NAME), 'APP_NAME=%r → 成品名 %s' % (APP_NAME, EXE_NAME))
 EXE = _positional[0] if _positional else os.path.join(REPO, EXE_NAME)
 
@@ -511,8 +515,7 @@ for _fname in ('core.ps1', 'menu.ps1'):
           str(_node.get('sha256') or '').upper() == _real,
           'json=%s 实际=%s' % (str(_node.get('sha256'))[:12], _real[:12]))
     _su = str(_node.get('url') or '')
-    # 2026-10-20: 升级源可能带查询串（GitCode raw API 必须写 ?ref=main）。
-    # 判定要按"路径最后一段"比，不能把 ?ref=main 也算进文件名里，否则真对了也报红。
+    # 升级源可能带查询串；判定要按"路径最后一段"比，不能把查询串也算进文件名里，否则真对了也报红。
     _su_path = urllib.parse.urlparse(_su).path if _su else ''
     check('version.json 里 %s 的 url 文件名 == %s' % (_fname, _fname),
           bool(_su) and _su_path.split('/')[-1] == _fname, _su[-32:] if _su else '空')
@@ -520,9 +523,9 @@ for _fname in ('core.ps1', 'menu.ps1'):
 # 附件名必须就是本次成品名 —— 改名发布最容易出的错：打包改了名、version.json 还指老附件名，
 # 全体老用户静默 404。
 _lu = str((vj.get('launcher') or {}).get('url') or '')
-check('version.json.launcher.url 文件名 == 成品 exe 文件名（%s）' % EXE_NAME,
-      bool(_lu) and os.path.basename(urllib.parse.unquote(_lu.split('/')[-1])) == EXE_NAME,
-      'url 尾=%r 成品名=%r' % (_lu.split('/')[-1] if _lu else '', EXE_NAME))
+check('version.json.launcher.url 文件名 == GitHub 附件名（%s）' % EXE_ASCII_NAME,
+      bool(_lu) and os.path.basename(urllib.parse.unquote(_lu.split('/')[-1])) == EXE_ASCII_NAME,
+      'url 尾=%r GitHub 附件名=%r' % (_lu.split('/')[-1] if _lu else '', EXE_ASCII_NAME))
 
 # 成品与升级源必须同一份 —— 需要已打包的 exe；仓库里按规矩不带成品（.gitignore）。
 if not os.path.exists(EXE):
@@ -655,12 +658,9 @@ for _f in ('README.md', '使用说明.txt'):
     check('%s 里旧名（%s）只出现在兼容说明里' % (_f, '、'.join(LEGACY_NAMES)), not _bad,
           '；'.join(_bad[:2]))
 
-# 2026-10-23: 这里原来只认 Gitee 地址, 主源搬家后文档反而被判红 —— 改成"几个地址认一个就行"。
-# 2026-10-26: 主源又回到 GitHub(四款软件只往 GitHub 推, GitCode/AtomGit 转为镜像),
-# 但闸门继续认三个域名: 镜像滞后时文档写哪个都该放行, 不该把发版卡在一个域名上。
-_CANONICAL = ('github.com/kele551/ms-wallpaper-assistant',
-              'gitcode.com/kele551/ms-wallpaper-assistant',
-              'atomgit.com/kele551/ms-wallpaper-assistant')
+# 【2026-11-25 红线第 36 条】只发 GitHub：署名/仓库地址闸门只认 GitHub 主源；
+# GitCode（=AtomGit）只是 Pull 被动镜像，不再出现在对外文案与下载链接里。
+_CANONICAL = ('github.com/kele551/ms-wallpaper-assistant',)
 check('README 里有署名「海风（kele551）」与仓库地址',
       ('海风（kele551）' in _rm) and any(u in _rm for u in _CANONICAL))
 check('使用说明.txt 里有署名与仓库地址',
@@ -901,15 +901,8 @@ else:
         check_warn('GitHub main 的 version.json 版本 == 本地 v%s' % VER,
                    str(_ghv).lstrip('v') == VER,
                    '线上=%s 本地=%s（发布前"仓库更新"属正常）' % (_ghv, VER))
-    # 2026-10-20: Gitee 自 v2.3.2 起停止更新, 拿它比对只会永远"线上=旧版" —— 换成查 GitCode。
-    # 2026-10-26: 主源回到 GitHub, GitCode 降为镜像; 这条保留是因为**发行包附件仍上传 GitCode**
-    # (version.json 里 scripts/launcher 的下载地址还指它), 两边对不上就是"发布了却没同步镜像"。
-    _gcv = _remote_ver('GitCode(镜像)',
-                       'https://gitcode.com/api/v5/repos/kele551/ms-wallpaper-assistant/raw/version.json?ref=main')
-    if _gcv:
-        check_warn('GitCode 镜像的 version.json 版本 == 本地 v%s' % VER,
-                   str(_gcv).lstrip('v') == VER,
-                   '线上=%s 本地=%s（只推 GitHub、没同步 GitCode 时就是这样）' % (_gcv, VER))
+    # 【2026-11-25 红线第 36 条】GitCode（=AtomGit）只是 Pull 被动镜像、不再同步，
+    # 不再拿它的版本做比对（那边永远停在旧版，只会误报"镜像没同步"）。
 
 # ══════════════════════════════════════════════════════════════════════════
 # ⑪ 网页控制台（V2.4.0 起界面就是它；内嵌副本与源文件必须一致）
@@ -1176,31 +1169,39 @@ if _m:
     _j = _p_core2.find('\n}', _m.end())
     _ar_body = _p_core2[_m.end():(_j if _j > 0 else len(_p_core2))]
 
-CAP_W = re.search(r'\$trimW -le ([0-9.]+)', _ar_body)
-CAP_H = re.search(r'\$limitH = ([0-9.]+)', _ar_body)
-CAP_H_WIDE = re.search(r'\$screenAr -gt ([0-9.]+)\)?\s*\{?\s*\$limitH = ([0-9.]+)', _ar_body)
+CAP_W = re.search(r'\$trimW -le \$tol', _ar_body)
+# 2026-11-18 起容差按屏宽分三档：默认 $tol=0.20；宽屏(>=1.70) 0.12；窄屏(<1.50) 0.30。
+CAP_TOL_DEFAULT = re.search(r'\$tol = ([0-9.]+)', _ar_body)
+CAP_TOL_WIDE = re.search(r'\$screenAr -ge ([0-9.]+)\)\s*\{\s*\$tol = ([0-9.]+)', _ar_body)
+CAP_TOL_NARROW = re.search(r'\$screenAr -lt ([0-9.]+)\)\s*\{\s*\$tol = ([0-9.]+)', _ar_body)
 _alg_ok = ('($imgAr -ge $screenAr)' in _ar_body) and ('($imgAr - $screenAr) / $imgAr' in _ar_body) \
           and ('($screenAr - $imgAr) / $screenAr' in _ar_body)
 check('core.ps1 里找得到 Test-BwAspectFit，且算法结构没被悄悄改掉',
-      bool(_m) and bool(CAP_W) and bool(CAP_H) and _alg_ok,
+      bool(_m) and bool(CAP_W) and bool(CAP_TOL_DEFAULT) and _alg_ok,
       ('找不到 Test-BwAspectFit 函数' if not _m else
-       '函数体结构变了（找不到 $trimW -le / $limitH = / 铺满裁切两段公式），'
+       '函数体结构变了（找不到 $trimW -le $tol / $tol 三档 / 铺满裁切两段公式），'
        '这一节的矩阵是照原结构算的，请人工复核并同步本检查'))
 
-if bool(_m) and bool(CAP_W) and bool(CAP_H) and _alg_ok:
-    _cap_w = float(CAP_W.group(1))
-    _cap_h = float(CAP_H.group(1))
-    _wide_th = float(CAP_H_WIDE.group(1)) if CAP_H_WIDE else 2.0
-    _cap_h_wide = float(CAP_H_WIDE.group(2)) if CAP_H_WIDE else _cap_h
+if bool(_m) and bool(CAP_W) and bool(CAP_TOL_DEFAULT) and _alg_ok:
+    _tol_default = float(CAP_TOL_DEFAULT.group(1))
+    _wide_th = float(CAP_TOL_WIDE.group(1)) if CAP_TOL_WIDE else 1.70
+    _tol_wide = float(CAP_TOL_WIDE.group(2)) if CAP_TOL_WIDE else _tol_default
+    _narrow_th = float(CAP_TOL_NARROW.group(1)) if CAP_TOL_NARROW else 1.50
+    _tol_narrow = float(CAP_TOL_NARROW.group(2)) if CAP_TOL_NARROW else _tol_default
 
     def _ar_fit(img, scr):
         """照 core.ps1 Test-BwAspectFit 的口径算：铺满(cover)后裁掉的比例。"""
         if img <= 0 or scr <= 0:
             return False
+        if scr >= _wide_th:
+            tol = _tol_wide
+        elif scr < _narrow_th:
+            tol = _tol_narrow
+        else:
+            tol = _tol_default
         if img >= scr:
-            return ((img - scr) / img) <= _cap_w
-        limit = _cap_h_wide if scr > _wide_th else _cap_h
-        return ((scr - img) / scr) <= limit
+            return ((img - scr) / img) <= tol
+        return ((scr - img) / scr) <= tol
 
     _badw = []
     _badl = []
@@ -1214,8 +1215,8 @@ if bool(_m) and bool(CAP_W) and bool(CAP_H) and _alg_ok:
           not _badw, '；'.join(_badw))
     check('方图 / 竖图 / 21:9 超宽仍然被挡（11-08 口径没回退）',
           not _badl, '；'.join(_badl))
-    say('  当前口径: 左右裁 ≤%.0f%% / 上下裁 ≤%.0f%%（屏比例 >%.1f 放宽到 %.0f%%）'
-        % (_cap_w * 100, _cap_h * 100, _wide_th, _cap_h_wide * 100))
+    say('  当前口径: 宽屏(≥%.2f)容差 %.0f%% / 常规屏 %.0f%% / 窄屏(<%.2f) %.0f%%'
+        % (_wide_th, _tol_wide * 100, _tol_default * 100, _narrow_th, _tol_narrow * 100))
 
 # 2026-11-16 同批固化的两条（也来自 issue #1 那一场）：
 # ① 库全灭时不能干等 —— 要有「挑裁切最少的一张」兜底，且方图/竖幅仍排除；

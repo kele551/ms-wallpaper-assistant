@@ -844,18 +844,13 @@ function Repair-BwConfig([psobject]$c) {
 # 下载后**必须校验 SHA256**: 对不上就整批放弃, 继续用旧脚本(绝不半个包)。
 $global:BWUpdateFile = Join-Path $global:BWRoot 'update.json'
 $global:BWUpdateUrls = @(
-  # 【2026-10-26 顺序更正】主源换回 GitHub —— 原因是"取到就用、取到就停"：
-  # 下面这个循环拿到**第一份能验签的 version.json** 就直接 return(见 1037 行起的 foreach),
-  # 不会再看后面的地址。所以排在第一位的那个, 必须是**还在往上推代码的那个仓库**:
-  # 现在四款软件只推 GitHub, GitCode 那条线已经不再同步了 —— 它停在过去那一版,
-  # 排在前面就等于"永远回答已是最新版", 升级通道被自己堵死(和 2026-10-20 那次
-  # "Gitee 停止更新后脚本地址不能再指 Gitee"是同一个坑)。
-  # GitCode 仍留作兜底: 哪天恢复同步、或 GitHub 抽风时它还能顶一下。
+  # 【2026-11-25 红线第 36 条】只发 GitHub：version.json 升级源只留 GitHub raw。
+  # 下面这个循环拿到**第一份能验签的 version.json** 就直接 return(见 1037 行起的 foreach)，
+  # 不会再看后面的地址。GitCode（=AtomGit）只是 Pull 被动镜像、不再同步，留作兜底会取到
+  # 停在过去那一版，等于"永远回答已是最新版"，把升级通道堵死，故整条移除。
   # 注意: version.json 里 scripts/launcher 的**下载地址**是写死的绝对地址(由
-  # tools/make_version_json.py 生成, 目前指 GitCode 附件), 与本表无关;
-  # 真要单平台发布, 那两处必须一起改, 且 GitHub 会削掉中文附件名 —— 见日记 2026-10-26。
-  'https://raw.githubusercontent.com/kele551/ms-wallpaper-assistant/main/version.json',
-  'https://gitcode.com/api/v5/repos/kele551/ms-wallpaper-assistant/raw/version.json?ref=main'
+  # tools/make_version_json.py 生成, 指 GitHub 附件), 与本表无关。
+  'https://raw.githubusercontent.com/kele551/ms-wallpaper-assistant/main/version.json'
 )
 function Get-BwVerTuple([string]$v) {
   $out = @()
@@ -3404,20 +3399,21 @@ function Get-BwCrop169Width([int]$w, [int]$h) {
 # 11-08「不要方形 / 竖幅 / 超宽」的本意保留, 只是不再把同一档次的 16:9 / 16:10 自残成 0 张。
 function Test-BwAspectFit([double]$imgAr, [double]$screenAr) {
   if (($imgAr -le 0) -or ($screenAr -le 0)) { return $false }
+  # 2026-11-18 用户「构图和分辨率都要数一数二的」+ 把万象库非 16:9 的图全清掉之后定下的口径：
+  #   16:9 / 16:9 类常见屏（>=1.7）只收 12% 容差 —— 3:2 要裁 15.6%、4:3 要裁 25%、21:9 要裁 23.7%，
+  #   一律不收，入库阶段就不再塞"铺满要裁掉构图"的图。
+  #   但**不能一刀切**：16:10(1.6) 屏收 16:9 图只裁左右 10%，4:3 / 5:4 老屏收 16:9 图要裁 25%~29.7%，
+  #   按 12% 卡会把这些屏一张图都进不来 —— 那正是 issue #1（16:10 用户反馈"不会换壁纸"）的老坑。
+  #   所以容差按屏幕自身比例放宽：窄屏照样有图，宽屏只要最接近的 16:9。
+  $tol = 0.20
+  if ($screenAr -ge 1.70) { $tol = 0.12 }
+  if ($screenAr -lt 1.50) { $tol = 0.30 }
   if ($imgAr -ge $screenAr) {
     $trimW = ($imgAr - $screenAr) / $imgAr
-    # 2026-11-16: 25% -> 30%。用户反馈(issue #1)那台 16:10 屏已由 25% 救回,
-    # 但实测 4:3(1.333) / 5:4(1280x1024=1.25) 老显示器对 16:9 图要裁 25.03% / 29.7%,
-    # 卡在 25% 边上照样全灭 -> 必应当日图(永远 16:9)一张也进不来, 又回到"库空不换图"。
-    # 30% 能覆盖 4:3 与 5:4, 同时仍挡住 21:9(2.333) 铺 16:10 的 31.4% 超宽裁切。
-    return ($trimW -le 0.30)
+    return ($trimW -le $tol)
   }
-  # 2026-11-16: 12% -> 20%, 与上面同口径。4:3 图铺 16:10 屏要裁 16.7% 高度,
-  # 原 12% 会把它判死; 20% 仍挡住方图(16:10 屏裁 37.5%)与竖幅。
-  $limitH = 0.20
-  if ($screenAr -gt 2.0) { $limitH = 0.25 }
   $trimH = ($screenAr - $imgAr) / $screenAr
-  return ($trimH -le $limitH)
+  return ($trimH -le $tol)
 }
 # 2026-11-16: 兜底口径用的「铺满要裁掉多少」。
 # 严格闸（Test-BwAspectFit）全灭时（怪比例屏、或库里只剩不合闸的图），
@@ -7698,9 +7694,19 @@ function Invoke-BwSpotBackfill([int]$count, [switch]$Force, [string]$Mode, [swit
     if ($c.auto_fetch -or $Force -or ($libN -eq 0)) {
       $one = @(Invoke-SpotlightFetch -count $count -Quiet -ForceDue:$ForceDue)
     }
-    # 2026-11-05 用户定死: 「选中哪个模式, 哪个模式就下载图片」。聚焦模式下**不再**
-    # 顺手抓万象/随拍 —— 那两个库只在各自被选中时由 Invoke-BwPanelRefill /
-    # Start-BwPrefetch 补货。否则人在聚焦模式, 后台却悄悄下别的源, 还把图混进队列。
+    # 2026-11-22 用户拍板: 聚焦模式后台补货时**顺手也补万象/随拍**, 让"借图池"不枯竭。
+    # 起因: 库全看过时会借其它库的图顶上, 但那两库只由各自模式补, 聚焦模式下永远不更新,
+    # 借完就没了 -> 图荒。现在补聚焦时也把这两个源各补一点, 池子持续有货。
+    # 只补各自库(不混进聚焦队列、不改 wallpaper_mode), 面板仍显示用户选的聚焦模式。
+    # 各源有自己的去重/画质/低频闸门, 抓不到会自动跳过, 不影响聚焦主库补货。
+    foreach ($bk in @('commons','picsum')) {
+      try {
+        if ((Get-BwSrcEnabled $c $bk) -and ($c.auto_fetch -or $Force)) {
+          $null = @(Invoke-BwSrcFetch -key $bk -count 2 -Quiet -Force:$Force -IgnoreCap:$Force)
+          Log ('后台补货: 顺手补 ' + $bk + ' 库(为借图池续货, 模式仍 ' + $curMode + ')')
+        }
+      } catch {}
+    }
     # (Invoke-BwAllSrcFetch 保留为公共函数, 但当前四个模式都不在补货路径上调它。)
     # 2026-10-23: 原来这里**整队重洗** —— 新图会被"最旧优先"排到队尾, 又等于没插队。
     # 现在只把**这次新下的**插进队列前 1/3; 队列本来就空才重洗。
@@ -8534,6 +8540,14 @@ function Save-BwUrlToFile([string]$u, [string]$tmp, [int]$TimeoutSec) {
 # 图先缩到长边 512 算, 既快又把"原图尺寸不同"带来的量纲差抹平, 阈值好定。
 $global:BWBlurMin = 100  # 清晰度闸门: 拉普拉斯方差低于此值的"糊/失焦"图不入库。标定: 池内 35 张清晰图方差最低 210,
                           #   严重糊图(1/16 降采样级)塌到 50~120, 故 100 能拦严重糊图又不误杀清晰风景图。调参只动这一行。
+$global:BWDarkLumaMin = 50  # 极暗闸门(2026-11-22): 平均亮度低于此值的图不入库。用户口径: 亮度<50 观感发虚。
+                            #   标定: 用户清除的暗场图亮度 37~58; 现存清晰夜景 58~62 不受影响。调参只动这一行。
+# 2026-11-22 补充「暗闷图」闸门: 水下老照片那种"不糊但发闷"(锐度尚可比纯糊图高, 但画面暗+低对比+发虚)。
+# 判据: 亮度 < 70 且 拉普拉斯方差 < 400 -> 拒收。只针对"又暗又柔"这一档, 不动清晰夜景/星空。
+# 标定(闸门 C# 真算法): 被清的珊瑚鱼 锐366/亮60 命中; 现存 7 张暗图(星空/夜景)锐 526~1514 全放行;
+#   明亮低锐度的雪景(锐177/亮79)也不误伤。全库 89 张现存图实测误杀 0。调参只动这两行。
+$global:BWMurkVariaMax = 400
+$global:BWMurkVariaLumaMax = 70
 if (-not ('BwQuality' -as [type])) {
   Add-Type -TypeDefinition @'
 using System;
@@ -8574,6 +8588,24 @@ public static class BwQuality {
       }
     }
   }
+  public static double GetMeanLuma(string path) {
+    using (var bmp = new Bitmap(path)) {
+      using (var img = new Bitmap(bmp, new System.Drawing.Size(256, 256))) {
+        var bd = img.LockBits(new Rectangle(0, 0, 256, 256), ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
+        int stride = bd.Stride; byte[] data = new byte[stride * 256];
+        Marshal.Copy(bd.Scan0, data, 0, data.Length); img.UnlockBits(bd);
+        double sum = 0; long count = 0;
+        for (int y = 0; y < 256; y++) {
+          for (int x = 0; x < 256; x++) {
+            int i = y * stride + x * 3;
+            sum += 0.299 * data[i + 2] + 0.587 * data[i + 1] + 0.114 * data[i];
+            count++;
+          }
+        }
+        return count == 0 ? 0 : sum / count;
+      }
+    }
+  }
 }
 '@ -ReferencedAssemblies @('System.Drawing')
 }
@@ -8583,6 +8615,21 @@ function Test-BwQualityGate([string]$path) {
   try {
     $score = [BwQuality]::GetLaplacianVariance($path)
     if (($score -is [double]) -and ($score -lt $global:BWBlurMin)) { return $false }
+    # 2026-11-22 用户要求加固: 极暗发虚的图不入库。
+    # 用平均亮度单独判(与方差无关) —— 用户实测口径: 亮度<50 的极暗图观感发虚, 一律拒收。
+    # 阈值标定(本机真实 C# 算法): 用户清除的 6 张亮度 37~58, 其中 4 张<50 会被拦;
+    # 现存 8 张清晰夜景亮度 58~62, 不受影响。只拦极暗端, 不误杀正常夜景/星空。
+    $luma = [BwQuality]::GetMeanLuma($path)
+    if (($luma -is [double]) -and ($luma -lt $global:BWDarkLumaMin)) {
+      Log ('极暗发虚(亮度 ' + [math]::Round($luma, 0) + '), 跳过不落盘: ' + (Split-Path $path -Leaf))
+      return $false
+    }
+    # 2026-11-22 补: 水下老照片那种"不糊但发闷"——画面暗(亮度<70)且柔(锐度<400)。
+    # 星空/清晰夜景锐度 526+, 不受影响; 明亮雪景亮度 79+, 也不受影响。
+    if (($luma -is [double]) -and ($luma -lt $global:BWMurkVariaLumaMax) -and ($score -is [double]) -and ($score -lt $global:BWMurkVariaMax)) {
+      Log ('暗闷发虚(亮度 ' + [math]::Round($luma, 0) + ' 锐度 ' + [math]::Round($score, 0) + '), 跳过不落盘: ' + (Split-Path $path -Leaf))
+      return $false
+    }
     return $true
   } catch { return $true }
 }
@@ -9387,74 +9434,64 @@ function Invoke-BwOnTimeSwap {
         return $true
       }
     }
-    # 2026-11-16 用户要求「聚焦的图换完了，只能自动切换图源」+「面板显示也要跟着变」：
-    # 本模式库全看过时，自动从别的库（万象 -> 随拍 -> 必应 -> 聚焦）借一张**没看过的**图换上，照样守「绝不重复」。
-    # 用户后来又定「既然切换到万象，就还是按万象模式走」：借成功就把 wallpaper_mode 真切过去，
-    # 面板、换图节奏、补货都按新源走，不留"聚焦模式放着万象图"的混合态；
-    # 同时记 auto_switch（by=auto），第二天程序自己回原模式；用户手动切的会清掉这个标记，按用户来。
+    # 2026-11-18 口径保留：绝不切 wallpaper_mode、不写 auto_switch —— 面板显示与第二天都按你选的模式走。
+    # 2026-11-22 用户选「借图但不切模式」：本模式库看完时，从别的本地库借一张没看过的图先换上，
+    # 只借"图"用，模式不动。必应模式维持原样（用户 11-18 明确它保持不动），不参与借图。
+    if ([bool]$c.bing_only) {
+      $s.last_swap = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+      Save-BwStateKeepFav $s
+      try { Start-BwBackfill 6 -Mode $mode } catch {}
+      Log '必应模式: 今日必应图已在桌面, 保持不动（必应模式不参与自动换源）'
+      return $true
+    }
     $fbSrcs = @()
     try { if (Get-BwSrcEnabled $c 'commons') { $fbSrcs += 'commons' } } catch {}
-    try { if (Get-BwSrcEnabled $c 'picsum')  { $fbSrcs += 'picsum' } } catch {}
+    try { if (Get-BwSrcEnabled $c 'picsum')  { $fbSrcs += 'picsum' }  } catch {}
     $fbSrcs += 'bing'
     $fbSrcs += 'focus'
     $fbSrcs = @($fbSrcs | Where-Object { $_ -ne $mode })
-    if (@($fbSrcs).Count -gt 0) {
-      foreach ($fk in $fbSrcs) {
-        $fbName = '必应'
-        try { $d2 = Get-BwSrcDef $fk; if ($d2) { $fbName = [string]$d2.Name } } catch {}
-        if ($fk -eq 'focus') { $fbName = '聚焦' }
-        $fbFiles = @()
+    foreach ($fk in $fbSrcs) {
+      $fbName = switch ($fk) { 'focus' {'聚焦'} 'bing' {'必应'} 'commons' {'万象'} 'picsum' {'随拍'} default {[string]$fk} }
+      $fbFiles = @()
+      try {
+        if ($fk -eq 'bing') { $fbFiles = @(Get-ChildItem -LiteralPath ([string]$c.bing_save_dir) -Filter *.jpg -ErrorAction SilentlyContinue) }
+        elseif ($fk -eq 'focus') { $fbFiles = @(Get-ChildItem -LiteralPath ([string]$c.spotlight_save_dir) -Filter *.jpg -ErrorAction SilentlyContinue) }
+        else { $fbFiles = @(Get-BwSrcFiles (Get-BwSrcDir $c $fk)) }
+      } catch { $fbFiles = @() }
+      $freshF = @($fbFiles | Where-Object { -not $used.ContainsKey((Get-BwNameKey $_.Name)) } | Sort-Object { Get-Random })
+      foreach ($f in $freshF) {
         try {
-          if ($fk -eq 'bing') { $fbFiles = @(Get-ChildItem -LiteralPath ([string]$c.bing_save_dir) -Filter *.jpg -ErrorAction SilentlyContinue) }
-          elseif ($fk -eq 'focus') { $fbFiles = @(Get-ChildItem -LiteralPath ([string]$c.spotlight_save_dir) -Filter *.jpg -ErrorAction SilentlyContinue) }
-          else { $fbFiles = @(Get-BwSrcFiles (Get-BwSrcDir $c $fk)) }
-        } catch { $fbFiles = @() }
-        $freshF = @($fbFiles | Where-Object { -not $used.ContainsKey((Get-BwNameKey $_.Name)) } | Sort-Object { Get-Random })
-        foreach ($f in $freshF) {
-          try {
-            $p = [string]$f.FullName
-            if ((-not $p) -or ($p -ieq $cur) -or (-not (Test-Path -LiteralPath $p))) { continue }
-            if (-not (Test-BwImageOk $p)) { continue }
-            $gd = Get-BwImageSize $p
-            if (-not $gd -or ([int]$gd.H -le 0)) { continue }
-            if (-not (Test-BwAspectFit ([double]$gd.W / [double]$gd.H) $sar)) { continue }
-            if (Set-BwWall $p) {
-              $s.last_wall = $p
-              $s.shown = [int]$s.shown + 1
-              $s.last_swap = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
-              Add-BwHist $s $f.Name
-              Add-BwSrcRot $p
-              if ($global:BWNoRepeat) { [void](Sync-BwQueue $s) }
-              Save-BwStateKeepFav $s
-              # 真切模式（用户 2026-11-16 定），并记"这是程序自动切的"
-              try {
-                $rc = Get-Content $global:CfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
-                $rc | Add-Member -NotePropertyName wallpaper_mode -NotePropertyValue $fk -Force
-                # 链式借用（聚焦->万象->随拍->必应）时，from 必须始终指向**用户原本选的模式**，
-                # 否则借第二级后"明天回哪里"就会漂到上一级去。已有 by=auto 标记就沿用它。
-                $oldFrom = $mode
-                try {
-                  if ($rc.PSObject.Properties['auto_switch'] -and $rc.auto_switch) {
-                    $oa = $rc.auto_switch
-                    if (([string]$oa.by -eq 'auto') -and ([string]$oa.from)) { $oldFrom = [string]$oa.from }
-                  }
-                } catch {}
-                $rc | Add-Member -NotePropertyName auto_switch -NotePropertyValue ([PSCustomObject]@{
-                  date = (Get-Date).ToString('yyyy-MM-dd'); from = $oldFrom; to = $fk; by = 'auto'; at = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
-                }) -Force
-                Save-BwConfig $rc
-                $fromName = switch ($oldFrom) { 'focus' {'聚焦'} 'bing' {'必应'} 'commons' {'万象'} 'picsum' {'随拍'} default {[string]$oldFrom} }
-                Log ('自动换源: 模式已切到' + $fbName + '（明天自动回' + $fromName + '；你手动切换则以你的为准）')
-              } catch { Log ('自动换源写模式失败(这张图已换上, 不影响使用): ' + $_.Exception.Message) 'WARN' }
-              Log ('准时换图(' + $mode + '库已全部看过 -> 自动换图源: 借用' + $fbName + '库) -> ' + $f.Name)
-              return $true
-            }
-          } catch {}
-        }
+          $p = [string]$f.FullName
+          if ((-not $p) -or ($p -ieq $cur) -or (-not (Test-Path -LiteralPath $p))) { continue }
+          if (-not (Test-BwImageOk $p)) { continue }
+          $gd = $null
+          try { $gd = Get-BwImageSize $p } catch {}
+          if (-not $gd -or ([int]$gd.H -le 0)) { continue }
+          if (-not (Test-BwAspectFit ([double]$gd.W / [double]$gd.H) $sar)) { continue }
+          if (Set-BwWall $p) {
+            $s.last_wall = $p
+            $s.shown = [int]$s.shown + 1
+            $s.last_swap = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+            Add-BwHist $s $f.Name
+            Add-BwSrcRot $p
+            if ($global:BWNoRepeat) { [void](Sync-BwQueue $s) }
+            Save-BwStateKeepFav $s
+            Log ('准时换图(本模式库已看完 -> 临时借' + $fbName + '库一张, 模式保持 ' + $mode + ' 不变) -> ' + $f.Name)
+            return $true
+          }
+        } catch {}
       }
     }
-    Log '准时换图失败: 本地所有库没有可换的图（也没有一张铺满裁切 ≤40% 的横图）' 'WARN'
-    return $false
+    # 所有库都没有没看过的图了 —— 才退回"保持不动"
+    # 2026-11-22 图荒根治: 兜底补货必须 -ForceDue 穿透低频闸门 ——
+    # 否则连续 3 轮"新增0"进 pool_end 后, 后台补货被 next_try(次日08:00) 拦住,
+    # 期间一张都不抓, 桌面就一直停在旧图, 用户体感"不换图了"。
+    # 实测聚焦源多区域接口随时能出全新 4K 图(一轮 6 张全成功), 省流量闸门不该把"没图换"钉死。
+    $s.last_swap = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+    Save-BwStateKeepFav $s
+    try { Start-BwBackfill 8 -Mode $mode -ForceDue } catch {}
+    Log ('本模式(' + $mode + ')库 + 其它库都已全部看过: 保持当前壁纸不动, 已转后台补货(穿透低频闸门立即抓新图)') 'WARN'
+    return $true
   } catch {
     Log ('准时换图异常: ' + $_.Exception.Message) 'WARN'
     return $false
@@ -9717,11 +9754,12 @@ $global:BwPanelHtml = @'
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#171a20">
 <title>桌面壁纸 · 控制台</title>
 <style>
   :root{
-    --font:"Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif;
+    --font:"Manrope","Geist","Microsoft YaHei UI","Microsoft YaHei","PingFang SC",system-ui,sans-serif;
     --mono:"Cascadia Mono",Consolas,"Courier New",monospace;
     /* 2026-11-06 工业风署名条用的 DIN 系字体：Windows 10+ 自带 Bahnschrift（DIN 1451 血统），
        没有就退到 DIN Alternate / Segoe UI。只做排版性格近似，不嵌字体文件。 */
@@ -9767,9 +9805,12 @@ $global:BwPanelHtml = @'
   button,select,input{font:inherit;color:inherit}
   button{cursor:pointer;background:none;border:0}
   :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
-  ::-webkit-scrollbar{width:10px;height:10px}
-  ::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:8px;border:2px solid var(--bg)}
-  ::-webkit-scrollbar-track{background:transparent}
+  html{scrollbar-color:var(--line-2) transparent;scrollbar-width:auto}
+  @supports not (scrollbar-color: auto){
+    ::-webkit-scrollbar{width:10px;height:10px}
+    ::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:8px;border:2px solid var(--bg)}
+    ::-webkit-scrollbar-track{background:transparent}
+  }
 
   .wrap{max-width:1160px;margin:0 auto;padding:var(--sp-5) var(--sp-5) var(--sp-6);
         display:flex;flex-direction:column;gap:var(--sp-4)}
@@ -9787,7 +9828,7 @@ $global:BwPanelHtml = @'
   .segbar{display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap}
   .seg{display:inline-flex;gap:2px;padding:3px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--card)}
   .seg-btn{height:28px;padding:0 var(--sp-4);border-radius:var(--r-pill);border:0;background:none;
-           color:var(--txt-2);font-size:var(--fs-meta);transition:color .15s,background .15s}
+           color:var(--txt-2);font-size:var(--fs-meta);transition:color 300ms cubic-bezier(0.22,1,0.36,1),background-color 300ms cubic-bezier(0.22,1,0.36,1)}
   .seg-btn:hover{color:var(--txt)}
   .seg-btn.on{background:var(--card-2);color:var(--txt);font-weight:600}
   .seg-info{margin-left:auto;color:var(--txt-3);font-size:var(--fs-micro);font-family:var(--mono)}
@@ -9843,7 +9884,7 @@ $global:BwPanelHtml = @'
   .imeta-list dt{color:var(--txt-3)}
   .imeta-list dd{margin:0;color:var(--txt-2);overflow-wrap:anywhere}
   .xs{font-size:var(--fs-micro)}
-  .t-lg{font-size:17px;font-weight:650}
+  .t-lg{font-size:16px;font-weight:600}
 
   /* 2026-10-25（用户截图：控制台整页都是「—」）：连不上本机服务时，唯一的提示是顶栏
      那颗小胶囊，一滚动就没影了，剩下满屏"读不到值"看着像程序坏了。真实原因是控制台
@@ -9865,7 +9906,7 @@ $global:BwPanelHtml = @'
 
   .btn{height:30px;padding:0 var(--sp-3);border-radius:var(--r-btn);border:1px solid var(--line);
        background:var(--card-2);color:var(--txt);font-size:var(--fs-meta);display:inline-flex;align-items:center;gap:6px;
-       transition:border-color .15s,background .15s,color .15s;white-space:nowrap}
+       transition:border-color 300ms cubic-bezier(0.22,1,0.36,1),background-color 300ms cubic-bezier(0.22,1,0.36,1),color 300ms cubic-bezier(0.22,1,0.36,1);white-space:nowrap}
   .btn:hover{border-color:var(--line-2);background:var(--card)}
   .btn:disabled{opacity:.45;cursor:not-allowed}
   .btn.primary{background:var(--accent);border-color:transparent;color:var(--accent-ink);font-weight:600}
@@ -9885,16 +9926,16 @@ $global:BwPanelHtml = @'
 
   .chip{height:26px;padding:0 var(--sp-3);border-radius:var(--r-pill);border:1px solid var(--line);
         background:transparent;color:var(--txt-2);font-size:var(--fs-meta);display:inline-flex;align-items:center;gap:6px;
-        transition:background .15s,border-color .15s,color .15s;white-space:nowrap;cursor:pointer}
+        transition:background-color 300ms cubic-bezier(0.22,1,0.36,1),border-color 300ms cubic-bezier(0.22,1,0.36,1),color 300ms cubic-bezier(0.22,1,0.36,1);white-space:nowrap;cursor:pointer}
   .chip:hover{color:var(--txt);border-color:var(--line-2)}
   .chip.on{background:var(--card-2);border-color:var(--line-2);color:var(--txt);font-weight:600}
   .chip.add{border-style:dashed;color:var(--txt-3)}
   .chiprow{display:flex;gap:6px;flex-wrap:wrap}
 
   .sw{width:36px;height:20px;border-radius:var(--r-pill);background:var(--line-2);position:relative;
-      flex:none;transition:background .18s;border:0}
+      flex:none;transition:background-color 300ms cubic-bezier(0.22,1,0.36,1);border:0}
   .sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
-             background:var(--knob);transition:transform .18s;box-shadow:0 1px 2px rgba(0,0,0,.35)}
+             background:var(--knob);transition:transform 300ms cubic-bezier(0.22,1,0.36,1);box-shadow:0 1px 2px rgba(0,0,0,.35)}
   .sw.on{background:var(--accent)}
   .sw.on::after{transform:translateX(16px)}
 
@@ -9960,9 +10001,9 @@ $global:BwPanelHtml = @'
      实现是一块盖在图片上的 canvas：缩小绘制 + 关闭插值放大 = 方块感；
      全程本地、零依赖。系统开了"减少动效"就直接切，不跑动画。 */
   .art img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;
-    transition:opacity .25s ease}
+    transition:opacity 300ms cubic-bezier(0.22,1,0.36,1)}
   .art img.ready{opacity:1}
-  .art img.prev{position:absolute;inset:0;opacity:0;transition:opacity .25s ease;z-index:1}
+  .art img.prev{position:absolute;inset:0;opacity:0;transition:opacity 300ms cubic-bezier(0.22,1,0.36,1);z-index:1}
   .art #heroImg{position:relative;z-index:2}
   .art canvas.mosaic{position:absolute;inset:0;width:100%;height:100%;z-index:3;
     display:none;pointer-events:none;image-rendering:pixelated}
@@ -10035,7 +10076,7 @@ $global:BwPanelHtml = @'
   .gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(152px,1fr));gap:var(--sp-2)}
   .tile{position:relative;margin:0;aspect-ratio:16/10;border-radius:var(--r-btn);overflow:hidden;
         border:1px solid var(--line);background:var(--bg-1);cursor:default;padding:0;
-        transition:border-color .15s,transform .15s}
+        transition:border-color 300ms cubic-bezier(0.22,1,0.36,1),transform 300ms cubic-bezier(0.22,1,0.36,1)}
   .tile:hover{border-color:var(--accent);transform:translateY(-2px)}
   .tile img{width:100%;height:100%;object-fit:cover;display:block}
   .tile.sel{outline:2px solid var(--accent);outline-offset:1px}
@@ -10051,7 +10092,7 @@ $global:BwPanelHtml = @'
     background:rgba(0,0,0,.5);border-radius:5px;padding:1px 5px;line-height:1.3}
   .tile-acts{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:center;gap:var(--sp-1);padding:var(--sp-2);
     background:linear-gradient(to top,var(--scrim),transparent);opacity:0;transform:translateY(4px);
-    transition:opacity .15s,transform .15s}
+    transition:opacity 300ms cubic-bezier(0.22,1,0.36,1),transform 300ms cubic-bezier(0.22,1,0.36,1)}
   .tile:hover .tile-acts,.tile:focus-within .tile-acts{opacity:1;transform:none}
   /* 2026-11-06 用户「三个按钮均匀分布、居中」: 用 flex:1 1 0%(单位%不可省——裸 0 在部分 WebView
      会被判非法而整条 flex 丢弃, 退化为内容宽度导致三钮参差/偏移); 文字水平+垂直居中用
@@ -10113,7 +10154,7 @@ $global:BwPanelHtml = @'
   .toast{position:fixed;left:50%;bottom:var(--sp-6);transform:translate(-50%,14px);opacity:0;pointer-events:none;
     background:var(--card);border:1px solid var(--line-2);box-shadow:var(--shadow-2);border-radius:var(--r-btn);
     padding:var(--sp-2) var(--sp-4);font-size:var(--fs-meta);z-index:40;max-width:min(560px,92vw);
-    transition:opacity .15s,transform .15s}
+    transition:opacity 300ms cubic-bezier(0.22,1,0.36,1),transform 300ms cubic-bezier(0.22,1,0.36,1)}
   .toast.on{opacity:1;transform:translate(-50%,0)}
   .toast.bad{border-color:var(--danger);color:var(--danger)}
 
@@ -11051,6 +11092,7 @@ function sysTheme(){
 }
 function applyTheme(t, remember){
   document.documentElement.setAttribute("data-theme", t);
+  try{ var mm=document.querySelector('meta[name="color-scheme"]'); if(mm) mm.content=(t==="dark")?"dark":"light"; }catch(e){}
   if (remember){
     try {
       localStorage.setItem("bw-theme", t);
@@ -11556,7 +11598,7 @@ var LOG_FOLLOW = true;
 function renderLog(lines){
   var lg = $("logBox");
   if (!lg) return;
-  lg.innerHTML = "";
+  lg.replaceChildren();
   (lines || []).forEach(function(line){
     var d = document.createElement("div");
     d.textContent = line;
@@ -11785,7 +11827,7 @@ function renderHistory(list, curName){
   // 原来一行 6 张：单张只有 112px 宽，悬停那排「设为壁纸/收藏/原图」按钮塞不下、
   // 直接溢出到隔壁格，用户截图反馈"文字比例不和谐"。改成 4 张后单张约 170px，
   // 与下方图库 .gallery 的格子（minmax(152px)）同一量级，按钮和图的比例就顺了。
-  box.innerHTML = "";
+  box.replaceChildren();
   rows.forEach(function(it){
     // 有"换上时间"就角标写换上的时刻/月日；没有(图库里最近但本机没换过)就退回图片日期。
     // src 带上这张图真正的归属库, 后端 use/fav/del 才能"指哪打哪"; 不能再写死成 hist。
@@ -11913,7 +11955,7 @@ function galleryUrl(){
   return q;
 }
 function loadGallery(reset){
-  if (reset){ G.skip = 0; G.items = []; $("lib").innerHTML = ""; }
+  if (reset){ G.skip = 0; G.items = []; $("lib").replaceChildren(); }
   G.more = false;
   /* 2026-11-06 用户截图(万象"空库"): 切库那一瞬间, 旧库的计数还挂在头上
      (「已显示 25 张」其实是随拍库的), 格子已清空, 空态提示又被原来这行 hide 藏掉

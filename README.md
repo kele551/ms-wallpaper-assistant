@@ -3,8 +3,8 @@
 
 <h1>桌面壁纸</h1>
 
-<a href="https://gitcode.com/kele551/ms-wallpaper-assistant/releases" title="点击去下载（各平台发行版合计 · 实时）"><img alt="Downloads" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fkele551-badge.kele551.workers.dev%2F%3Frepo%3Dms-wallpaper-assistant%26kind%3Ddownloads&style=flat-square" height="30"></a>
-<a href="https://gitcode.com/kele551/ms-wallpaper-assistant" title="浏览量 · 各平台访问计数合计 · 实时"><img alt="浏览量" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fkele551-badge.kele551.workers.dev%2F%3Frepo%3Dms-wallpaper-assistant%26kind%3Dviews&style=flat-square" height="30"></a>
+<a href="https://github.com/kele551/ms-wallpaper-assistant/releases" title="点击去下载（GitHub 发行版 · 实时）"><img alt="Downloads" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fkele551-badge.kele551.workers.dev%2F%3Frepo%3Dms-wallpaper-assistant%26kind%3Ddownloads&style=flat-square" height="30"></a>
+<a href="https://github.com/kele551/ms-wallpaper-assistant" title="浏览量 · GitHub 访问计数 · 实时"><img alt="浏览量" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fkele551-badge.kele551.workers.dev%2F%3Frepo%3Dms-wallpaper-assistant%26kind%3Dviews&style=flat-square" height="30"></a>
 
 <a href="https://github.com/kele551/ms-wallpaper-assistant/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
 <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square">
@@ -20,15 +20,15 @@
 <img alt="Free" src="https://img.shields.io/badge/费用-免费无广告-brightgreen?style=flat-square">
 <img alt="No Tracking" src="https://img.shields.io/badge/用户数据-不采集不上传-green?style=flat-square">
 
-<a href="https://gitcode.com/kele551/ms-wallpaper-assistant/releases"><img alt="Download from GitCode" src="https://img.shields.io/badge/%F0%9F%93%A5_%E4%B8%8B%E8%BD%BD-GitCode%E4%B8%BB%E6%BA%90-c71d24?style=flat-square&logo=gitee&logoColor=white&labelColor=3d4552"></a>
-<a href="https://github.com/kele551/ms-wallpaper-assistant"><img alt="GitHub mirror" src="https://img.shields.io/badge/%F0%9F%90%99_%E6%BA%90%E7%A0%81-GitHub%E9%95%9C%E5%83%8F-24292f?style=flat-square&logo=github&logoColor=white&labelColor=3d4552"></a>
+<a href="https://github.com/kele551/ms-wallpaper-assistant/releases"><img alt="Download from GitHub" src="https://img.shields.io/badge/%F0%9F%93%A5_%E4%B8%8B%E8%BD%BD-GitHub%E4%B8%BB%E6%BA%90-c71d24?style=flat-square&logo=github&logoColor=white&labelColor=3d4552"></a>
+<a href="https://github.com/kele551/ms-wallpaper-assistant"><img alt="GitHub repo" src="https://img.shields.io/badge/%F0%9F%90%99_%E6%BA%90%E7%A0%81-GitHub%E4%B8%BB%E4%BB%93-24292f?style=flat-square&logo=github&logoColor=white&labelColor=3d4552"></a>
 <a href="https://www.bilibili.com/video/BV1Tupx6kEBe"><img alt="Bilibili demo" src="https://img.shields.io/badge/%F0%9F%93%BA_%E6%BC%94%E7%A4%BA-B%E7%AB%99%E8%A7%86%E9%A2%91-00a1d6?style=flat-square&logo=bilibili&logoColor=white&labelColor=3d4552"></a>
 <a href="https://github.com/kele551/ms-wallpaper-assistant/issues"><img alt="Issues" src="https://img.shields.io/badge/%F0%9F%90%9E_%E5%8F%8D%E9%A6%88-%E6%8F%90Issue-0969da?style=flat-square&labelColor=3d4552"></a>
 <a href="#支持项目"><img alt="Sponsor" src="https://img.shields.io/badge/%E2%98%95_%E8%B5%9E%E8%B5%8F-%E8%AF%B7%E5%96%9D%E5%92%96%E5%95%A1-ff69b4?style=flat-square&labelColor=3d4552"></a>
 
 <p>🖼 <b>让电脑桌面壁纸自己换，你不用管</b>　·　必应每日一图 + Windows 聚焦</p>
 
-<p>作者 <b>海风（kele551）</b>　·　<a href="https://gitcode.com/kele551/ms-wallpaper-assistant">GitCode（主）</a>　·　<a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub（镜像）</a>　·　<a href="https://atomgit.com/kele551/ms-wallpaper-assistant">AtomGit（镜像）</a>　·　<a href="docs/README_EN.md">English</a></p>
+<p>作者 <b>海风（kele551）</b>　·　<a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub 主仓库</a>　·　<a href="docs/README_EN.md">English</a></p>
 </div>
 
 
@@ -86,18 +86,11 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 下载
 
-### 👉 [点这里下载 v2.5.1（GitCode 直连，约 12.5 MB 的 `桌面壁纸.exe`）](https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v2.5.2/%E6%A1%8C%E9%9D%A2%E5%A3%81%E7%BA%B8.exe)
+### 👉 [点这里下载 v2.5.3（GitHub 发行页，约 12.5 MB 的 exe）](https://github.com/kele551/ms-wallpaper-assistant/releases)
 
-> 境外仓库国内时常连不通（附件在 `release-assets.githubusercontent.com`，实测这台机器直连 21 秒握不上手），
-> 所以**下载请走 GitCode**：上面这个链接点下去就是 `桌面壁纸.exe`，双击即用，不用解压。
-> 想要 zip（exe + `使用说明.txt`）或 GitHub 那份的，在 [GitHub v2.5.1 发行页](https://github.com/kele551/ms-wallpaper-assistant/releases/tag/v2.5.1)。
-> 两处的 `桌面壁纸.exe` / `MSWallpaperAssistant-v2.5.1.exe` 是同一个文件（13,123,787 B），SHA256 都是
-> `F4D4148EBD5005B28E2936AA597F2FC5E4DE8A18E80A2D0DA544022D6A242A2D`（2026-11-16 从两个平台各取一次逐个比对，字节一致）。
-
-> **下载主源：[GitCode](https://gitcode.com/kele551/ms-wallpaper-assistant)**（与热点 / 狐径同一口径）—— 境内直连快，
-> **发行版附件与 GitHub 同版本同字节**，三个平台都收 Issue / PR。
-> 代码推送以 [GitHub](https://github.com/kele551/ms-wallpaper-assistant) 为准（2026-10-26 起四款都先推 GitHub，
-> GitCode 与 [AtomGit](https://atomgit.com/kele551/ms-wallpaper-assistant) 由镜像跟上，所以代码偶尔会滞后于 GitHub）。
+> 下载与升级源一律走 [GitHub 发行版](https://github.com/kele551/ms-wallpaper-assistant/releases)：
+> 附件是 ASCII 名 `MSWallpaperAssistant-v<版本>.exe`，双击即用，不用解压；想要 zip（exe + `使用说明.txt`）也在同一发行页。
+> 境内直连 GitHub 不稳时，可挂本地网络分流或用 GitHub 加速节点中转（`ghfast.top` / `gh-proxy.com`），程序本身不转发他人流量。
 >
 > 名字沿革：2026-10-12 产品更名「微软壁纸助手」→「壁纸助手」；2026-10-25 文件名更正为 **桌面壁纸.exe**（与界面显示名同一口径）。仓库名与下载地址不变；老机器原地升级后文件名还是旧名，同一个程序，照常自动升级。
 
@@ -109,8 +102,8 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 > 下载后执行 `certutil -hashfile 桌面壁纸.exe SHA256` 比对即可；一致就是原版。
 > 处理办法：把这个 exe 加进杀软的信任/排除名单。源码全部公开，可自行查阅。
 >
-> **怎么升到 v2.5.1**：装过旧版的朋友，打开控制台点「检查更新 → 立即升级」，或等后台每日自检弹提示
-> （升级是拿线上版本号和本地版本号比的，本地低于 2.5.1 就会提示）；没收到提示、或觉得用着不顺畅
+> **怎么升到 v2.5.3**：装过旧版的朋友，打开控制台点「检查更新 → 立即升级」，或等后台每日自检弹提示
+> （升级是拿线上版本号和本地版本号比的，本地低于 2.5.3 就会提示）；没收到提示、或觉得用着不顺畅
 > （例如**壁纸串模式、老图反复出现**），就重新下载上面那个包覆盖安装一次，配置与收藏都会保留。
 > 这版安装包新增（都经过实机测试）：
 > - **日抓取额度 20 → 80 张**：原来「每 30 分钟换一张」一天要 48 张，额度 20 张根本不够，后半程只能吃老图。
@@ -259,7 +252,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 | 问 | 答 |
 |---|---|
-| **双击没反应？** | 多半是安全软件拦了，把它加入信任就行。程序联网只有这几种情况：从 bing.com 与微软官方接口下图、检查更新时访问 GitCode / GitHub、补漏与归档时可能经第三方 GitHub 加速节点（`ghfast.top` / `gh-proxy.com`）中转。**全程没有任何上传行为。** |
+| **双击没反应？** | 多半是安全软件拦了，把它加入信任就行。程序联网只有这几种情况：从 bing.com 与微软官方接口下图、检查更新时访问 GitHub、补漏与归档时可能经第三方 GitHub 加速节点（`ghfast.top` / `gh-proxy.com`）中转。**全程没有任何上传行为。** |
 | **中文显示成乱码？** | 系统「非 Unicode 程序语言」要设成「中文(简体, 中国)」。 |
 | **会不会拖慢电脑？** | 只有「开机自动换」开着时后台才有一个进程，平时占 30 MB 左右，绝大多数时间在睡觉。关掉就完全不占。 |
 | **提示某个盘「写不进去」？** | 那是这台机器那个盘的权限设置（常见于用第三方分区工具格的盘），不是程序不支持它。换个盘（控制台「高级 → 壁纸保存位置」），或者把这个程序用管理员身份运行一次让它把目录建好 —— 壁纸放哪个盘都能用。 |
@@ -286,7 +279,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 用了之后，跟我说说感受
 
-好不好用、哪儿别扭、还想要什么功能 —— 都欢迎说，一句两句也行：**提 Issue**（推荐）[GitHub Issues](https://github.com/kele551/ms-wallpaper-assistant/issues)　·　[GitCode Issues](https://gitcode.com/kele551/ms-wallpaper-assistant/issues)，或直接在 [GitCode 仓库](https://gitcode.com/kele551/ms-wallpaper-assistant) 留言。
+好不好用、哪儿别扭、还想要什么功能 —— 都欢迎说，一句两句也行：**提 Issue**（推荐）[GitHub Issues](https://github.com/kele551/ms-wallpaper-assistant/issues)，或直接在 [GitHub 仓库](https://github.com/kele551/ms-wallpaper-assistant) 留言。
 
 顺手带上这几样能省一轮来回：**Windows 版本**（设置 → 系统 → 关于）· **程序版本号**（控制台左上角就写着，比如 `脚本 v2.4.6`）· **`wallpaper.log` 末尾十几行**（控制台「最近动作」能看到）。
 
@@ -304,7 +297,7 @@ Windows 桌面壁纸自动轮换工具。图来自两个公开图源（只下到
 
 ## 版本迭代
 
-**当前最新：v2.5.2**（2026-11-16；比例闸放宽到 4:3 / 5:4 老屏也能换，闸门全灭时兜底换图，日志不再把闸门筛掉记成下载失败。内容见 [CHANGELOG](docs/CHANGELOG.md)）。最近三代改了什么：
+**当前最新：v2.5.3**（2026-11-25；裁切容差按屏幕比例分档放宽，老比例屏也能换到图；面板字体/滚动条/动效按视觉规范微调；发布与升级源收口到只走 GitHub。内容见 [CHANGELOG](docs/CHANGELOG.md)）。最近三代改了什么：
 
 - **v2.4.5**：控制面板改成独立原生窗口（系统 WebView2 承载原来的页面），双击 exe 不再打开浏览器；
   组件不可用时自动回退浏览器并记日志，也可用 `--browser` 手动切回。页面功能一项没减。
@@ -422,7 +415,7 @@ python tools/preflight_release.py        # 发版前自检：全绿才算可用
 
 ---
 
-<p align="center"><sub>© 2026 海风（kele551） · MIT License · <a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub 主仓库</a> · <a href="https://gitcode.com/kele551/ms-wallpaper-assistant">GitCode 镜像</a></sub></p>
+<p align="center"><sub>© 2026 海风（kele551） · MIT License · <a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub 主仓库</a></sub></p>
 
 ## 检索关键词 / Search keywords
 

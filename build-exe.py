@@ -48,10 +48,10 @@ APP_NAME = '壁纸助手'
 # 老文件名(壁纸助手.exe / 微软壁纸助手.exe)在 core.ps1 里照样是"固定名", 原地覆盖升级保持原名。
 EXE_STEM = '桌面壁纸'
 # 2026-10-27：仓库地址收成一处常量，CI 也读这里比对（以前写死在模板里，
-# 四款的 exe 注释地址各写各的，GitCode 主源 / GitHub 镜像分不清）。
-# GitCode 是下载主源（README、version.json 的 url 都指 GitCode），这里就写主源。
+# 四款的 exe 注释地址各写各的，主源 / 镜像分不清）。
+# 【2026-11-25 红线第 36 条】只发 GitHub，APP_REPO 写主源 GitHub 地址。
 APP_COMPANY = 'HaiFeng (kele551)'
-APP_REPO = 'gitcode.com/kele551/ms-wallpaper-assistant'
+APP_REPO = 'github.com/kele551/ms-wallpaper-assistant'
 PAYLOAD_FILES = ['core.ps1', 'menu.ps1', '使用说明.txt', '壁纸助手.ico']
 ICON = '壁纸助手.ico'
 

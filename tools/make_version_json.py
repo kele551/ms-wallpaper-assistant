@@ -2,7 +2,7 @@
 """生成升级源 version.json + version.json.sig（发版时用）
 用法: python tools/make_version_json.py [--exe <exe路径>]
 它读 launcher.py 的 VERSION，算出 core.ps1 / menu.ps1 / exe 的 SHA256，
-脚本地址指向 Gitee raw(main 分支)，exe 地址指向 Gitee 发行版附件。
+脚本地址指向 GitHub raw(main 分支)，exe 地址指向 GitHub 发行版附件。
 发布时把 version.json 与 version.json.sig 一并上传到发行版，并提交到仓库 main 分支。
 
 2026-10-16 升级通道加固: 写完 version.json 后**立即**用 Ed25519 私钥给它的**原始字节**
@@ -38,6 +38,11 @@ def _const_from_launcher(name, fallback):
 
 EXE_STEM = _const_from_launcher('EXE_STEM', '桌面壁纸')
 EXE_NAME = EXE_STEM + '.exe'
+# GitHub 会把中文附件名削坏（汉字被去掉 → default.exe / -v2.0.8.exe），所以 GitHub 上
+# 实际上传的 exe 是 ASCII 名 MSWallpaperAssistant-v<ver>.exe（见 publish.py 的 ascii_exe）。
+# version.json 的 launcher.url 必须指这份真实存在的 ASCII 附件，指中文名在 GitHub 必然 404。
+def _ascii_exe_name(ver):
+    return 'MSWallpaperAssistant-v%s.exe' % ver
 
 def sha256(p):
     with open(p, 'rb') as f:
@@ -98,29 +103,25 @@ def sign_file(raw, out_path, key_path):
 
 def main():
     ap = argparse.ArgumentParser()
-    # 2026-10-25 文件名更正: 成品/附件叫 桌面壁纸.exe。version.json 的 launcher.url
-    # 必须与本次上传的附件名**一字不差**, 否则全体老用户 404 —— 所以名字从 launcher.py 的
-    # EXE_STEM 推导, 不再在这一处写死。(历史附件名「微软壁纸助手.exe」「壁纸助手.exe」只存在于旧发行页。)
+    # --exe 是用于算 SHA256 / size 的本地成品（中文名 桌面壁纸.exe，与 ASCII 附件逐字节一致）。
     ap.add_argument('--exe', default=os.path.join(REPO, EXE_NAME))
     ap.add_argument('--out', default=os.path.join(REPO, 'version.json'))
     a = ap.parse_args()
     with io.open(os.path.join(REPO, 'launcher.py'), encoding='utf-8') as f:
         ver = re.search(r"^VERSION\s*=\s*'([^']+)'", f.read(), re.M).group(1)
-    # 2026-10-20: Gitee 自 v2.3.2 起停止更新（主源搬到 GitCode），脚本地址**不能再指 Gitee raw**
-    # —— 那边停在旧版，热更时 sha256 必然对不上，等于把升级通道堵死。
-    # 这里改成 GitCode 的 raw API（与 core.ps1 的 BWUpdateUrls 同一种地址；实测匿名可取、
-    # 返回的就是文件原始字节），末尾必须带 ?ref=main，否则取到的是网页。
-    raw = 'https://gitcode.com/api/v5/repos/kele551/ms-wallpaper-assistant/raw/'
-    rel = 'https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v%s/' % ver
+    # 【2026-11-25 红线第 36 条】只发 GitHub：升级源脚本 raw 与发行包附件下载地址一律指 GitHub，
+    # GitCode（=AtomGit）只是 Pull 被动镜像，不再同步、也不作升级兜底。
+    raw = 'https://raw.githubusercontent.com/kele551/ms-wallpaper-assistant/main/'
+    rel = 'https://github.com/kele551/ms-wallpaper-assistant/releases/download/v%s/' % ver
     out = {
         'version': ver,
         'min_launcher': ver,
         'notes': '',
         'scripts': {
-            'core.ps1': {'sha256': sha256(os.path.join(REPO, 'core.ps1')), 'url': raw + 'core.ps1?ref=main'},
-            'menu.ps1': {'sha256': sha256(os.path.join(REPO, 'menu.ps1')), 'url': raw + 'menu.ps1?ref=main'},
+            'core.ps1': {'sha256': sha256(os.path.join(REPO, 'core.ps1')), 'url': raw + 'core.ps1'},
+            'menu.ps1': {'sha256': sha256(os.path.join(REPO, 'menu.ps1')), 'url': raw + 'menu.ps1'},
         },
-        'launcher': {'sha256': sha256(a.exe), 'url': rel + EXE_NAME,
+        'launcher': {'sha256': sha256(a.exe), 'url': rel + _ascii_exe_name(ver),
                      'size': os.path.getsize(a.exe)},
     }
     # ① 先写 version.json（签名对象是这份文件的**原始字节**，所以必须先落盘、再签名）

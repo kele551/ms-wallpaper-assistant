@@ -11,7 +11,7 @@
 
 # ── 仅打包 exe 时需要（构建脚本 / 桌面壁纸.spec）─────────────────────────
 # PyInstaller: GPL-2.0-with-exception（官方明确：打包产物不受 GPL 约束）
-pyinstaller>=6.0
+pyinstaller==6.22.3
 # pywebview: BSD-3-Clause —— 独立 GUI 控制面板窗口（内嵌进 exe）
 pywebview>=6.0
 # pythonnet: MIT —— pywebview 的 Windows edgechromium 后端需要

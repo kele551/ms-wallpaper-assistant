@@ -12,11 +12,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#171a20">
 <title>桌面壁纸 · 控制台</title>
 <style>
   :root{
-    --font:"Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif;
+    --font:"Manrope","Geist","Microsoft YaHei UI","Microsoft YaHei","PingFang SC",system-ui,sans-serif;
     --mono:"Cascadia Mono",Consolas,"Courier New",monospace;
     /* 2026-11-06 工业风署名条用的 DIN 系字体：Windows 10+ 自带 Bahnschrift（DIN 1451 血统），
        没有就退到 DIN Alternate / Segoe UI。只做排版性格近似，不嵌字体文件。 */
@@ -62,9 +63,12 @@
   button,select,input{font:inherit;color:inherit}
   button{cursor:pointer;background:none;border:0}
   :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
-  ::-webkit-scrollbar{width:10px;height:10px}
-  ::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:8px;border:2px solid var(--bg)}
-  ::-webkit-scrollbar-track{background:transparent}
+  html{scrollbar-color:var(--line-2) transparent;scrollbar-width:auto}
+  @supports not (scrollbar-color: auto){
+    ::-webkit-scrollbar{width:10px;height:10px}
+    ::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:8px;border:2px solid var(--bg)}
+    ::-webkit-scrollbar-track{background:transparent}
+  }
 
   .wrap{max-width:1160px;margin:0 auto;padding:var(--sp-5) var(--sp-5) var(--sp-6);
         display:flex;flex-direction:column;gap:var(--sp-4)}
@@ -82,7 +86,7 @@
   .segbar{display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap}
   .seg{display:inline-flex;gap:2px;padding:3px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--card)}
   .seg-btn{height:28px;padding:0 var(--sp-4);border-radius:var(--r-pill);border:0;background:none;
-           color:var(--txt-2);font-size:var(--fs-meta);transition:color .15s,background .15s}
+           color:var(--txt-2);font-size:var(--fs-meta);transition:color 300ms cubic-bezier(0.22,1,0.36,1),background-color 300ms cubic-bezier(0.22,1,0.36,1)}
   .seg-btn:hover{color:var(--txt)}
   .seg-btn.on{background:var(--card-2);color:var(--txt);font-weight:600}
   .seg-info{margin-left:auto;color:var(--txt-3);font-size:var(--fs-micro);font-family:var(--mono)}
@@ -138,7 +142,7 @@
   .imeta-list dt{color:var(--txt-3)}
   .imeta-list dd{margin:0;color:var(--txt-2);overflow-wrap:anywhere}
   .xs{font-size:var(--fs-micro)}
-  .t-lg{font-size:17px;font-weight:650}
+  .t-lg{font-size:16px;font-weight:600}
 
   /* 2026-10-25（用户截图：控制台整页都是「—」）：连不上本机服务时，唯一的提示是顶栏
      那颗小胶囊，一滚动就没影了，剩下满屏"读不到值"看着像程序坏了。真实原因是控制台
@@ -160,7 +164,7 @@
 
   .btn{height:30px;padding:0 var(--sp-3);border-radius:var(--r-btn);border:1px solid var(--line);
        background:var(--card-2);color:var(--txt);font-size:var(--fs-meta);display:inline-flex;align-items:center;gap:6px;
-       transition:border-color .15s,background .15s,color .15s;white-space:nowrap}
+       transition:border-color 300ms cubic-bezier(0.22,1,0.36,1),background-color 300ms cubic-bezier(0.22,1,0.36,1),color 300ms cubic-bezier(0.22,1,0.36,1);white-space:nowrap}
   .btn:hover{border-color:var(--line-2);background:var(--card)}
   .btn:disabled{opacity:.45;cursor:not-allowed}
   .btn.primary{background:var(--accent);border-color:transparent;color:var(--accent-ink);font-weight:600}
@@ -180,16 +184,16 @@
 
   .chip{height:26px;padding:0 var(--sp-3);border-radius:var(--r-pill);border:1px solid var(--line);
         background:transparent;color:var(--txt-2);font-size:var(--fs-meta);display:inline-flex;align-items:center;gap:6px;
-        transition:background .15s,border-color .15s,color .15s;white-space:nowrap;cursor:pointer}
+        transition:background-color 300ms cubic-bezier(0.22,1,0.36,1),border-color 300ms cubic-bezier(0.22,1,0.36,1),color 300ms cubic-bezier(0.22,1,0.36,1);white-space:nowrap;cursor:pointer}
   .chip:hover{color:var(--txt);border-color:var(--line-2)}
   .chip.on{background:var(--card-2);border-color:var(--line-2);color:var(--txt);font-weight:600}
   .chip.add{border-style:dashed;color:var(--txt-3)}
   .chiprow{display:flex;gap:6px;flex-wrap:wrap}
 
   .sw{width:36px;height:20px;border-radius:var(--r-pill);background:var(--line-2);position:relative;
-      flex:none;transition:background .18s;border:0}
+      flex:none;transition:background-color 300ms cubic-bezier(0.22,1,0.36,1);border:0}
   .sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
-             background:var(--knob);transition:transform .18s;box-shadow:0 1px 2px rgba(0,0,0,.35)}
+             background:var(--knob);transition:transform 300ms cubic-bezier(0.22,1,0.36,1);box-shadow:0 1px 2px rgba(0,0,0,.35)}
   .sw.on{background:var(--accent)}
   .sw.on::after{transform:translateX(16px)}
 
@@ -255,9 +259,9 @@
      实现是一块盖在图片上的 canvas：缩小绘制 + 关闭插值放大 = 方块感；
      全程本地、零依赖。系统开了"减少动效"就直接切，不跑动画。 */
   .art img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;
-    transition:opacity .25s ease}
+    transition:opacity 300ms cubic-bezier(0.22,1,0.36,1)}
   .art img.ready{opacity:1}
-  .art img.prev{position:absolute;inset:0;opacity:0;transition:opacity .25s ease;z-index:1}
+  .art img.prev{position:absolute;inset:0;opacity:0;transition:opacity 300ms cubic-bezier(0.22,1,0.36,1);z-index:1}
   .art #heroImg{position:relative;z-index:2}
   .art canvas.mosaic{position:absolute;inset:0;width:100%;height:100%;z-index:3;
     display:none;pointer-events:none;image-rendering:pixelated}
@@ -330,7 +334,7 @@
   .gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(152px,1fr));gap:var(--sp-2)}
   .tile{position:relative;margin:0;aspect-ratio:16/10;border-radius:var(--r-btn);overflow:hidden;
         border:1px solid var(--line);background:var(--bg-1);cursor:default;padding:0;
-        transition:border-color .15s,transform .15s}
+        transition:border-color 300ms cubic-bezier(0.22,1,0.36,1),transform 300ms cubic-bezier(0.22,1,0.36,1)}
   .tile:hover{border-color:var(--accent);transform:translateY(-2px)}
   .tile img{width:100%;height:100%;object-fit:cover;display:block}
   .tile.sel{outline:2px solid var(--accent);outline-offset:1px}
@@ -346,7 +350,7 @@
     background:rgba(0,0,0,.5);border-radius:5px;padding:1px 5px;line-height:1.3}
   .tile-acts{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:center;gap:var(--sp-1);padding:var(--sp-2);
     background:linear-gradient(to top,var(--scrim),transparent);opacity:0;transform:translateY(4px);
-    transition:opacity .15s,transform .15s}
+    transition:opacity 300ms cubic-bezier(0.22,1,0.36,1),transform 300ms cubic-bezier(0.22,1,0.36,1)}
   .tile:hover .tile-acts,.tile:focus-within .tile-acts{opacity:1;transform:none}
   /* 2026-11-06 用户「三个按钮均匀分布、居中」: 用 flex:1 1 0%(单位%不可省——裸 0 在部分 WebView
      会被判非法而整条 flex 丢弃, 退化为内容宽度导致三钮参差/偏移); 文字水平+垂直居中用
@@ -408,7 +412,7 @@
   .toast{position:fixed;left:50%;bottom:var(--sp-6);transform:translate(-50%,14px);opacity:0;pointer-events:none;
     background:var(--card);border:1px solid var(--line-2);box-shadow:var(--shadow-2);border-radius:var(--r-btn);
     padding:var(--sp-2) var(--sp-4);font-size:var(--fs-meta);z-index:40;max-width:min(560px,92vw);
-    transition:opacity .15s,transform .15s}
+    transition:opacity 300ms cubic-bezier(0.22,1,0.36,1),transform 300ms cubic-bezier(0.22,1,0.36,1)}
   .toast.on{opacity:1;transform:translate(-50%,0)}
   .toast.bad{border-color:var(--danger);color:var(--danger)}
 
@@ -1346,6 +1350,7 @@ function sysTheme(){
 }
 function applyTheme(t, remember){
   document.documentElement.setAttribute("data-theme", t);
+  try{ var mm=document.querySelector('meta[name="color-scheme"]'); if(mm) mm.content=(t==="dark")?"dark":"light"; }catch(e){}
   if (remember){
     try {
       localStorage.setItem("bw-theme", t);
@@ -1851,7 +1856,7 @@ var LOG_FOLLOW = true;
 function renderLog(lines){
   var lg = $("logBox");
   if (!lg) return;
-  lg.innerHTML = "";
+  lg.replaceChildren();
   (lines || []).forEach(function(line){
     var d = document.createElement("div");
     d.textContent = line;
@@ -2080,7 +2085,7 @@ function renderHistory(list, curName){
   // 原来一行 6 张：单张只有 112px 宽，悬停那排「设为壁纸/收藏/原图」按钮塞不下、
   // 直接溢出到隔壁格，用户截图反馈"文字比例不和谐"。改成 4 张后单张约 170px，
   // 与下方图库 .gallery 的格子（minmax(152px)）同一量级，按钮和图的比例就顺了。
-  box.innerHTML = "";
+  box.replaceChildren();
   rows.forEach(function(it){
     // 有"换上时间"就角标写换上的时刻/月日；没有(图库里最近但本机没换过)就退回图片日期。
     // src 带上这张图真正的归属库, 后端 use/fav/del 才能"指哪打哪"; 不能再写死成 hist。
@@ -2208,7 +2213,7 @@ function galleryUrl(){
   return q;
 }
 function loadGallery(reset){
-  if (reset){ G.skip = 0; G.items = []; $("lib").innerHTML = ""; }
+  if (reset){ G.skip = 0; G.items = []; $("lib").replaceChildren(); }
   G.more = false;
   /* 2026-11-06 用户截图(万象"空库"): 切库那一瞬间, 旧库的计数还挂在头上
      (「已显示 25 张」其实是随拍库的), 格子已清空, 空态提示又被原来这行 hide 藏掉

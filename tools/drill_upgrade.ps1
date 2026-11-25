@@ -33,7 +33,7 @@ try {
   & $git -C $Repo show 'v2.3.3:menu.ps1' > (Join-Path $old 'menu.ps1')
   # 2026-10-16 起升级要先验签; 验签要调主程序 --verify-update, 所以老客户端也得有 exe + launcher.txt
   # 2026-11-14：仓库只留最近三个发行版，旧 exe 不再放进仓库 —— 老客户端主程序按
-  #   缓存目录 → 仓库同名文件 → 从 GitCode 发行版下载一次（本地缓存复用）→ 当前 exe 兜底
+  #   缓存目录 → 仓库同名文件 → 从 GitHub 发行版下载一次（本地缓存复用）→ 当前 exe 兜底
   # 的顺序取。最后一档只保证"验签 + 脚本升级"覆盖，跨版本兼容覆盖会降级并给出 WARN。
   $baseVer = '2.3.3'
   $cacheDir = Join-Path (Split-Path $Repo -Parent) 'cache\old-client'
@@ -50,11 +50,12 @@ try {
   }
   if (-not $oldExe) {
     New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
-    $dlUrl = "https://gitcode.com/kele551/ms-wallpaper-assistant/releases/download/v$baseVer/壁纸助手.exe"
+    # 【2026-11-25 红线第 36 条】只发 GitHub；附件是 ASCII 名 MSWallpaperAssistant-v<ver>.exe。
+    $dlUrl = "https://github.com/kele551/ms-wallpaper-assistant/releases/download/v$baseVer/MSWallpaperAssistant-v$baseVer.exe"
     try {
       Invoke-WebRequest -Uri $dlUrl -OutFile $cacheExe -TimeoutSec 600 -UseBasicParsing
       $oldExe = Get-Item -LiteralPath $cacheExe
-      $exeFrom = 'GitCode 发行版（已缓存）'
+      $exeFrom = 'GitHub 发行版（已缓存）'
     } catch {
       $oldExe = $null
       Write-Host ("  [WARN] 取不到 v$baseVer 的老 exe（{0}），改用当前 exe 当老客户端；" -f $_.Exception.Message)

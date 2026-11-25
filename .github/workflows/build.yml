@@ -34,7 +34,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           # 与本地打包环境一致：Python 3.13
-          python-version: '3.13'
+          python-version: '3.15.2'
 
       - name: 安装打包依赖
         # 独立 GUI 窗口要 pywebview + pythonnet；这些只进构建机，最终用户不用装

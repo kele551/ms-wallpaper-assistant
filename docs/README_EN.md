@@ -34,7 +34,7 @@ images stay on your own machine.
 > Not affiliated with, endorsed by, or sponsored by any image provider. "Bing" and "Windows
 > Spotlight" are used only to describe where the images come from.
 
-> 作者 / Author: **HaiFeng (kele551)** · GitCode（下载主源 / download primary）: <https://gitcode.com/kele551/ms-wallpaper-assistant> · GitHub（代码主仓 / code, pushed first）: <https://github.com/kele551/ms-wallpaper-assistant> · AtomGit（镜像 / mirror, code）: <https://atomgit.com/kele551/ms-wallpaper-assistant>
+> 作者 / Author: **HaiFeng (kele551)** · GitHub（唯一主源 / sole primary）: <https://github.com/kele551/ms-wallpaper-assistant>
 
 ---
 
@@ -59,8 +59,7 @@ images stay on your own machine.
 
 ## Download
 
-- **GitCode Releases (download primary)** — fast direct connection from mainland China, and the assets are the same version with the same bytes as GitHub: <https://gitcode.com/kele551/ms-wallpaper-assistant/releases>
-- GitHub Releases (same assets; this is where the code is pushed first): <https://github.com/kele551/ms-wallpaper-assistant/releases>
+- **GitHub Releases (sole primary)** — source, assets, and the update manifest are all published here: <https://github.com/kele551/ms-wallpaper-assistant/releases>
 
 Unzip the archive and double-click `桌面壁纸.exe` (Windows 10/11 x64). Installs made before the 2026-10-12 rename (`微软壁纸助手.exe`) or before the 2026-10-25 file-name fix (`壁纸助手.exe`) keep their old file name — same program, and in-place upgrades preserve whatever name you already have. The UI is a
 standalone native window (Chinese, powered by Windows' built-in WebView2); no browser is opened. Click **立即换一张** to switch now, and the
@@ -143,4 +142,4 @@ updates or issue replies.
 
 ---
 
-<p align="center"><sub>© 2026 海风（kele551） · MIT License · <a href="https://gitcode.com/kele551/ms-wallpaper-assistant">GitCode (download primary)</a> · <a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub (code)</a> · <a href="https://atomgit.com/kele551/ms-wallpaper-assistant">AtomGit (mirror)</a></sub></p>
+<p align="center"><sub>© 2026 海风（kele551） · MIT License · <a href="https://github.com/kele551/ms-wallpaper-assistant">GitHub (sole primary)</a></sub></p>

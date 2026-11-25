@@ -35,8 +35,8 @@ $e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile("core.p
   文件名唯一来源是 `launcher.py` 的 `EXE_STEM`；老名 `壁纸助手.exe` / `微软壁纸助手.exe` 在
   `core.ps1` 的 `$global:BWExeNamesFixed` 里继续当固定名认，老用户原地升级不会被复制出第二份 exe。
 - **对外文案红线词**：绕过 / 翻墙 / 梯子 / 科学上网 / 墙 / 破解 / 屏蔽 —— 一个都不要出现在任何文件里。
-- **代码托管只走 GitHub（主仓库）+ GitCode（镜像），Gitee 已废弃（2026-11-06 用户确认永久废弃）**：
-  绝不 `git push` 到 gitee.com、绝不把 gitee.com 地址写进任何文件或文档；Gitee 那条线上是 v2.3.2 之前的旧代码，写了也没人收。详见下方「平台」表。
+- **代码托管只走 GitHub（唯一对外主源），Gitee 已废弃（2026-11-06 用户确认永久废弃）**：
+  绝不 `git push` 到 gitee.com、绝不把 gitee.com 地址写进任何文件或文档；Gitee 那条线上是 v2.3.2 之前的旧代码，写了也没人收。GitCode（=AtomGit）只是 Pull 被动镜像，不建版、不传附件、不验真、不主动 push。详见下方「平台」表。
 - **面板图片名一律中文（2026-11-05 定的硬规矩）**：凡是显示在面板上的图片 —— 必应 / 聚焦 /
   万象 / 随拍四个在线源、本地文件夹图源、用户手动导入或任何外来图片 —— 都必须显示为
   **描述画面内容的中文名字**。禁止把英文原名、哈希、日期编号、随机串直接暴露给用户；
@@ -142,29 +142,27 @@ $e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile("core.p
 
 ## 平台（主仓库：GitHub）
 
-**2026-10-26 起四款软件只往 GitHub 推**，所以 GitHub 是主仓库，其余三条是历史镜像：
+**2026-11-25 起所有程序只发 GitHub**，GitHub 是唯一对外主源，其余都是历史镜像：
 
 | 平台 | git remote | 状态 |
 | --- | --- | --- |
-| GitHub `github.com/kele551/ms-wallpaper-assistant` | `github` | **主仓库**，永远是最新的一份 |
-| GitCode `gitcode.com/kele551/ms-wallpaper-assistant` | `origin` | 镜像（2026-10-17～10-26 曾为主源），代码可能滞后 |
-| AtomGit `atomgit.com/kele551/ms-wallpaper-assistant` | 未配 | 镜像；它会跟着 GitHub 把发行版**附件**一起镜像过来（2026-10-26 实测，早先"传不了附件"的说法已过期） |
+| GitHub `github.com/kele551/ms-wallpaper-assistant` | `github` | **唯一主源**，Release / 附件 / 升级源 / 源码 tag 一律只发这里 |
+| GitCode `gitcode.com/kele551/ms-wallpaper-assistant` | `origin` | 纯 Pull 被动镜像，不建版、不传附件、不验真、不主动 push；代码滞后 |
+| AtomGit `atomgit.com/kele551/ms-wallpaper-assistant` | 未配 | 纯 Pull 被动镜像 |
 | Gitee（kele551 / ms-wallpaper-assistant） | 未配 | **自 v2.3.2 起停止同步，2026-11-06 用户确认永久废弃** —— 那条线上是旧代码，别再写它的地址、也别再 push（连发版闸门都盯着这个） |
 
-**二进制发行包发 GitHub 与 GitCode** 两处（AtomGit 不用手动传：它镜像 GitHub 的发行版与附件）。
+**二进制发行包、Release、`version.json`/`.sig` 一律只发 GitHub。**
 
 ```powershell
-git push github main --tags                   # 主仓库，必推
-git push origin main --tags                   # GitCode 镜像：推了才谈"代码一致"，不推就别在文档里承诺一致
+git push github main --tags                   # 唯一主源，必推；GitCode/AtomGit 由平台自动镜像，不主动推
 ```
 
-⚠ 只推 GitHub 时有一条链路会脱节：`version.json` 里 `scripts` / `launcher` 的**下载地址**
-目前由 `tools/make_version_json.py` 写成 GitCode 的绝对地址，而 GitHub 会把中文附件名削掉
-（`桌面壁纸.exe` → 见 publish.py 里 `MSWallpaperAssistant-v*.exe` 那段）。
-要在 GitHub 单独发布，得同时改那两处地址 —— 客户端读哪份 `version.json` 见 `core.ps1` 的
-`$global:BWUpdateUrls`（已按"先 GitHub 后 GitCode"排）。
+⚠ `version.json` 里 `scripts` / `launcher` 的**下载地址**由 `tools/make_version_json.py` 写成 GitHub
+绝对地址；GitHub 会把中文附件名削掉，所以上传的 exe 用 ASCII 名 `MSWallpaperAssistant-v*.exe`，
+version.json 的 launcher.url 也指这份 ASCII 附件（见 publish.py 的 `ascii_exe` 段）。客户端升级源
+见 `core.ps1` 的 `$global:BWUpdateUrls`（只留 GitHub raw）。
 
-镜像与主仓库**内容不必逐字节一致**（镜像会滞后），但同一个 tag 的源码必须同源：
+镜像与主仓库**内容不必逐字节一致**（镜像会滞后），同一个 tag 的源码必须同源：
 判定方法 `git diff github/main <镜像>/main` 只允许出现"镜像还没收到"的那些提交。
 
 ## 任务从哪来
@@ -187,7 +185,7 @@ GitHub Issues 里带 `good first issue` / `help wanted` 标签的条目，每条
   - don't rewrite line endings wholesale (this repo stores **LF**);
   - never introduce local machine paths, private emails or tokens into the repo;
   - banned wording anywhere: 绕过 / 翻墙 / 梯子 / 科学上网 / 墙 / 破解 / 屏蔽;
-  - don't push to or write gitee.com addresses — Gitee is deprecated since v2.3.2 and confirmed retired on 2026-11-06; the canonical repo is GitHub (`github` remote), mirror is GitCode (`origin`), nothing ever goes to Gitee;
+  - don't push to or write gitee.com addresses — Gitee is deprecated since v2.3.2 and confirmed retired on 2026-11-06; the only canonical repo is GitHub (`github` remote). GitCode (=AtomGit) is a read-only pull mirror: no release, no assets, no verification, no push; nothing ever goes to Gitee;
   - **Chinese display names (hard rule, 2026-11-05)**: every image shown on the panel,
     from any source including user-imported files, must show a Chinese descriptive name.
     Never expose English titles, hashes or random tokens; all display paths go through
